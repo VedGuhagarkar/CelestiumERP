@@ -1,0 +1,156 @@
+/* 🍎 Astralis ERP — Apple HIG Design System Tokens & Global CSS */
+
+:root {
+  /* Color Palette — Dark Mode Industrial Titanium by default */
+  --color-bg-base: #0b0f17;
+  --color-bg-subtle: #111827;
+  --color-bg-surface: rgba(17, 24, 39, 0.75);
+  --color-bg-surface-elevated: rgba(31, 41, 55, 0.75);
+  --color-bg-surface-hover: rgba(55, 65, 81, 0.5);
+
+  --color-border-subtle: rgba(255, 255, 255, 0.08);
+  --color-border-regular: rgba(255, 255, 255, 0.14);
+  --color-border-strong: rgba(255, 255, 255, 0.25);
+
+  --color-text-primary: #f9fafb;
+  --color-text-secondary: #9ca3af;
+  --color-text-muted: #6b7280;
+  --color-text-inverse: #0b0f17;
+
+  /* Brand Accents — Heat Treatment Ember & Electric Titanium */
+  --color-primary: #f97316; /* Thermal Orange */
+  --color-primary-hover: #ea580c;
+  --color-primary-subtle: rgba(249, 115, 22, 0.15);
+  --color-primary-glow: rgba(249, 115, 22, 0.35);
+
+  --color-accent-blue: #38bdf8;
+  --color-accent-purple: #a855f7;
+
+  /* Semantic State Colors */
+  --color-success: #10b981;
+  --color-success-subtle: rgba(16, 185, 129, 0.15);
+  --color-warning: #f59e0b;
+  --color-warning-subtle: rgba(245, 158, 11, 0.15);
+  --color-danger: #ef4444;
+  --color-danger-subtle: rgba(239, 68, 68, 0.15);
+  --color-info: #0ea5e9;
+  --color-info-subtle: rgba(14, 165, 233, 0.15);
+
+  /* Apple HIG Frosted Glass Materials */
+  --material-ultra-thin: rgba(17, 24, 39, 0.4);
+  --material-thin: rgba(17, 24, 39, 0.6);
+  --material-regular: rgba(17, 24, 39, 0.8);
+  --material-thick: rgba(17, 24, 39, 0.92);
+  --glass-blur: blur(20px) saturate(180%);
+
+  /* Typography Scale */
+  --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+
+  /* Continuous Squircles */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-2xl: 24px;
+  --radius-full: 9999px;
+
+  /* Tactile Spring Physics */
+  --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+  --duration-slow: 400ms;
+
+  /* Elevation Shadows */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 4px 12px 0 rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 12px 32px 0 rgba(0, 0, 0, 0.45);
+  --shadow-glow: 0 0 24px -4px var(--color-primary-glow);
+}
+
+/* Base Resets */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  font-family: var(--font-sans);
+  background-color: var(--color-bg-base);
+  color: var(--color-text-primary);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-regular);
+  border-radius: var(--radius-full);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-strong);
+}
+
+/* Keyframe Animations */
+@keyframes pageEnter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulseSlow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.animate-page-enter {
+  animation: pageEnter var(--duration-normal) var(--ease-spring) forwards;
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* Glassmorphic Surfaces */
+.glass-surface {
+  background: var(--material-regular);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-xl);
+}
+
+.glass-card {
+  background: var(--material-thin);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-md);
+  transition: transform var(--duration-fast) var(--ease-spring), border-color var(--duration-fast) ease;
+}
+
+.glass-card:hover {
+  border-color: var(--color-border-regular);
+}
