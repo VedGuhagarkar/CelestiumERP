@@ -22,7 +22,7 @@ export function createApp(): Express {
   app.use(helmet());
   app.use(
     cors({
-      origin: config.server.corsOrigins,
+      origin: config.server.corsOrigins as string[],
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization', 'x-tenant-id', 'Idempotency-Key']

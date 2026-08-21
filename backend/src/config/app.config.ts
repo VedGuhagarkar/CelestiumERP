@@ -15,7 +15,7 @@ export interface AppConfig {
   server: {
     port: number;
     host: string;
-    corsOrigins: string[];
+    corsOrigins: string[] | readonly string[];
   };
   database: {
     uri: string;
