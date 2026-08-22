@@ -33,6 +33,7 @@ export interface IReportingRepository {
   getDispatches(tenantId: string, filter: DateRangeFilter): Promise<any[]>;
   getJobCosts(tenantId: string, filter: DateRangeFilter): Promise<any[]>;
   getInvoices(tenantId: string, filter: DateRangeFilter): Promise<any[]>;
+  getAuditLogs(tenantId: string, limit?: number): Promise<any[]>;
 }
 
 export class ReportingRepository implements IReportingRepository {
@@ -193,6 +194,15 @@ export class ReportingRepository implements IReportingRepository {
     if (filter.customerId) query.customerId = filter.customerId;
 
     return await Invoice.find(query).lean();
+  }
+
+  public async getAuditLogs(tenantId: string, limit: number = 20): Promise<any[]> {
+    if (mongoose.connection.readyState === 0) return [];
+    const AuditLogModel = mongoose.models.AuditLog || mongoose.model('AuditLog');
+    return await AuditLogModel.find({ tenantId, isDeleted: { $ne: true } })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean();
   }
 }
 

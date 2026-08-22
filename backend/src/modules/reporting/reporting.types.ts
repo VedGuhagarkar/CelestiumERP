@@ -390,3 +390,175 @@ export interface IJobCostProfitabilityReport {
   };
   jobs: IJobCostProfitabilityReportItem[];
 }
+
+// ==========================================
+// 9. Manufacturing Command Center Dashboard
+// ==========================================
+
+export interface ICommandCenterKPIs {
+  activeJobs: {
+    total: number;
+    heating: number;
+    soaking: number;
+    quenching: number;
+    cooling: number;
+    staged: number;
+  };
+  runningFurnaces: {
+    running: number;
+    idle: number;
+    breakdown: number;
+    maintenance: number;
+    total: number;
+    utilizationPercent: number;
+  };
+  pendingQc: {
+    pendingInspections: number;
+    quarantinedLots: number;
+    pendingCocs: number;
+    rejectionRatePercent: number;
+  };
+  dispatch: {
+    readyForDispatch: number;
+    scheduledToday: number;
+    dispatchedToday: number;
+    onTimeDispatchRatePercent: number;
+  };
+  financial?: {
+    todayRevenue: number;
+    monthlyRevenue: number;
+    grossMarginPercent: number;
+    outstandingReceivables: number;
+    inventoryValuation: number;
+  };
+}
+
+export interface ICommandCenterMachineStatus {
+  id: string;
+  code: string;
+  name: string;
+  type: string;
+  status: string;
+  currentJobNumber?: string;
+  customerName?: string;
+  currentTemperature?: number;
+  targetTemperature?: number;
+  atmosphereType?: string;
+  carbonPotential?: number;
+  currentStage?: string;
+  elapsedMinutes?: number;
+  oeePercent?: number;
+  actionUrl: string;
+}
+
+export interface ICommandCenterPendingApproval {
+  id: string;
+  type: 'RECIPE' | 'DISPATCH' | 'NCR' | 'CAPA' | 'OVERTIME' | 'MAINTENANCE';
+  referenceNumber: string;
+  title: string;
+  requestedBy: string;
+  submittedAt: Date;
+  priority: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+  actionUrl: string;
+}
+
+export interface ICommandCenterUpcomingMaintenance {
+  workOrderId: string;
+  workOrderNumber: string;
+  machineCode: string;
+  machineName: string;
+  maintenanceType: string;
+  priority: string;
+  status: string;
+  dueDate: Date;
+  daysUntilDue: number;
+  isOverdue: boolean;
+  actionUrl: string;
+}
+
+export interface ICommandCenterPendingJob {
+  jobId: string;
+  jobNumber: string;
+  customerName: string;
+  alloyGrade: string;
+  plannedFurnace: string;
+  status: string;
+  priority: string;
+  estimatedDurationMinutes: number;
+  scheduledStartTime?: Date;
+  actionUrl: string;
+}
+
+export interface ICommandCenterAttendanceSummary {
+  activeHeadcount: number;
+  scheduledHeadcount: number;
+  attendanceRatePercent: number;
+  totalOvertimeHoursToday: number;
+  presentByShift: {
+    shiftCode: string;
+    presentCount: number;
+    scheduledCount: number;
+  }[];
+}
+
+export interface ICommandCenterActivityItem {
+  id: string;
+  timestamp: Date;
+  category: string;
+  action: string;
+  description: string;
+  actorName: string;
+  actionUrl: string;
+}
+
+export interface ICommandCenterThroughputWidget {
+  totalWeightKgToday: number;
+  totalPiecesToday: number;
+  hourlyThroughputRateKgHr: number;
+  furnaceBreakdown: {
+    furnaceCode: string;
+    weightKg: number;
+    pieces: number;
+  }[];
+}
+
+export interface ICommandCenterData {
+  viewMode: 'OWNER' | 'SUPERVISOR' | 'OPERATOR';
+  generatedAt: Date;
+  timeRange: {
+    startDate: Date;
+    endDate: Date;
+    label: string;
+  };
+  kpis: ICommandCenterKPIs;
+  throughput: ICommandCenterThroughputWidget;
+  activeFurnaces: ICommandCenterMachineStatus[];
+  pendingJobs: ICommandCenterPendingJob[];
+  pendingApprovals: ICommandCenterPendingApproval[];
+  alerts: {
+    lowInventory: {
+      itemId: string;
+      itemCode: string;
+      itemName: string;
+      currentStock: number;
+      safetyStock: number;
+      uom: string;
+      deficit: number;
+      actionUrl: string;
+    }[];
+    qualityNcrs: {
+      id: string;
+      ncrNumber: string;
+      title: string;
+      severity: string;
+      jobNumber: string;
+      quarantinedQuantity: number;
+      uom: string;
+      status: string;
+      actionUrl: string;
+    }[];
+  };
+  maintenance: ICommandCenterUpcomingMaintenance[];
+  attendance: ICommandCenterAttendanceSummary;
+  recentActivity: ICommandCenterActivityItem[];
+}

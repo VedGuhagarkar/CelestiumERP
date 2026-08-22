@@ -395,6 +395,47 @@ describe('Manufacturing Analytics & Authoritative Operational Reporting', () => 
     });
   });
 
+  describe('Manufacturing Command Center Dashboard', () => {
+    it('should generate owner-view command center with operational, quality, equipment, and financial KPIs', async () => {
+      const token = generateToken('usr_plant_mgr', ['PLANT_MANAGER']);
+
+      const res = await request(app)
+        .get('/api/v1/reporting/command-center')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.status).toBe(200);
+      const data = res.body.data;
+      expect(data.viewMode).toBe('OWNER');
+      expect(data.kpis.activeJobs.total).toBeGreaterThanOrEqual(1);
+      expect(data.kpis.runningFurnaces.total).toBeGreaterThanOrEqual(2);
+      expect(data.kpis.pendingQc.pendingInspections).toBeDefined();
+      expect(data.kpis.dispatch.readyForDispatch).toBeDefined();
+      expect(data.kpis.financial).toBeDefined();
+      expect(data.kpis.financial.grossMarginPercent).toBeDefined();
+      expect(data.throughput.totalWeightKgToday).toBeGreaterThan(0);
+      expect(data.activeFurnaces.length).toBeGreaterThan(0);
+      expect(data.alerts.lowInventory.length).toBeGreaterThan(0);
+      expect(data.maintenance).toBeDefined();
+      expect(data.attendance.activeHeadcount).toBeDefined();
+      expect(data.recentActivity).toBeDefined();
+    });
+
+    it('should scope command center for operators by omitting financial metrics', async () => {
+      const operatorToken = generateToken('usr_furnace_op', ['FURNACE_OPERATOR']);
+
+      const res = await request(app)
+        .get('/api/v1/reporting/command-center')
+        .set('Authorization', `Bearer ${operatorToken}`);
+
+      expect(res.status).toBe(200);
+      const data = res.body.data;
+      expect(data.viewMode).toBe('OPERATOR');
+      expect(data.kpis.activeJobs).toBeDefined();
+      expect(data.kpis.runningFurnaces).toBeDefined();
+      expect(data.kpis.financial).toBeUndefined(); // Financial KPIs omitted for non-finance/non-management roles
+    });
+  });
+
   describe('RBAC Authorization & Tenant Isolation', () => {
     it('should reject unauthenticated access', async () => {
       const res = await request(app).get('/api/v1/reporting/dashboard/executive');

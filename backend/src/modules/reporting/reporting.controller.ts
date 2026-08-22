@@ -21,6 +21,26 @@ export class ReportingController extends BaseController {
     }
   };
 
+  public getCommandCenterDashboard = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const user = this.getUser(req);
+      const actor = {
+        userId: user.userId,
+        role: user.roles?.[0],
+        permissions: (req as any).userPermissions || []
+      };
+      const result = await this.service.getCommandCenterDashboard(tenantId, actor, req.query as any);
+      this.sendSuccess(res, result, 'Manufacturing Command Center data generated');
+    } catch (error) {
+      next(error);
+    }
+  };
+
   public getThroughputReport = async (
     req: Request,
     res: Response,

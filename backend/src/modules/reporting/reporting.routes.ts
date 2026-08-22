@@ -14,7 +14,23 @@ export const reportingRouter = Router();
 reportingRouter.use(authenticateJwt);
 
 // ==========================================
-// 1. Executive Operational Dashboard
+// 1. Manufacturing Command Center Dashboard
+// ==========================================
+reportingRouter.get(
+  '/command-center',
+  requireAnyPermission(
+    PERMISSIONS.PRODUCTION_JOB_VIEW,
+    PERMISSIONS.MACHINES_FURNACE_VIEW,
+    PERMISSIONS.REPORTS_ANALYTICS_VIEW_OEE,
+    PERMISSIONS.REPORTS_ANALYTICS_VIEW_QUALITY,
+    PERMISSIONS.REPORTS_ANALYTICS_VIEW_FINANCE
+  ),
+  validateRequest({ query: dateRangeFilterSchema }),
+  reportingController.getCommandCenterDashboard
+);
+
+// ==========================================
+// 2. Executive Operational Dashboard
 // ==========================================
 reportingRouter.get(
   '/dashboard/executive',
