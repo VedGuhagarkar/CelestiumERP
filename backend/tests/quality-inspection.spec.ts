@@ -5,6 +5,7 @@ import { config } from '../src/config/app.config.js';
 import { qualityInspectionRepository } from '../src/modules/quality-inspection/quality-inspection.repository.js';
 import { productionJobRepository } from '../src/modules/production-job/production-job.repository.js';
 import { workforceCapacityRepository } from '../src/modules/workforce-capacity/workforce-capacity.repository.js';
+import { qualityPlanningRepository } from '../src/modules/quality-planning/quality-planning.repository.js';
 import { auditService } from '../src/modules/audit/audit.service.js';
 import { DEFAULT_FACTORY_ROLES } from '../src/modules/rbac/rbac.constants.js';
 import { roleRepository } from '../src/modules/rbac/role.repository.js';
@@ -168,6 +169,8 @@ describe('Quality Inspection Domain & Quality Lifecycle State Machine', () => {
 
   beforeEach(() => {
     jest.spyOn(auditService, 'record').mockResolvedValue({} as any);
+    jest.spyOn(qualityPlanningRepository, 'findApplicablePlan').mockResolvedValue(null);
+    jest.spyOn(qualityPlanningRepository, 'findById').mockResolvedValue(null);
     jest.spyOn(roleRepository, 'seedDefaultRolesForTenant').mockResolvedValue([] as any);
     jest.spyOn(roleRepository, 'findRolesByCodes').mockImplementation(async (_tenantId, codes) => {
       return DEFAULT_FACTORY_ROLES.filter((r) => codes.includes(r.code)).map((r) => ({

@@ -236,6 +236,17 @@ export interface IQualityInspection {
     microstructure?: MicrostructuralCriteria;
     customerAcceptance?: CustomerAcceptanceCriteria;
   };
+  qualityPlanSnapshot?: {
+    planId: string;
+    planCode: string;
+    revisionNumber: number;
+    title: string;
+    processFamily: string;
+    specCode: string;
+    specRevisionNumber: number;
+    characteristics: any[];
+    snapshottedAt: Date;
+  } | null;
   inspectionQuantity: {
     sampleSize: number;
     totalLotQuantity: number;
@@ -265,6 +276,7 @@ export type QualityInspectionDocument = Document & IQualityInspection;
 
 export interface CreateQualityInspectionDto {
   jobId: string;
+  qualityPlanId?: string;
   sampleSize?: number;
   assignedInspectorId?: string;
   notes?: string;

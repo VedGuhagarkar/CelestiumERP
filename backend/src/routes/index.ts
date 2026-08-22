@@ -29,6 +29,7 @@ import { productionJobRouter } from '../modules/production-job/production-job.ro
 import { productionScheduleRouter } from '../modules/production-schedule/production-schedule.routes.js';
 import { qualityInspectionRouter } from '../modules/quality-inspection/quality-inspection.routes.js';
 import { metallurgicalLabRouter } from '../modules/metallurgical-lab/metallurgical-lab.routes.js';
+import { qualityPlanningRouter } from '../modules/quality-planning/quality-planning.routes.js';
 
 /**
  * Root API v1 Router
@@ -78,6 +79,7 @@ v1Router.use('/production-jobs', productionJobRouter);
 v1Router.use('/production-schedules', productionScheduleRouter);
 v1Router.use('/quality-inspections', qualityInspectionRouter);
 v1Router.use('/metallurgical-lab', metallurgicalLabRouter);
+v1Router.use('/quality-plans', qualityPlanningRouter);
 
 
 

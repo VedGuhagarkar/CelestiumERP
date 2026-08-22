@@ -25,6 +25,7 @@ export const DomainEvents = {
   QC_REINSPECTION_REQUESTED: 'QualityInspection.ReinspectionRequested',
   QC_NCR_RAISED: 'QualityInspection.NcrRaised',
   QC_CAPA_UPDATED: 'QualityInspection.CapaUpdated',
+  QUALITY_PLAN_APPROVED: 'QualityPlan.Approved',
 
   // Machine & Pyrometry Events
   MACHINE_REGISTERED: 'Machine.Registered',

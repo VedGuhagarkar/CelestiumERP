@@ -265,6 +265,7 @@ const qualityInspectionSchema = createBaseSchema<QualityInspectionDocument>({
     microstructure: { type: Schema.Types.Mixed },
     customerAcceptance: { type: Schema.Types.Mixed }
   },
+  qualityPlanSnapshot: { type: Schema.Types.Mixed, default: null },
   inspectionQuantity: {
     sampleSize: { type: Number, required: true, default: 5 },
     totalLotQuantity: { type: Number, required: true },

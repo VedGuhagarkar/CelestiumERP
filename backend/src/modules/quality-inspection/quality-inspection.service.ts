@@ -16,6 +16,8 @@ import {
 } from './quality-inspection.types.js';
 import { productionJobRepository } from '../production-job/production-job.repository.js';
 import { workforceCapacityRepository } from '../workforce-capacity/workforce-capacity.repository.js';
+import { qualityPlanningRepository } from '../quality-planning/quality-planning.repository.js';
+import { qualityPlanningService } from '../quality-planning/quality-planning.service.js';
 import { auditService } from '../audit/audit.service.js';
 import { DomainEventBus } from '../../core/events/domain-event-bus.js';
 import { DomainEvents } from '../../core/constants/events.js';
@@ -74,6 +76,23 @@ export class QualityInspectionService {
     const sampleSize = dto.sampleSize || Math.max(3, Math.min(20, Math.ceil(job.quantity.targetQuantity * 0.05)));
 
     const now = new Date();
+    let qualityPlanSnapshot: any = null;
+    if (dto.qualityPlanId) {
+      const plan = await qualityPlanningRepository.findById(tenantId, dto.qualityPlanId);
+      if (plan && plan.status === 'APPROVED') {
+        qualityPlanSnapshot = qualityPlanningService.createSnapshot(plan);
+      }
+    } else {
+      const autoPlan = await qualityPlanningRepository.findApplicablePlan(tenantId, {
+        processFamily: job.recipeSnapshot.processFamily,
+        specCode: job.specificationSnapshot.specCode,
+        customerCode: job.customer.customerCode
+      });
+      if (autoPlan) {
+        qualityPlanSnapshot = qualityPlanningService.createSnapshot(autoPlan);
+      }
+    }
+
     const initialStatus = assignedInspector ? 'IN_REVIEW' : 'PENDING';
 
     const inspection = await this.repo.create(tenantId, {
@@ -125,6 +144,7 @@ export class QualityInspectionService {
         microstructure: job.specificationSnapshot.microstructure,
         customerAcceptance: job.specificationSnapshot.customerAcceptance
       },
+      qualityPlanSnapshot,
       inspectionQuantity: {
         sampleSize,
         totalLotQuantity: job.quantity.completedQuantity || job.quantity.targetQuantity,
@@ -464,6 +484,18 @@ export class QualityInspectionService {
       throw new BadRequestError(
         `Cannot approve inspection '${inspection.inspectionNumber}' as CONFORMING when test records contain failing measurements. Must record concession or request reinspection.`
       );
+    }
+
+    if (inspection.qualityPlanSnapshot) {
+      const compliance = qualityPlanningService.evaluateInspectionCompliance(
+        inspection.qualityPlanSnapshot as any,
+        inspection
+      );
+      if (!compliance.compliant) {
+        throw new BadRequestError(
+          `Cannot approve inspection '${inspection.inspectionNumber}': ${compliance.evaluationSummary}`
+        );
+      }
     }
 
     const now = new Date();
