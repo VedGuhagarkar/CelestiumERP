@@ -12,6 +12,7 @@ import {
 } from './production-schedule.types.js';
 import { productionJobRepository } from '../production-job/production-job.repository.js';
 import { furnaceCapacityRepository } from '../furnace-capacity/furnace-capacity.repository.js';
+import { machineRepository } from '../machine/machine.repository.js';
 import { workforceCapacityRepository } from '../workforce-capacity/workforce-capacity.repository.js';
 import { constraintAnalysisService } from '../constraint-analysis/constraint-analysis.service.js';
 import { auditService } from '../audit/audit.service.js';
@@ -91,6 +92,15 @@ export class ProductionScheduleService {
     if (furnace.status !== 'OPERATIONAL') {
       throw new BadRequestError(
         `Furnace '${furnace.furnaceCode}' is not available for scheduling (Current status: '${furnace.status}')`
+      );
+    }
+
+    const machine =
+      (await machineRepository.findById(tenantId, dto.furnaceId)) ||
+      (await machineRepository.findByCode(tenantId, furnace.furnaceCode));
+    if (machine && ['BREAKDOWN', 'MAINTENANCE', 'OFFLINE', 'CALIBRATING'].includes(machine.status)) {
+      throw new BadRequestError(
+        `Equipment '${machine.machineCode}' is unavailable for scheduling (Current machine status: '${machine.status}')`
       );
     }
 
@@ -346,6 +356,15 @@ export class ProductionScheduleService {
     if (furnace.status !== 'OPERATIONAL') {
       throw new BadRequestError(
         `Furnace '${furnace.furnaceCode}' is not available (Current status: '${furnace.status}')`
+      );
+    }
+
+    const machine =
+      (await machineRepository.findById(tenantId, targetFurnaceId)) ||
+      (await machineRepository.findByCode(tenantId, furnace.furnaceCode));
+    if (machine && ['BREAKDOWN', 'MAINTENANCE', 'OFFLINE', 'CALIBRATING'].includes(machine.status)) {
+      throw new BadRequestError(
+        `Equipment '${machine.machineCode}' is unavailable for rescheduling (Current machine status: '${machine.status}')`
       );
     }
 

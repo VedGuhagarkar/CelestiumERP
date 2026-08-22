@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { MachineModel } from './machine.model.js';
 import {
   MachineDocument,
@@ -42,6 +43,9 @@ export class MachineRepository implements IMachineRepository {
   }
 
   public async findById(tenantId: string, id: string): Promise<MachineDocument | null> {
+    if (!mongoose.Types.ObjectId.isValid(id) || mongoose.connection.readyState === 0) {
+      return null;
+    }
     return await MachineModel.findOne({
       _id: id,
       tenantId,
@@ -50,6 +54,9 @@ export class MachineRepository implements IMachineRepository {
   }
 
   public async findByCode(tenantId: string, machineCode: string): Promise<MachineDocument | null> {
+    if (mongoose.connection.readyState === 0) {
+      return null;
+    }
     return await MachineModel.findOne({
       tenantId,
       machineCode: machineCode.toUpperCase(),
@@ -62,6 +69,9 @@ export class MachineRepository implements IMachineRepository {
     id: string,
     data: Partial<MachineDocument>
   ): Promise<MachineDocument | null> {
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return null;
+    }
     return await MachineModel.findOneAndUpdate(
       { _id: id, tenantId, isDeleted: false },
       { $set: data },
@@ -70,6 +80,9 @@ export class MachineRepository implements IMachineRepository {
   }
 
   public async delete(tenantId: string, id: string): Promise<MachineDocument | null> {
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return null;
+    }
     return await MachineModel.findOneAndUpdate(
       { _id: id, tenantId, isDeleted: false },
       { $set: { isDeleted: true, status: 'OFFLINE' } },
