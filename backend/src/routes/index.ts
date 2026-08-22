@@ -33,6 +33,7 @@ import { qualityPlanningRouter } from '../modules/quality-planning/quality-plann
 import { ncrRouter, capaRouter } from '../modules/ncr-capa/ncr-capa.routes.js';
 import { qualityDocumentationRouter } from '../modules/quality-documentation/quality-documentation.routes.js';
 import { machineRouter } from '../modules/machine/machine.routes.js';
+import { maintenanceRouter } from '../modules/maintenance/maintenance.routes.js';
 
 /**
  * Root API v1 Router
@@ -87,6 +88,7 @@ v1Router.use('/ncrs', ncrRouter);
 v1Router.use('/capas', capaRouter);
 v1Router.use('/quality-documents', qualityDocumentationRouter);
 v1Router.use('/machines', machineRouter);
+v1Router.use('/maintenance', maintenanceRouter);
 
 
 

@@ -38,6 +38,9 @@ export const DomainEvents = {
   MACHINE_CALIBRATION_LOGGED: 'Machine.CalibrationLogged',
   MACHINE_MAINTENANCE_TRIGGERED: 'Machine.MaintenanceTriggered',
   MACHINE_MAINTENANCE_COMPLETED: 'Machine.MaintenanceCompleted',
+  MAINTENANCE_WORK_ORDER_CREATED: 'Maintenance.WorkOrderCreated',
+  MAINTENANCE_WORK_ORDER_COMPLETED: 'Maintenance.WorkOrderCompleted',
+  PREVENTIVE_PLAN_CREATED: 'Maintenance.PreventivePlanCreated',
 
   // Inventory & Heat Lot Events
   INVENTORY_ITEM_CREATED: 'Inventory.ItemCreated',
