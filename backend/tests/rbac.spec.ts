@@ -52,10 +52,11 @@ describe('Enterprise RBAC & Factory Authorization Subsystem', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      expect(res.body.data.length).toBe(8);
+      expect(res.body.data.length).toBe(DEFAULT_FACTORY_ROLES.length);
       const roleCodes = res.body.data.map((r: any) => r.code);
       expect(roleCodes).toContain('ADMIN');
       expect(roleCodes).toContain('METALLURGIST');
+      expect(roleCodes).toContain('FINANCE_CONTROLLER');
       expect(roleCodes).toContain('FURNACE_OPERATOR');
       expect(roleCodes).toContain('QC_INSPECTOR');
     });

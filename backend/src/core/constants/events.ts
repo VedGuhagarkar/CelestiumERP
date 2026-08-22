@@ -90,6 +90,9 @@ export const DomainEvents = {
   // Costing & Finance Events
   JOB_COST_RECALCULATED: 'Costing.JobCostRecalculated',
   JOURNAL_POSTED: 'Finance.JournalPosted',
+  JOURNAL_REVERSED: 'Finance.JournalReversed',
+  PERIOD_CLOSED: 'Finance.PeriodClosed',
+  PERIOD_REOPENED: 'Finance.PeriodReopened',
   INVOICE_ISSUED: 'Finance.InvoiceIssued',
   PAYMENT_RECEIVED: 'Finance.PaymentReceived',
 

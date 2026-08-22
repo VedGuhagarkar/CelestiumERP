@@ -37,6 +37,7 @@ import { maintenanceRouter } from '../modules/maintenance/maintenance.routes.js'
 import { pyrometryRouter } from '../modules/pyrometry/pyrometry.routes.js';
 import { attendanceRouter } from '../modules/attendance/attendance.routes.js';
 import { dispatchRouter } from '../modules/dispatch/dispatch.routes.js';
+import { financeRouter } from '../modules/finance/finance.routes.js';
 
 /**
  * Root API v1 Router
@@ -95,6 +96,7 @@ v1Router.use('/maintenance', maintenanceRouter);
 v1Router.use('/pyrometry', pyrometryRouter);
 v1Router.use('/attendance', attendanceRouter);
 v1Router.use('/dispatches', dispatchRouter);
+v1Router.use('/finance', financeRouter);
 
 
 

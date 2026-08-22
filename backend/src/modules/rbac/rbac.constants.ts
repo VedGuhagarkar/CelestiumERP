@@ -89,13 +89,23 @@ export const PERMISSIONS = {
   DISPATCH_DELIVERY_DISPATCH: 'dispatch:delivery:dispatch',
   DISPATCH_PASS_GENERATE: 'dispatch:pass:generate',
 
-  // 10. Factory Costing & Management Analytics
+  // 10. Factory Accounting & Financial Foundation
+  FINANCE_ACCOUNT_VIEW: 'finance:account:view',
+  FINANCE_ACCOUNT_MANAGE: 'finance:account:manage',
+  FINANCE_JOURNAL_VIEW: 'finance:journal:view',
+  FINANCE_JOURNAL_CREATE: 'finance:journal:create',
+  FINANCE_JOURNAL_POST: 'finance:journal:post',
+  FINANCE_JOURNAL_REVERSE: 'finance:journal:reverse',
+  FINANCE_PERIOD_MANAGE: 'finance:period:manage',
+  FINANCE_TRIAL_BALANCE_VIEW: 'finance:trial_balance:view',
+
+  // 11. Factory Costing & Management Analytics
   REPORTS_ANALYTICS_VIEW_OEE: 'reports:analytics:view_oee',
   REPORTS_ANALYTICS_VIEW_QUALITY: 'reports:analytics:view_quality',
   REPORTS_ANALYTICS_VIEW_FINANCE: 'reports:analytics:view_finance',
   REPORTS_ANALYTICS_EXPORT: 'reports:analytics:export',
 
-  // 11. Platform & Tenant Administration
+  // 12. Platform & Tenant Administration
   ADMIN_USER_CREATE: 'admin:user:create',
   ADMIN_USER_VIEW: 'admin:user:view',
   ADMIN_USER_UPDATE: 'admin:user:update',
@@ -165,6 +175,14 @@ export const DEFAULT_FACTORY_ROLES = [
       PERMISSIONS.DISPATCH_DELIVERY_VIEW,
       PERMISSIONS.DISPATCH_DELIVERY_DISPATCH,
       PERMISSIONS.DISPATCH_PASS_GENERATE,
+      PERMISSIONS.FINANCE_ACCOUNT_VIEW,
+      PERMISSIONS.FINANCE_ACCOUNT_MANAGE,
+      PERMISSIONS.FINANCE_JOURNAL_VIEW,
+      PERMISSIONS.FINANCE_JOURNAL_CREATE,
+      PERMISSIONS.FINANCE_JOURNAL_POST,
+      PERMISSIONS.FINANCE_JOURNAL_REVERSE,
+      PERMISSIONS.FINANCE_PERIOD_MANAGE,
+      PERMISSIONS.FINANCE_TRIAL_BALANCE_VIEW,
       PERMISSIONS.REPORTS_ANALYTICS_VIEW_OEE,
       PERMISSIONS.REPORTS_ANALYTICS_VIEW_QUALITY,
       PERMISSIONS.REPORTS_ANALYTICS_VIEW_FINANCE,
@@ -311,6 +329,29 @@ export const DEFAULT_FACTORY_ROLES = [
       PERMISSIONS.DISPATCH_DELIVERY_DISPATCH,
       PERMISSIONS.DISPATCH_PASS_GENERATE,
       PERMISSIONS.WORKFORCE_ATTENDANCE_MARK
+    ]
+  },
+  {
+    code: 'FINANCE_CONTROLLER',
+    name: 'Factory Finance Controller & Cost Accountant',
+    description: 'Chart of Accounts, journal entry posting/reversal, period closure, trial balance, and factory cost centers',
+    isSystemRole: true,
+    permissions: [
+      PERMISSIONS.CUSTOMER_VIEW,
+      PERMISSIONS.INVENTORY_ITEM_VIEW,
+      PERMISSIONS.PRODUCTION_JOB_VIEW,
+      PERMISSIONS.DISPATCH_DELIVERY_VIEW,
+      PERMISSIONS.INVENTORY_STOCK_VIEW,
+      PERMISSIONS.FINANCE_ACCOUNT_VIEW,
+      PERMISSIONS.FINANCE_ACCOUNT_MANAGE,
+      PERMISSIONS.FINANCE_JOURNAL_VIEW,
+      PERMISSIONS.FINANCE_JOURNAL_CREATE,
+      PERMISSIONS.FINANCE_JOURNAL_POST,
+      PERMISSIONS.FINANCE_JOURNAL_REVERSE,
+      PERMISSIONS.FINANCE_PERIOD_MANAGE,
+      PERMISSIONS.FINANCE_TRIAL_BALANCE_VIEW,
+      PERMISSIONS.REPORTS_ANALYTICS_VIEW_FINANCE,
+      PERMISSIONS.REPORTS_ANALYTICS_EXPORT
     ]
   }
 ];
