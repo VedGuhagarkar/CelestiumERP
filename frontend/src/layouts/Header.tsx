@@ -5,7 +5,11 @@ import { toggleSidebar } from '../store/slices/uiSlice.js';
 import { useAuth } from '../hooks/useAuth.js';
 import type { RootState } from '../store/store.js';
 
-export const Header: React.FC = () => {
+interface HeaderProps {
+  onOpenSearch?: () => void;
+}
+
+export const Header: React.FC<HeaderProps> = ({ onOpenSearch }) => {
   const dispatch = useDispatch();
   const { user, logout } = useAuth();
   const { isSidebarCollapsed } = useSelector((state: RootState) => state.ui);
@@ -76,6 +80,7 @@ export const Header: React.FC = () => {
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
         {/* Search Bar Shortcut */}
         <div
+          onClick={onOpenSearch}
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -86,7 +91,8 @@ export const Header: React.FC = () => {
             padding: '6px 14px',
             color: 'var(--color-text-muted)',
             fontSize: '13px',
-            cursor: 'pointer'
+            cursor: 'pointer',
+            transition: 'border-color 0.15s ease'
           }}
         >
           <Search size={15} />
@@ -100,7 +106,7 @@ export const Header: React.FC = () => {
               color: 'var(--color-text-secondary)'
             }}
           >
-            ⌘K
+            Ctrl+K
           </kbd>
         </div>
 
