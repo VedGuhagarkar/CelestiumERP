@@ -59,7 +59,7 @@ export class SearchService extends BaseService {
     }
     if (
       roles.includes('MAINTENANCE_TECH') &&
-      [PERMISSIONS.MACHINES_FURNACE_VIEW, PERMISSIONS.MAINTENANCE_WORK_ORDER_VIEW].includes(permission as any)
+      [PERMISSIONS.MACHINES_FURNACE_VIEW, PERMISSIONS.MAINTENANCE_WORKORDER_VIEW].includes(permission as any)
     ) {
       return true;
     }

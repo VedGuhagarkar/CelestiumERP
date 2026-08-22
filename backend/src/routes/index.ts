@@ -50,21 +50,53 @@ import { searchRouter } from '../modules/search/search.routes.js';
 
 export const v1Router = Router();
 
-// Health Check Endpoint
+// Health, Liveness & Readiness Probes (SRE Orchestration)
 v1Router.get('/health', async (_req: Request, res: Response) => {
   const dbHealth = await getDatabaseHealth();
+  const isHealthy = dbHealth.status === 'healthy' || dbHealth.status === 'degraded' || config.app.isTest;
+  const mem = process.memoryUsage();
 
   return ApiResponse.success(
     res,
     {
-      status: 'healthy',
+      status: isHealthy ? 'healthy' : dbHealth.status,
       timestamp: new Date().toISOString(),
       uptimeSeconds: Math.floor(process.uptime()),
+      memory: {
+        rssMb: Math.round(mem.rss / 1024 / 1024),
+        heapUsedMb: Math.round(mem.heapUsed / 1024 / 1024),
+        heapTotalMb: Math.round(mem.heapTotal / 1024 / 1024)
+      },
       database: dbHealth,
       version: config.app.version,
       environment: config.app.env
     },
-    'Astralis ERP Backend API is operational'
+    isHealthy ? 'Astralis ERP Backend API is operational' : 'Astralis ERP Backend is degraded/unhealthy',
+    isHealthy ? 200 : 503
+  );
+});
+
+v1Router.get('/health/liveness', (_req: Request, res: Response) => {
+  return ApiResponse.success(
+    res,
+    { status: 'alive', timestamp: new Date().toISOString(), uptimeSeconds: Math.floor(process.uptime()) },
+    'Process is alive'
+  );
+});
+
+v1Router.get('/health/readiness', async (_req: Request, res: Response) => {
+  const dbHealth = await getDatabaseHealth();
+  const isReady = dbHealth.status === 'healthy' || dbHealth.status === 'degraded' || config.app.isTest;
+
+  return ApiResponse.success(
+    res,
+    {
+      ready: isReady,
+      databaseState: dbHealth.connectionState,
+      pingLatencyMs: dbHealth.pingLatencyMs
+    },
+    isReady ? 'Ready for traffic' : 'Not ready for traffic',
+    isReady ? 200 : 503
   );
 });
 
