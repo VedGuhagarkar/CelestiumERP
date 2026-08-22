@@ -34,6 +34,20 @@ export class IndexRegistry {
   }
 
   /**
+   * Helper to attach a tenant-prefixed compound index to a Mongoose schema
+   */
+  public static addCompoundIndex(
+    schema: Schema,
+    fields: Record<string, 1 | -1 | 'text' | '2dsphere'>,
+    options: IndexOptions = {}
+  ): void {
+    schema.index(
+      { tenantId: 1, ...fields },
+      options
+    );
+  }
+
+  /**
    * Helper to attach a tenant-scoped status & soft-delete compound index for high-velocity lookups
    */
   public static addStatusFilterIndex(
