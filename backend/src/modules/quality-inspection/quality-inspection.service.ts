@@ -18,6 +18,7 @@ import { productionJobRepository } from '../production-job/production-job.reposi
 import { workforceCapacityRepository } from '../workforce-capacity/workforce-capacity.repository.js';
 import { qualityPlanningRepository } from '../quality-planning/quality-planning.repository.js';
 import { qualityPlanningService } from '../quality-planning/quality-planning.service.js';
+import { ncrCapaRepository } from '../ncr-capa/ncr-capa.repository.js';
 import { auditService } from '../audit/audit.service.js';
 import { DomainEventBus } from '../../core/events/domain-event-bus.js';
 import { DomainEvents } from '../../core/constants/events.js';
@@ -580,8 +581,7 @@ export class QualityInspectionService {
 
     const now = new Date();
     const prevStatus = inspection.status;
-    const yearMonth = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const ncrNumber = `NCR-${yearMonth}-${String(Math.floor(1000 + Math.random() * 9000))}`;
+    const ncrNumber = await ncrCapaRepository.generateNextNcrNumber(tenantId);
 
     inspection.status = 'REJECTED';
     inspection.disposition = 'NON_CONFORMING';
@@ -632,6 +632,81 @@ export class QualityInspectionService {
         job.execution.qualityHandoff.status = 'REJECTED';
       }
       await job.save();
+
+      // Create linked NonConformanceReport downstream record
+      await ncrCapaRepository.createNcr(tenantId, {
+        ncrNumber,
+        status: 'OPEN',
+        inspectionId: inspection.id,
+        inspectionNumber: inspection.inspectionNumber,
+        jobId: job.id,
+        jobNumber: job.jobNumber,
+        planId: job.planId || null,
+        planNumber: job.planNumber || null,
+        customer: {
+          customerId: job.customer.customerId,
+          customerCode: job.customer.customerCode,
+          customerName: job.customer.customerName
+        },
+        item: {
+          itemId: job.item.itemId,
+          itemCode: job.item.itemCode,
+          itemName: job.item.itemName,
+          materialGrade: job.item.materialGrade,
+          uom: job.item.uom
+        },
+        heatLots: (job.materialAllocations || []).map((m) => ({
+          heatLotId: m.heatLotId || null,
+          heatLotNumber: m.heatLotNumber || null,
+          quantity: m.allocatedQuantity,
+          uom: m.uom
+        })),
+        processFamily: job.recipeSnapshot?.processFamily,
+        defectType: 'OTHER',
+        defectSeverity: dto.severity,
+        defectDescription: dto.defectDescription,
+        affectedQuantity: {
+          totalAffectedQuantity: job.quantity.targetQuantity,
+          rejectedQuantity: inspection.inspectionQuantity.sampleSize,
+          scrappedQuantity: 0,
+          reworkedQuantity: 0,
+          uom: job.item.uom
+        },
+        evidence: [],
+        containment: {
+          containmentAction: `Inspection rejection: ${dto.defectDescription}`,
+          isQuarantined: !!dto.quarantineRequired,
+          quarantineBay: dto.quarantineLocationBay || null,
+          containedAt: now,
+          containedBy: {
+            userId: actor.userId,
+            email: actor.email,
+            role: actor.role
+          }
+        },
+        requiresCapa: dto.severity === 'CRITICAL' || !!dto.correctiveActionPlan,
+        capaIds: [],
+        capaNumbers: [],
+        raisedAt: now,
+        raisedBy: {
+          userId: actor.userId,
+          email: actor.email,
+          role: actor.role
+        },
+        transitionHistory: [
+          {
+            fromStatus: 'OPEN',
+            toStatus: 'OPEN',
+            timestamp: now,
+            performedBy: {
+              userId: actor.userId,
+              email: actor.email,
+              role: actor.role
+            },
+            reason: `Automatically created on Quality Inspection ${inspection.inspectionNumber} rejection`
+          }
+        ]
+      });
     }
 
     this.eventBus.publish({

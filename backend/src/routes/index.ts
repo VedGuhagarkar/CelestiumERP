@@ -30,6 +30,7 @@ import { productionScheduleRouter } from '../modules/production-schedule/product
 import { qualityInspectionRouter } from '../modules/quality-inspection/quality-inspection.routes.js';
 import { metallurgicalLabRouter } from '../modules/metallurgical-lab/metallurgical-lab.routes.js';
 import { qualityPlanningRouter } from '../modules/quality-planning/quality-planning.routes.js';
+import { ncrRouter, capaRouter } from '../modules/ncr-capa/ncr-capa.routes.js';
 
 /**
  * Root API v1 Router
@@ -80,6 +81,8 @@ v1Router.use('/production-schedules', productionScheduleRouter);
 v1Router.use('/quality-inspections', qualityInspectionRouter);
 v1Router.use('/metallurgical-lab', metallurgicalLabRouter);
 v1Router.use('/quality-plans', qualityPlanningRouter);
+v1Router.use('/ncrs', ncrRouter);
+v1Router.use('/capas', capaRouter);
 
 
 
