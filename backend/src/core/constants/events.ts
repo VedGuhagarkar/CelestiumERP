@@ -88,7 +88,10 @@ export const DomainEvents = {
   MRP_RUN_COMPLETED: 'Planning.MrpRunCompleted',
 
   // Costing & Finance Events
+  JOB_COST_CALCULATED: 'Costing.JobCostCalculated',
   JOB_COST_RECALCULATED: 'Costing.JobCostRecalculated',
+  JOB_COST_FROZEN: 'Costing.JobCostFrozen',
+  COST_RATE_CARD_UPDATED: 'Costing.RateCardUpdated',
   JOURNAL_POSTED: 'Finance.JournalPosted',
   JOURNAL_REVERSED: 'Finance.JournalReversed',
   PERIOD_CLOSED: 'Finance.PeriodClosed',
