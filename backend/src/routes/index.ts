@@ -6,6 +6,7 @@ import { authRouter } from '../modules/auth/auth.routes.js';
 import { rbacRouter } from '../modules/rbac/rbac.routes.js';
 import { auditRouter } from '../modules/audit/audit.routes.js';
 import { customerRouter } from '../modules/customer/customer.routes.js';
+import { itemRouter } from '../modules/item/item.routes.js';
 
 /**
  * Root API v1 Router
@@ -36,3 +37,4 @@ v1Router.use('/auth', authRouter);
 v1Router.use('/rbac', rbacRouter);
 v1Router.use('/audit', auditRouter);
 v1Router.use('/customers', customerRouter);
+v1Router.use('/items', itemRouter);

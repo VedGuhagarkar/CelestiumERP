@@ -9,7 +9,13 @@ export const PERMISSIONS = {
   CUSTOMER_UPDATE: 'customer:profile:update',
   CUSTOMER_DEACTIVATE: 'customer:profile:deactivate',
 
-  // 2. Production & Job Card Management
+  // 2. Item & Material Master Data
+  INVENTORY_ITEM_CREATE: 'inventory:item:create',
+  INVENTORY_ITEM_VIEW: 'inventory:item:view',
+  INVENTORY_ITEM_UPDATE: 'inventory:item:update',
+  INVENTORY_ITEM_DEACTIVATE: 'inventory:item:deactivate',
+
+  // 3. Production & Job Card Management
   PRODUCTION_JOB_CREATE: 'production:job:create',
   PRODUCTION_JOB_VIEW: 'production:job:view',
   PRODUCTION_JOB_UPDATE: 'production:job:update',
@@ -21,7 +27,7 @@ export const PERMISSIONS = {
   PRODUCTION_SCHEDULE_VIEW: 'production:schedule:view',
   PRODUCTION_SCHEDULE_MANAGE: 'production:schedule:manage',
 
-  // 3. Metallurgical Quality Control & Pyrometry
+  // 4. Metallurgical Quality Control & Pyrometry
   QUALITY_RECIPE_CREATE: 'quality:recipe:create',
   QUALITY_RECIPE_VIEW: 'quality:recipe:view',
   QUALITY_RECIPE_UPDATE: 'quality:recipe:update',
@@ -39,14 +45,14 @@ export const PERMISSIONS = {
   QUALITY_COC_REVOKE: 'quality:coc:revoke',
   QUALITY_DISPOSITION_MANAGE: 'quality:disposition:manage',
 
-  // 4. Furnaces & Heat-Treatment Equipment
+  // 5. Furnaces & Heat-Treatment Equipment
   MACHINES_FURNACE_VIEW: 'machines:furnace:view',
   MACHINES_FURNACE_OPERATE: 'machines:furnace:operate',
   MACHINES_FURNACE_CONFIGURE: 'machines:furnace:configure',
   MACHINES_TELEMETRY_VIEW: 'machines:telemetry:view',
   MACHINES_TELEMETRY_LOG: 'machines:telemetry:log',
 
-  // 5. Equipment Maintenance & Calibration
+  // 6. Equipment Maintenance & Calibration
   MAINTENANCE_WORKORDER_CREATE: 'maintenance:workorder:create',
   MAINTENANCE_WORKORDER_VIEW: 'maintenance:workorder:view',
   MAINTENANCE_WORKORDER_UPDATE: 'maintenance:workorder:update',
@@ -54,7 +60,7 @@ export const PERMISSIONS = {
   MAINTENANCE_WORKORDER_APPROVE: 'maintenance:workorder:approve',
   MAINTENANCE_SCHEDULE_MANAGE: 'maintenance:schedule:manage',
 
-  // 6. Stores, Raw Material & Heat-Lot Traceability
+  // 7. Stores, Raw Material & Heat-Lot Traceability
   INVENTORY_HEAT_LOT_INWARD: 'inventory:heat_lot:inward',
   INVENTORY_HEAT_LOT_VIEW: 'inventory:heat_lot:view',
   INVENTORY_HEAT_LOT_QUARANTINE: 'inventory:heat_lot:quarantine',
@@ -63,7 +69,7 @@ export const PERMISSIONS = {
   INVENTORY_STOCK_ADJUST: 'inventory:stock:adjust',
   INVENTORY_STOCK_TRANSFER: 'inventory:stock:transfer',
 
-  // 7. Workforce & Attendance Management
+  // 8. Workforce & Attendance Management
   WORKFORCE_EMPLOYEE_VIEW: 'workforce:employee:view',
   WORKFORCE_EMPLOYEE_MANAGE: 'workforce:employee:manage',
   WORKFORCE_EMPLOYEE_CERTIFY: 'workforce:employee:certify',
@@ -71,19 +77,19 @@ export const PERMISSIONS = {
   WORKFORCE_ATTENDANCE_MARK: 'workforce:attendance:mark',
   WORKFORCE_ATTENDANCE_APPROVE: 'workforce:attendance:approve',
 
-  // 8. Finished Goods Warehouse & Dispatch
+  // 9. Finished Goods Warehouse & Dispatch
   DISPATCH_DELIVERY_CREATE: 'dispatch:delivery:create',
   DISPATCH_DELIVERY_VIEW: 'dispatch:delivery:view',
   DISPATCH_DELIVERY_DISPATCH: 'dispatch:delivery:dispatch',
   DISPATCH_PASS_GENERATE: 'dispatch:pass:generate',
 
-  // 9. Factory Costing & Management Analytics
+  // 10. Factory Costing & Management Analytics
   REPORTS_ANALYTICS_VIEW_OEE: 'reports:analytics:view_oee',
   REPORTS_ANALYTICS_VIEW_QUALITY: 'reports:analytics:view_quality',
   REPORTS_ANALYTICS_VIEW_FINANCE: 'reports:analytics:view_finance',
   REPORTS_ANALYTICS_EXPORT: 'reports:analytics:export',
 
-  // 10. Platform & Tenant Administration
+  // 11. Platform & Tenant Administration
   ADMIN_USER_CREATE: 'admin:user:create',
   ADMIN_USER_VIEW: 'admin:user:view',
   ADMIN_USER_UPDATE: 'admin:user:update',
@@ -120,6 +126,9 @@ export const DEFAULT_FACTORY_ROLES = [
       PERMISSIONS.CUSTOMER_VIEW,
       PERMISSIONS.CUSTOMER_CREATE,
       PERMISSIONS.CUSTOMER_UPDATE,
+      PERMISSIONS.INVENTORY_ITEM_VIEW,
+      PERMISSIONS.INVENTORY_ITEM_CREATE,
+      PERMISSIONS.INVENTORY_ITEM_UPDATE,
       PERMISSIONS.PRODUCTION_JOB_VIEW,
       PERMISSIONS.PRODUCTION_JOB_HOLD,
       PERMISSIONS.PRODUCTION_JOB_CANCEL,
@@ -152,6 +161,9 @@ export const DEFAULT_FACTORY_ROLES = [
     isSystemRole: true,
     permissions: [
       PERMISSIONS.CUSTOMER_VIEW,
+      PERMISSIONS.INVENTORY_ITEM_VIEW,
+      PERMISSIONS.INVENTORY_ITEM_CREATE,
+      PERMISSIONS.INVENTORY_ITEM_UPDATE,
       PERMISSIONS.PRODUCTION_JOB_VIEW,
       PERMISSIONS.PRODUCTION_JOB_HOLD,
       PERMISSIONS.QUALITY_RECIPE_CREATE,
@@ -184,6 +196,7 @@ export const DEFAULT_FACTORY_ROLES = [
     description: 'Floor operations: batch execution, stage transitions, furnace loading/unloading, temperature logs',
     isSystemRole: true,
     permissions: [
+      PERMISSIONS.INVENTORY_ITEM_VIEW,
       PERMISSIONS.PRODUCTION_JOB_VIEW,
       PERMISSIONS.PRODUCTION_JOB_START,
       PERMISSIONS.PRODUCTION_JOB_TRANSITION,
@@ -205,6 +218,7 @@ export const DEFAULT_FACTORY_ROLES = [
     isSystemRole: true,
     permissions: [
       PERMISSIONS.CUSTOMER_VIEW,
+      PERMISSIONS.INVENTORY_ITEM_VIEW,
       PERMISSIONS.PRODUCTION_JOB_VIEW,
       PERMISSIONS.QUALITY_RECIPE_VIEW,
       PERMISSIONS.QUALITY_INSPECTION_RECORD,
@@ -221,6 +235,7 @@ export const DEFAULT_FACTORY_ROLES = [
     description: 'Preventive maintenance execution, thermocouple replacement, and breakdown repair',
     isSystemRole: true,
     permissions: [
+      PERMISSIONS.INVENTORY_ITEM_VIEW,
       PERMISSIONS.MACHINES_FURNACE_VIEW,
       PERMISSIONS.MACHINES_FURNACE_CONFIGURE,
       PERMISSIONS.MACHINES_TELEMETRY_VIEW,
@@ -242,6 +257,9 @@ export const DEFAULT_FACTORY_ROLES = [
     isSystemRole: true,
     permissions: [
       PERMISSIONS.CUSTOMER_VIEW,
+      PERMISSIONS.INVENTORY_ITEM_VIEW,
+      PERMISSIONS.INVENTORY_ITEM_CREATE,
+      PERMISSIONS.INVENTORY_ITEM_UPDATE,
       PERMISSIONS.INVENTORY_HEAT_LOT_INWARD,
       PERMISSIONS.INVENTORY_HEAT_LOT_VIEW,
       PERMISSIONS.INVENTORY_HEAT_LOT_QUARANTINE,
@@ -259,6 +277,7 @@ export const DEFAULT_FACTORY_ROLES = [
     isSystemRole: true,
     permissions: [
       PERMISSIONS.CUSTOMER_VIEW,
+      PERMISSIONS.INVENTORY_ITEM_VIEW,
       PERMISSIONS.PRODUCTION_JOB_VIEW,
       PERMISSIONS.QUALITY_COC_GENERATE,
       PERMISSIONS.INVENTORY_STOCK_VIEW,
