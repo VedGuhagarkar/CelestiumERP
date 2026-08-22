@@ -8,22 +8,56 @@ import {
 } from '../specification/specification.types.js';
 
 export type JobStatus =
-  | 'PENDING_RELEASE'
-  | 'RELEASED'
-  | 'STAGED'
-  | 'LOADED'
-  | 'HEATING'
-  | 'SOAKING'
-  | 'QUENCHING'
-  | 'TEMPERING'
-  | 'COOLING'
-  | 'UNLOADED'
-  | 'AWAITING_QC'
+  | 'DRAFT'
+  | 'PENDING_REVIEW'
+  | 'APPROVED'
+  | 'SCHEDULED'
+  | 'IN_PROGRESS'
+  | 'PAUSED'
+  | 'QUALITY_CHECK'
+  | 'STORAGE'
+  | 'READY_FOR_DISPATCH'
+  | 'DISPATCHED'
   | 'COMPLETED'
-  | 'ON_HOLD'
   | 'CANCELLED';
 
 export type JobPriority = 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT' | 'AOG_CRITICAL';
+
+export const PRIORITY_WEIGHTS: Record<JobPriority, number> = {
+  AOG_CRITICAL: 1,
+  URGENT: 2,
+  HIGH: 3,
+  NORMAL: 4,
+  LOW: 5
+};
+
+export const ALLOWED_STATUS_TRANSITIONS: Record<JobStatus, JobStatus[]> = {
+  DRAFT: ['PENDING_REVIEW', 'CANCELLED'],
+  PENDING_REVIEW: ['APPROVED', 'DRAFT', 'CANCELLED'],
+  APPROVED: ['SCHEDULED', 'CANCELLED'],
+  SCHEDULED: ['IN_PROGRESS', 'APPROVED', 'CANCELLED'],
+  IN_PROGRESS: ['PAUSED', 'QUALITY_CHECK', 'CANCELLED'],
+  PAUSED: ['IN_PROGRESS', 'CANCELLED'],
+  QUALITY_CHECK: ['STORAGE', 'IN_PROGRESS', 'CANCELLED'],
+  STORAGE: ['READY_FOR_DISPATCH', 'QUALITY_CHECK', 'CANCELLED'],
+  READY_FOR_DISPATCH: ['DISPATCHED', 'STORAGE', 'CANCELLED'],
+  DISPATCHED: ['COMPLETED'],
+  COMPLETED: [],
+  CANCELLED: []
+};
+
+export interface IJobStateTransition {
+  fromStatus: JobStatus;
+  toStatus: JobStatus;
+  timestamp: Date;
+  performedBy: {
+    userId: string;
+    email?: string;
+    role?: string;
+  };
+  reason?: string | null;
+  notes?: string | null;
+}
 
 export interface IJobRecipeSnapshot {
   recipeId: string;
@@ -78,8 +112,8 @@ export interface IJobOperatorAssignment {
 export interface IProductionJob {
   jobNumber: string;
   tenantId: string;
-  planId: string;
-  planNumber: string;
+  planId?: string | null;
+  planNumber?: string | null;
   customer: {
     customerId: string;
     customerCode: string;
@@ -111,7 +145,9 @@ export interface IProductionJob {
     actualStartDate?: Date | null;
     actualCompletionDate?: Date | null;
   };
+  transitionHistory: IJobStateTransition[];
   idempotencyKey?: string | null;
+  cancellationReason?: string | null;
   notes?: string | null;
   isDeleted: boolean;
 }
@@ -120,6 +156,49 @@ export interface ProductionJobDocument extends IProductionJob, Document {
   id: string;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface CreateDirectJobDto {
+  customerId: string;
+  itemId: string;
+  recipeId: string;
+  specificationId: string;
+  targetQuantity: number;
+  priority?: JobPriority;
+  plannedStartDate: string | Date;
+  targetCompletionDate: string | Date;
+  assignedFurnaceId?: string;
+  assignedOperatorId?: string;
+  shift?: string;
+  materialAllocations?: {
+    heatLotId?: string;
+    heatLotNumber?: string;
+    allocatedQuantity: number;
+    uom: string;
+  }[];
+  notes?: string;
+}
+
+export interface UpdateJobDto {
+  targetQuantity?: number;
+  priority?: JobPriority;
+  plannedStartDate?: string | Date;
+  targetCompletionDate?: string | Date;
+  assignedFurnaceId?: string;
+  assignedOperatorId?: string;
+  shift?: string;
+  notes?: string;
+}
+
+export interface TransitionJobDto {
+  toStatus: JobStatus;
+  reason?: string;
+  notes?: string;
+}
+
+export interface CancelJobDto {
+  reason: string;
+  notes?: string;
 }
 
 export interface ConvertPlanToJobDto {

@@ -107,32 +107,46 @@ const jobTimelineSchema = new Schema(
   { _id: false }
 );
 
+const jobStateTransitionSchema = new Schema(
+  {
+    fromStatus: { type: String, required: true },
+    toStatus: { type: String, required: true },
+    timestamp: { type: Date, default: Date.now },
+    performedBy: {
+      userId: { type: String, required: true },
+      email: { type: String, default: null },
+      role: { type: String, default: null }
+    },
+    reason: { type: String, default: null },
+    notes: { type: String, default: null }
+  },
+  { _id: false }
+);
+
 const productionJobSchema = createBaseSchema<ProductionJobDocument>({
   jobNumber: { type: String, required: true, uppercase: true },
-  planId: { type: String, required: true },
-  planNumber: { type: String, required: true, uppercase: true },
+  planId: { type: String, default: null },
+  planNumber: { type: String, default: null, uppercase: true },
   customer: { type: jobCustomerSchema, required: true },
   item: { type: jobItemSchema, required: true },
   quantity: { type: jobQuantitySchema, required: true },
   status: {
     type: String,
     enum: [
-      'PENDING_RELEASE',
-      'RELEASED',
-      'STAGED',
-      'LOADED',
-      'HEATING',
-      'SOAKING',
-      'QUENCHING',
-      'TEMPERING',
-      'COOLING',
-      'UNLOADED',
-      'AWAITING_QC',
+      'DRAFT',
+      'PENDING_REVIEW',
+      'APPROVED',
+      'SCHEDULED',
+      'IN_PROGRESS',
+      'PAUSED',
+      'QUALITY_CHECK',
+      'STORAGE',
+      'READY_FOR_DISPATCH',
+      'DISPATCHED',
       'COMPLETED',
-      'ON_HOLD',
       'CANCELLED'
     ],
-    default: 'RELEASED'
+    default: 'DRAFT'
   },
   priority: {
     type: String,
@@ -145,13 +159,16 @@ const productionJobSchema = createBaseSchema<ProductionJobDocument>({
   equipmentAssignment: { type: jobEquipmentAssignmentSchema, default: () => ({}) },
   operatorAssignment: { type: jobOperatorAssignmentSchema, default: () => ({}) },
   timeline: { type: jobTimelineSchema, required: true },
+  transitionHistory: { type: [jobStateTransitionSchema], default: [] },
   idempotencyKey: { type: String, default: null },
+  cancellationReason: { type: String, default: null },
   notes: { type: String, default: null }
 });
 
 productionJobSchema.index({ tenantId: 1, jobNumber: 1 }, { unique: true });
 productionJobSchema.index({ tenantId: 1, planId: 1 });
 productionJobSchema.index({ tenantId: 1, status: 1 });
+productionJobSchema.index({ tenantId: 1, priority: 1, 'timeline.targetCompletionDate': 1 });
 productionJobSchema.index({ tenantId: 1, 'item.itemCode': 1 });
 productionJobSchema.index({ tenantId: 1, 'equipmentAssignment.furnaceId': 1 });
 

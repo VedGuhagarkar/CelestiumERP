@@ -1,5 +1,5 @@
 import { BaseRepository } from '../../core/repository/base.repository.js';
-import { ProductionJobDocument } from './production-job.types.js';
+import { ProductionJobDocument, JobStatus } from './production-job.types.js';
 import { ProductionJobModel } from './production-job.model.js';
 import { PaginatedResult, PaginationOptions } from '../../core/types/pagination.js';
 
@@ -17,6 +17,7 @@ export interface IProductionJobRepository {
     filters: any,
     pagination: PaginationOptions
   ): Promise<PaginatedResult<ProductionJobDocument>>;
+  findActiveQueueJobs(tenantId: string, filters?: any): Promise<ProductionJobDocument[]>;
   findById(tenantId: string, id: string): Promise<ProductionJobDocument | null>;
   create(tenantId: string, data: Partial<ProductionJobDocument>): Promise<ProductionJobDocument>;
   updateById(tenantId: string, id: string, update: any): Promise<ProductionJobDocument | null>;
@@ -125,6 +126,39 @@ export class ProductionJobRepository
       limit,
       totalPages
     };
+  }
+
+  public async findActiveQueueJobs(
+    tenantId: string,
+    filters: any = {}
+  ): Promise<ProductionJobDocument[]> {
+    const activeStatuses: JobStatus[] = [
+      'APPROVED',
+      'SCHEDULED',
+      'IN_PROGRESS',
+      'PAUSED',
+      'QUALITY_CHECK',
+      'STORAGE',
+      'READY_FOR_DISPATCH'
+    ];
+
+    const query: any = {
+      tenantId,
+      isDeleted: false,
+      status: { $in: activeStatuses }
+    };
+
+    if (filters.furnaceId) {
+      query['equipmentAssignment.furnaceId'] = filters.furnaceId;
+    }
+    if (filters.status) {
+      query.status = filters.status;
+    }
+
+    return this.model
+      .find(query)
+      .sort({ 'timeline.targetCompletionDate': 1, createdAt: 1 })
+      .exec();
   }
 }
 

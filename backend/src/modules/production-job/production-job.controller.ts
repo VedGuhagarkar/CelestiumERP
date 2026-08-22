@@ -12,6 +12,99 @@ export class ProductionJobController extends BaseController {
     super();
   }
 
+  public createDirectJob = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const user = this.getUser(req);
+      const job = await this.service.createDirectJob(
+        tenantId,
+        { userId: user.userId, email: user.email, role: user.roles?.[0] },
+        req.body
+      );
+      this.sendCreated(res, job, 'Direct production job created successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public updateJob = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const user = this.getUser(req);
+      const job = await this.service.updateJob(
+        tenantId,
+        user.userId,
+        req.params.id as string,
+        req.body
+      );
+      this.sendSuccess(res, job, 'Production job updated successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public transitionJob = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const user = this.getUser(req);
+      const job = await this.service.transitionJob(
+        tenantId,
+        { userId: user.userId, email: user.email, role: user.roles?.[0] },
+        req.params.id as string,
+        req.body
+      );
+      this.sendSuccess(res, job, 'Production job status transitioned successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public cancelJob = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const user = this.getUser(req);
+      const job = await this.service.cancelJob(
+        tenantId,
+        { userId: user.userId, email: user.email, role: user.roles?.[0] },
+        req.params.id as string,
+        req.body
+      );
+      this.sendSuccess(res, job, 'Production job cancelled successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public getProductionQueue = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const queue = await this.service.getProductionQueue(tenantId, req.query);
+      this.sendSuccess(res, queue, 'Prioritized production queue retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
   public convertPlan = async (
     req: Request,
     res: Response,

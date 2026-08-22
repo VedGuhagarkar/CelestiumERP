@@ -6,6 +6,10 @@ import { validateRequest } from '../../core/middleware/validate.middleware.js';
 import { asyncHandler } from '../../core/middleware/async-handler.middleware.js';
 import { PERMISSIONS } from '../rbac/rbac.constants.js';
 import {
+  createDirectJobSchema,
+  updateJobSchema,
+  transitionJobSchema,
+  cancelJobSchema,
   convertPlanToJobSchema,
   queryJobsSchema,
   getJobByIdSchema
@@ -13,7 +17,16 @@ import {
 
 export const productionJobRouter = Router();
 
-// 1. Convert Approved Production Plan to Executable Production Job
+// 1. Create Direct Production Job
+productionJobRouter.post(
+  '/',
+  authenticateJwt,
+  requirePermission(PERMISSIONS.PRODUCTION_JOB_CREATE),
+  validateRequest(createDirectJobSchema),
+  asyncHandler(productionJobController.createDirectJob)
+);
+
+// 2. Convert Approved Production Plan to Executable Production Job
 productionJobRouter.post(
   '/convert-plan/:planId',
   authenticateJwt,
@@ -22,7 +35,15 @@ productionJobRouter.post(
   asyncHandler(productionJobController.convertPlan)
 );
 
-// 2. Query and Filter Production Jobs
+// 3. Get Prioritized Shop-Floor Production Queue
+productionJobRouter.get(
+  '/queue',
+  authenticateJwt,
+  requirePermission(PERMISSIONS.PRODUCTION_JOB_VIEW),
+  asyncHandler(productionJobController.getProductionQueue)
+);
+
+// 4. Query and Filter Production Jobs
 productionJobRouter.get(
   '/',
   authenticateJwt,
@@ -31,7 +52,15 @@ productionJobRouter.get(
   asyncHandler(productionJobController.getJobs)
 );
 
-// 3. Get Production Job Details by ID
+// 5. Get All Production Jobs Generated from a Specific Plan
+productionJobRouter.get(
+  '/by-plan/:planId',
+  authenticateJwt,
+  requirePermission(PERMISSIONS.PRODUCTION_JOB_VIEW),
+  asyncHandler(productionJobController.getJobsByPlan)
+);
+
+// 6. Get Production Job Details & History by ID
 productionJobRouter.get(
   '/:id',
   authenticateJwt,
@@ -40,10 +69,29 @@ productionJobRouter.get(
   asyncHandler(productionJobController.getJobById)
 );
 
-// 4. Get All Production Jobs Generated from a Specific Plan
-productionJobRouter.get(
-  '/by-plan/:planId',
+// 7. Update Production Job Details Before Execution
+productionJobRouter.patch(
+  '/:id',
   authenticateJwt,
-  requirePermission(PERMISSIONS.PRODUCTION_JOB_VIEW),
-  asyncHandler(productionJobController.getJobsByPlan)
+  requirePermission(PERMISSIONS.PRODUCTION_JOB_UPDATE),
+  validateRequest(updateJobSchema),
+  asyncHandler(productionJobController.updateJob)
+);
+
+// 8. Execute Lifecycle State Transition
+productionJobRouter.post(
+  '/:id/transition',
+  authenticateJwt,
+  requirePermission(PERMISSIONS.PRODUCTION_JOB_TRANSITION),
+  validateRequest(transitionJobSchema),
+  asyncHandler(productionJobController.transitionJob)
+);
+
+// 9. Controlled Production Job Cancellation
+productionJobRouter.post(
+  '/:id/cancel',
+  authenticateJwt,
+  requirePermission(PERMISSIONS.PRODUCTION_JOB_CANCEL),
+  validateRequest(cancelJobSchema),
+  asyncHandler(productionJobController.cancelJob)
 );
