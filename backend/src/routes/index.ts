@@ -16,6 +16,10 @@ import { quarantineRouter } from '../modules/quarantine/quarantine.routes.js';
 import { finishedGoodsRouter } from '../modules/finished-goods/finished-goods.routes.js';
 import { productionPlanRouter } from '../modules/production-planning/production-plan.routes.js';
 import { materialRequirementsRouter } from '../modules/material-requirements/material-requirements.routes.js';
+import {
+  furnaceRouter,
+  furnaceCapacityRouter
+} from '../modules/furnace-capacity/furnace-capacity.routes.js';
 
 /**
  * Root API v1 Router
@@ -56,5 +60,8 @@ v1Router.use('/quarantine', quarantineRouter);
 v1Router.use('/finished-goods', finishedGoodsRouter);
 v1Router.use('/production-plans', productionPlanRouter);
 v1Router.use('/material-requirements', materialRequirementsRouter);
+v1Router.use('/furnaces', furnaceRouter);
+v1Router.use('/furnace-capacity', furnaceCapacityRouter);
+
 
 
