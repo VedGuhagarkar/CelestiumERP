@@ -3,6 +3,7 @@ import { ApiResponse } from '../core/responses/api-response.js';
 import { getDatabaseHealth } from '../core/database/health.js';
 import { config } from '../config/app.config.js';
 import { authRouter } from '../modules/auth/auth.routes.js';
+import { rbacRouter } from '../modules/rbac/rbac.routes.js';
 
 /**
  * Root API v1 Router
@@ -30,3 +31,4 @@ v1Router.get('/health', async (_req: Request, res: Response) => {
 
 // Domain Route Mount Points
 v1Router.use('/auth', authRouter);
+v1Router.use('/rbac', rbacRouter);
