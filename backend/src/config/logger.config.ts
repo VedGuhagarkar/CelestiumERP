@@ -2,25 +2,48 @@ import winston from 'winston';
 import { config } from './app.config.js';
 
 // Keys to mask in log output for security compliance
-const SENSITIVE_KEYS = ['password', 'passwordHash', 'token', 'refreshToken', 'secret', 'jwtSecret', 'authorization'];
+export const SENSITIVE_KEYS = [
+  'password',
+  'passwordHash',
+  'token',
+  'refreshToken',
+  'resetPasswordToken',
+  'secret',
+  'jwtSecret',
+  'jwtRefreshSecret',
+  'authorization',
+  'authHeader',
+  'apiKey',
+  'creditCard',
+  'cvv',
+  'pin',
+  'privateKey',
+  'certKey'
+];
 
-const maskSensitiveData = winston.format((info) => {
-  const mask = (obj: any): any => {
-    if (!obj || typeof obj !== 'object') return obj;
-    if (Array.isArray(obj)) return obj.map(mask);
+/**
+ * Deeply sanitizes sensitive fields across arbitrary objects and arrays
+ */
+export function sanitizeObject(obj: any): any {
+  if (!obj || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(sanitizeObject);
 
-    const copy = { ...obj };
-    for (const key of Object.keys(copy)) {
-      if (SENSITIVE_KEYS.some((k) => key.toLowerCase().includes(k.toLowerCase()))) {
-        copy[key] = '***MASKED***';
-      } else if (typeof copy[key] === 'object') {
-        copy[key] = mask(copy[key]);
-      }
+  const copy = { ...obj };
+  for (const key of Object.keys(copy)) {
+    const isSensitive = SENSITIVE_KEYS.some((sensitiveKey) =>
+      key.toLowerCase().includes(sensitiveKey.toLowerCase())
+    );
+    if (isSensitive) {
+      copy[key] = '***MASKED***';
+    } else if (typeof copy[key] === 'object' && copy[key] !== null) {
+      copy[key] = sanitizeObject(copy[key]);
     }
-    return copy;
-  };
+  }
+  return copy;
+}
 
-  return mask(info);
+const maskSensitiveDataFormat = winston.format((info) => {
+  return sanitizeObject(info);
 });
 
 export const logger = winston.createLogger({
@@ -28,7 +51,7 @@ export const logger = winston.createLogger({
   format: winston.format.combine(
     winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss.SSS' }),
     winston.format.errors({ stack: true }),
-    maskSensitiveData(),
+    maskSensitiveDataFormat(),
     config.logging.format === 'json'
       ? winston.format.json()
       : winston.format.combine(

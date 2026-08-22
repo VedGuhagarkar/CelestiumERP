@@ -23,6 +23,6 @@ describe('GET /api/v1/health', () => {
     expect(res.status).toBe(404);
     expect(res.body).toHaveProperty('success', false);
     expect(res.body).toHaveProperty('statusCode', 404);
-    expect(res.body.error).toHaveProperty('code', 'NotFoundError');
+    expect(res.body.error).toHaveProperty('code', 'NOT_FOUND');
   });
 });
