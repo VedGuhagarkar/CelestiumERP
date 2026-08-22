@@ -123,6 +123,26 @@ const jobStateTransitionSchema = new Schema(
   { _id: false }
 );
 
+const jobResourceAssignmentHistorySchema = new Schema(
+  {
+    resourceType: { type: String, enum: ['OPERATOR', 'FURNACE'], required: true },
+    action: { type: String, enum: ['ASSIGN', 'REALLOCATE', 'REMOVE'], required: true },
+    previousResourceId: { type: String, default: null },
+    previousResourceCode: { type: String, default: null },
+    newResourceId: { type: String, default: null },
+    newResourceCode: { type: String, default: null },
+    performedBy: {
+      userId: { type: String, required: true },
+      email: { type: String, default: null },
+      role: { type: String, default: null }
+    },
+    timestamp: { type: Date, default: Date.now },
+    reason: { type: String, default: null },
+    notes: { type: String, default: null }
+  },
+  { _id: false }
+);
+
 const productionJobSchema = createBaseSchema<ProductionJobDocument>({
   jobNumber: { type: String, required: true, uppercase: true },
   planId: { type: String, default: null },
@@ -160,6 +180,7 @@ const productionJobSchema = createBaseSchema<ProductionJobDocument>({
   operatorAssignment: { type: jobOperatorAssignmentSchema, default: () => ({}) },
   timeline: { type: jobTimelineSchema, required: true },
   transitionHistory: { type: [jobStateTransitionSchema], default: [] },
+  assignmentHistory: { type: [jobResourceAssignmentHistorySchema], default: [] },
   idempotencyKey: { type: String, default: null },
   cancellationReason: { type: String, default: null },
   notes: { type: String, default: null }

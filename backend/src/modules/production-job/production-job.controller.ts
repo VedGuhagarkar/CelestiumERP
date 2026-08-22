@@ -51,6 +51,86 @@ export class ProductionJobController extends BaseController {
     }
   };
 
+  public assignOperator = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const user = this.getUser(req);
+      const job = await this.service.assignOperator(
+        tenantId,
+        { userId: user.userId, email: user.email, role: user.roles?.[0] },
+        req.params.id as string,
+        req.body
+      );
+      this.sendSuccess(res, job, 'Operator assigned to job successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public removeOperator = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const user = this.getUser(req);
+      const job = await this.service.removeOperator(
+        tenantId,
+        { userId: user.userId, email: user.email, role: user.roles?.[0] },
+        req.params.id as string,
+        req.body
+      );
+      this.sendSuccess(res, job, 'Operator removed from job successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public assignFurnace = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const user = this.getUser(req);
+      const job = await this.service.assignFurnace(
+        tenantId,
+        { userId: user.userId, email: user.email, role: user.roles?.[0] },
+        req.params.id as string,
+        req.body
+      );
+      this.sendSuccess(res, job, 'Furnace assigned to job successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public removeFurnace = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const user = this.getUser(req);
+      const job = await this.service.removeFurnace(
+        tenantId,
+        { userId: user.userId, email: user.email, role: user.roles?.[0] },
+        req.params.id as string,
+        req.body
+      );
+      this.sendSuccess(res, job, 'Furnace removed from job successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
   public transitionJob = async (
     req: Request,
     res: Response,

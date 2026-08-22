@@ -61,6 +61,49 @@ export const updateJobSchema: ValidationSchema = {
   })
 };
 
+export const assignOperatorSchema: ValidationSchema = {
+  params: z.object({
+    id: z.string().trim().min(1, 'Job ID is required')
+  }),
+  body: z.object({
+    operatorId: z.string().trim().min(1, 'Operator ID is required'),
+    shift: z.string().trim().optional(),
+    reason: z.string().trim().max(500).optional(),
+    notes: z.string().trim().max(500).optional()
+  })
+};
+
+export const removeOperatorSchema: ValidationSchema = {
+  params: z.object({
+    id: z.string().trim().min(1, 'Job ID is required')
+  }),
+  body: z.object({
+    reason: z.string().trim().min(3, 'Removal reason is required (min 3 characters)'),
+    notes: z.string().trim().max(500).optional()
+  })
+};
+
+export const assignFurnaceSchema: ValidationSchema = {
+  params: z.object({
+    id: z.string().trim().min(1, 'Job ID is required')
+  }),
+  body: z.object({
+    furnaceId: z.string().trim().min(1, 'Furnace ID is required'),
+    reason: z.string().trim().max(500).optional(),
+    notes: z.string().trim().max(500).optional()
+  })
+};
+
+export const removeFurnaceSchema: ValidationSchema = {
+  params: z.object({
+    id: z.string().trim().min(1, 'Job ID is required')
+  }),
+  body: z.object({
+    reason: z.string().trim().min(3, 'Removal reason is required (min 3 characters)'),
+    notes: z.string().trim().max(500).optional()
+  })
+};
+
 export const transitionJobSchema: ValidationSchema = {
   params: z.object({
     id: z.string().trim().min(1, 'Job ID is required')

@@ -23,6 +23,9 @@ export type JobStatus =
 
 export type JobPriority = 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT' | 'AOG_CRITICAL';
 
+export type ResourceAssignmentAction = 'ASSIGN' | 'REALLOCATE' | 'REMOVE';
+export type ResourceType = 'OPERATOR' | 'FURNACE';
+
 export const PRIORITY_WEIGHTS: Record<JobPriority, number> = {
   AOG_CRITICAL: 1,
   URGENT: 2,
@@ -55,6 +58,23 @@ export interface IJobStateTransition {
     email?: string;
     role?: string;
   };
+  reason?: string | null;
+  notes?: string | null;
+}
+
+export interface IJobResourceAssignmentHistory {
+  resourceType: ResourceType;
+  action: ResourceAssignmentAction;
+  previousResourceId?: string | null;
+  previousResourceCode?: string | null;
+  newResourceId?: string | null;
+  newResourceCode?: string | null;
+  performedBy: {
+    userId: string;
+    email?: string;
+    role?: string;
+  };
+  timestamp: Date;
   reason?: string | null;
   notes?: string | null;
 }
@@ -146,6 +166,7 @@ export interface IProductionJob {
     actualCompletionDate?: Date | null;
   };
   transitionHistory: IJobStateTransition[];
+  assignmentHistory: IJobResourceAssignmentHistory[];
   idempotencyKey?: string | null;
   cancellationReason?: string | null;
   notes?: string | null;
@@ -187,6 +208,29 @@ export interface UpdateJobDto {
   assignedFurnaceId?: string;
   assignedOperatorId?: string;
   shift?: string;
+  notes?: string;
+}
+
+export interface AssignOperatorDto {
+  operatorId: string;
+  shift?: string;
+  reason?: string;
+  notes?: string;
+}
+
+export interface RemoveOperatorDto {
+  reason: string;
+  notes?: string;
+}
+
+export interface AssignFurnaceDto {
+  furnaceId: string;
+  reason?: string;
+  notes?: string;
+}
+
+export interface RemoveFurnaceDto {
+  reason: string;
   notes?: string;
 }
 

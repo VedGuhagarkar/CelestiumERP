@@ -5,6 +5,10 @@ import {
 import {
   CreateDirectJobDto,
   UpdateJobDto,
+  AssignOperatorDto,
+  RemoveOperatorDto,
+  AssignFurnaceDto,
+  RemoveFurnaceDto,
   TransitionJobDto,
   CancelJobDto,
   ConvertPlanToJobDto,
@@ -45,19 +49,16 @@ export class ProductionJobService {
     actor: IActorContext,
     dto: CreateDirectJobDto
   ): Promise<ProductionJobDocument> {
-    // 1. Validate Customer
     const customer = await customerRepository.findById(tenantId, dto.customerId);
     if (!customer || customer.isDeleted) {
       throw new NotFoundError(`Customer with ID '${dto.customerId}' not found`);
     }
 
-    // 2. Validate Item Master
     const item = await itemRepository.findById(tenantId, dto.itemId);
     if (!item || item.isDeleted) {
       throw new NotFoundError(`Item with ID '${dto.itemId}' not found`);
     }
 
-    // 3. Validate Recipe Revision
     const recipe = await recipeRepository.findById(tenantId, dto.recipeId);
     if (!recipe || recipe.isDeleted || (recipe.status !== 'APPROVED' && recipe.status !== 'ACTIVE')) {
       throw new BadRequestError(
@@ -65,7 +66,6 @@ export class ProductionJobService {
       );
     }
 
-    // 4. Validate Specification Revision
     const spec = await specificationRepository.findById(tenantId, dto.specificationId);
     if (!spec || spec.isDeleted || (spec.status !== 'APPROVED' && spec.status !== 'ACTIVE')) {
       throw new BadRequestError(
@@ -73,7 +73,6 @@ export class ProductionJobService {
       );
     }
 
-    // 5. Construct Immutable Operational Snapshots
     const recipeSnapshot: IJobRecipeSnapshot = {
       recipeId: recipe.id,
       recipeCode: recipe.recipeCode,
@@ -101,7 +100,6 @@ export class ProductionJobService {
       snapshottedAt: new Date()
     };
 
-    // 6. Equipment Assignment
     let equipmentAssignment = {
       furnaceId: null as string | null,
       furnaceCode: null as string | null,
@@ -121,7 +119,6 @@ export class ProductionJobService {
       }
     }
 
-    // 7. Operator Assignment
     let operatorAssignment = {
       operatorId: null as string | null,
       operatorCode: null as string | null,
@@ -144,7 +141,6 @@ export class ProductionJobService {
       }
     }
 
-    // 8. Material Allocations
     const materialAllocations: IJobMaterialAllocation[] = (dto.materialAllocations || []).map((m) => ({
       reservationId: null,
       heatLotId: m.heatLotId || null,
@@ -153,10 +149,8 @@ export class ProductionJobService {
       uom: m.uom
     }));
 
-    // 9. Generate Sequential Job Traveler Number
     const jobNumber = await this.repo.generateNextJobNumber(tenantId);
 
-    // 10. Initial State Transition Record
     const initialTransition = {
       fromStatus: 'DRAFT' as const,
       toStatus: 'DRAFT' as const,
@@ -170,7 +164,6 @@ export class ProductionJobService {
       notes: dto.notes || null
     };
 
-    // 11. Create Job Document
     const job = await this.repo.create(tenantId, {
       jobNumber,
       customer: {
@@ -205,10 +198,10 @@ export class ProductionJobService {
         actualCompletionDate: null
       },
       transitionHistory: [initialTransition],
+      assignmentHistory: [],
       notes: dto.notes || null
     });
 
-    // 12. Audit Record
     await auditService.record(tenantId, {
       actorId: actor.userId,
       action: 'CREATE_PRODUCTION_JOB',
@@ -293,6 +286,381 @@ export class ProductionJobService {
     return job;
   }
 
+  public async assignOperator(
+    tenantId: string,
+    actor: IActorContext,
+    jobId: string,
+    dto: AssignOperatorDto
+  ): Promise<ProductionJobDocument> {
+    const job = await this.repo.findById(tenantId, jobId);
+    if (!job || job.isDeleted) {
+      throw new NotFoundError(`Production Job with ID '${jobId}' not found`);
+    }
+
+    if (job.status === 'COMPLETED' || job.status === 'CANCELLED') {
+      throw new BadRequestError(
+        `Cannot assign operator to a '${job.status}' production job`
+      );
+    }
+
+    // 1. Validate Operator Existence and Active Status
+    const operator = await workforceCapacityRepository.findEmployeeById(
+      tenantId,
+      dto.operatorId
+    );
+    if (!operator || operator.isDeleted || operator.status !== 'ACTIVE') {
+      throw new BadRequestError(
+        `Operator with ID '${dto.operatorId}' not found or is not in ACTIVE status`
+      );
+    }
+
+    const jobStart = new Date(job.timeline.plannedStartDate);
+    const jobEnd = new Date(job.timeline.targetCompletionDate);
+
+    // 2. Validate Operator Leave Schedule
+    const onLeave = (operator.approvedLeaves || []).some((leave) => {
+      const lStart = new Date(leave.startDate);
+      const lEnd = new Date(leave.endDate);
+      return jobStart <= lEnd && jobEnd >= lStart;
+    });
+
+    if (onLeave) {
+      throw new BadRequestError(
+        `Operator '${operator.fullName}' has approved leave overlapping the planned job window`
+      );
+    }
+
+    // 3. Validate Operator Qualification for Recipe Process Family
+    const processFamily = job.recipeSnapshot?.processFamily || 'CARBURIZING';
+    const reqSkillCode = `${processFamily}_OPERATION`;
+
+    const isQualified = (operator.skills || []).some((s) => {
+      const isSkillMatch =
+        s.skillCode === reqSkillCode ||
+        s.skillCode === 'SEALED_QUENCH_FURNACE_OPERATION' ||
+        s.skillCode === 'VACUUM_FURNACE_OPERATION' ||
+        s.skillCode === 'PIT_FURNACE_OPERATION' ||
+        s.skillCode === 'NITRIDING_OPERATION';
+
+      const isCertified = s.isCertified;
+      const isNotExpired = !s.expiryDate || new Date(s.expiryDate) >= jobStart;
+
+      return isSkillMatch && isCertified && isNotExpired;
+    });
+
+    if (!isQualified) {
+      throw new BadRequestError(
+        `Operator '${operator.fullName}' (${operator.employeeCode}) lacks certified, non-expired qualification for process '${processFamily}'`
+      );
+    }
+
+    const previousResourceId = job.operatorAssignment?.operatorId || null;
+    const previousResourceCode = job.operatorAssignment?.operatorCode || null;
+    const action = previousResourceId ? 'REALLOCATE' : 'ASSIGN';
+
+    job.operatorAssignment = {
+      operatorId: operator.id,
+      operatorCode: operator.employeeCode,
+      operatorName: operator.fullName,
+      shift: dto.shift || operator.defaultShift
+    };
+
+    job.assignmentHistory.push({
+      resourceType: 'OPERATOR',
+      action,
+      previousResourceId,
+      previousResourceCode,
+      newResourceId: operator.id,
+      newResourceCode: operator.employeeCode,
+      performedBy: {
+        userId: actor.userId,
+        email: actor.email,
+        role: actor.role
+      },
+      timestamp: new Date(),
+      reason: dto.reason || null,
+      notes: dto.notes || null
+    });
+
+    await job.save();
+
+    await auditService.record(tenantId, {
+      actorId: actor.userId,
+      action: `${action}_JOB_OPERATOR`,
+      entityType: 'PRODUCTION_JOB',
+      entityId: job.id,
+      metadata: {
+        jobNumber: job.jobNumber,
+        operatorCode: operator.employeeCode,
+        shift: job.operatorAssignment.shift
+      }
+    });
+
+    return job;
+  }
+
+  public async removeOperator(
+    tenantId: string,
+    actor: IActorContext,
+    jobId: string,
+    dto: RemoveOperatorDto
+  ): Promise<ProductionJobDocument> {
+    const job = await this.repo.findById(tenantId, jobId);
+    if (!job || job.isDeleted) {
+      throw new NotFoundError(`Production Job with ID '${jobId}' not found`);
+    }
+
+    if (job.status === 'IN_PROGRESS') {
+      throw new BadRequestError(
+        `Cannot remove operator while job '${job.jobNumber}' is actively IN_PROGRESS. Please pause the job first.`
+      );
+    }
+
+    if (!job.operatorAssignment?.operatorId) {
+      throw new BadRequestError(
+        `No operator currently assigned to job '${job.jobNumber}'`
+      );
+    }
+
+    const previousResourceId = job.operatorAssignment.operatorId;
+    const previousResourceCode = job.operatorAssignment.operatorCode;
+
+    job.operatorAssignment = {
+      operatorId: null,
+      operatorCode: null,
+      operatorName: null,
+      shift: null
+    };
+
+    job.assignmentHistory.push({
+      resourceType: 'OPERATOR',
+      action: 'REMOVE',
+      previousResourceId,
+      previousResourceCode,
+      newResourceId: null,
+      newResourceCode: null,
+      performedBy: {
+        userId: actor.userId,
+        email: actor.email,
+        role: actor.role
+      },
+      timestamp: new Date(),
+      reason: dto.reason,
+      notes: dto.notes || null
+    });
+
+    await job.save();
+
+    await auditService.record(tenantId, {
+      actorId: actor.userId,
+      action: 'REMOVE_JOB_OPERATOR',
+      entityType: 'PRODUCTION_JOB',
+      entityId: job.id,
+      metadata: {
+        jobNumber: job.jobNumber,
+        removedOperatorCode: previousResourceCode,
+        reason: dto.reason
+      }
+    });
+
+    return job;
+  }
+
+  public async assignFurnace(
+    tenantId: string,
+    actor: IActorContext,
+    jobId: string,
+    dto: AssignFurnaceDto
+  ): Promise<ProductionJobDocument> {
+    const job = await this.repo.findById(tenantId, jobId);
+    if (!job || job.isDeleted) {
+      throw new NotFoundError(`Production Job with ID '${jobId}' not found`);
+    }
+
+    if (job.status === 'COMPLETED' || job.status === 'CANCELLED') {
+      throw new BadRequestError(
+        `Cannot assign furnace to a '${job.status}' production job`
+      );
+    }
+
+    if (job.status === 'IN_PROGRESS') {
+      throw new BadRequestError(
+        `Cannot reallocate furnace while job '${job.jobNumber}' is actively IN_PROGRESS. Please pause the job first.`
+      );
+    }
+
+    // 1. Validate Furnace Existence
+    const furnace = await furnaceCapacityRepository.findFurnaceById(tenantId, dto.furnaceId);
+    if (!furnace || furnace.isDeleted) {
+      throw new NotFoundError(`Furnace with ID '${dto.furnaceId}' not found`);
+    }
+
+    // 2. Validate Furnace Machine Availability
+    if (furnace.status !== 'OPERATIONAL') {
+      throw new BadRequestError(
+        `Furnace '${furnace.furnaceCode}' is not available for assignment (Current status: '${furnace.status}')`
+      );
+    }
+
+    // 3. Validate Process Family Capability
+    const processFamily = job.recipeSnapshot?.processFamily || 'CARBURIZING';
+    if (!furnace.processCapabilities.supportedProcessFamilies.includes(processFamily)) {
+      throw new BadRequestError(
+        `Furnace '${furnace.furnaceCode}' does not support process family '${processFamily}'`
+      );
+    }
+
+    // 4. Validate Operating Temperature Envelope [Tmin, Tmax]
+    const recipeStages = job.recipeSnapshot?.stages || [];
+    const maxRecipeTemp = Math.max(...recipeStages.map((s) => s.targetTemperatureC), 0);
+
+    if (
+      maxRecipeTemp > furnace.thermalCapabilities.maxOperatingTempC ||
+      maxRecipeTemp < furnace.thermalCapabilities.minOperatingTempC
+    ) {
+      throw new BadRequestError(
+        `Recipe temperature (${maxRecipeTemp}°C) is outside furnace '${furnace.furnaceCode}' thermal operating envelope [${furnace.thermalCapabilities.minOperatingTempC}°C - ${furnace.thermalCapabilities.maxOperatingTempC}°C]`
+      );
+    }
+
+    // 5. Validate Schedule Collision on Furnace
+    const jobStart = new Date(job.timeline.plannedStartDate);
+    const jobEnd = new Date(job.timeline.targetCompletionDate);
+
+    const conflictingJobs = await this.repo.findConflictingJobs(
+      tenantId,
+      furnace.id,
+      jobStart,
+      jobEnd,
+      job.id
+    );
+
+    if (conflictingJobs.length > 0) {
+      throw new BadRequestError(
+        `Schedule conflict: Furnace '${furnace.furnaceCode}' is already allocated to job '${conflictingJobs[0].jobNumber}' during this time window`
+      );
+    }
+
+    const previousResourceId = job.equipmentAssignment?.furnaceId || null;
+    const previousResourceCode = job.equipmentAssignment?.furnaceCode || null;
+    const action = previousResourceId ? 'REALLOCATE' : 'ASSIGN';
+
+    job.equipmentAssignment = {
+      furnaceId: furnace.id,
+      furnaceCode: furnace.furnaceCode,
+      locationBay: furnace.locationBay,
+      pyrometryClass: furnace.thermalCapabilities.pyrometryClass
+    };
+
+    job.assignmentHistory.push({
+      resourceType: 'FURNACE',
+      action,
+      previousResourceId,
+      previousResourceCode,
+      newResourceId: furnace.id,
+      newResourceCode: furnace.furnaceCode,
+      performedBy: {
+        userId: actor.userId,
+        email: actor.email,
+        role: actor.role
+      },
+      timestamp: new Date(),
+      reason: dto.reason || null,
+      notes: dto.notes || null
+    });
+
+    if (job.status === 'APPROVED') {
+      job.status = 'SCHEDULED';
+    }
+
+    await job.save();
+
+    await auditService.record(tenantId, {
+      actorId: actor.userId,
+      action: `${action}_JOB_FURNACE`,
+      entityType: 'PRODUCTION_JOB',
+      entityId: job.id,
+      metadata: {
+        jobNumber: job.jobNumber,
+        furnaceCode: furnace.furnaceCode,
+        pyrometryClass: furnace.thermalCapabilities.pyrometryClass
+      }
+    });
+
+    return job;
+  }
+
+  public async removeFurnace(
+    tenantId: string,
+    actor: IActorContext,
+    jobId: string,
+    dto: RemoveFurnaceDto
+  ): Promise<ProductionJobDocument> {
+    const job = await this.repo.findById(tenantId, jobId);
+    if (!job || job.isDeleted) {
+      throw new NotFoundError(`Production Job with ID '${jobId}' not found`);
+    }
+
+    if (job.status === 'IN_PROGRESS') {
+      throw new BadRequestError(
+        `Cannot remove furnace while job '${job.jobNumber}' is actively IN_PROGRESS. Please pause the job first.`
+      );
+    }
+
+    if (!job.equipmentAssignment?.furnaceId) {
+      throw new BadRequestError(
+        `No furnace currently assigned to job '${job.jobNumber}'`
+      );
+    }
+
+    const previousResourceId = job.equipmentAssignment.furnaceId;
+    const previousResourceCode = job.equipmentAssignment.furnaceCode;
+
+    job.equipmentAssignment = {
+      furnaceId: null,
+      furnaceCode: null,
+      locationBay: null,
+      pyrometryClass: null
+    };
+
+    job.assignmentHistory.push({
+      resourceType: 'FURNACE',
+      action: 'REMOVE',
+      previousResourceId,
+      previousResourceCode,
+      newResourceId: null,
+      newResourceCode: null,
+      performedBy: {
+        userId: actor.userId,
+        email: actor.email,
+        role: actor.role
+      },
+      timestamp: new Date(),
+      reason: dto.reason,
+      notes: dto.notes || null
+    });
+
+    if (job.status === 'SCHEDULED') {
+      job.status = 'APPROVED';
+    }
+
+    await job.save();
+
+    await auditService.record(tenantId, {
+      actorId: actor.userId,
+      action: 'REMOVE_JOB_FURNACE',
+      entityType: 'PRODUCTION_JOB',
+      entityId: job.id,
+      metadata: {
+        jobNumber: job.jobNumber,
+        removedFurnaceCode: previousResourceCode,
+        reason: dto.reason
+      }
+    });
+
+    return job;
+  }
+
   public async transitionJob(
     tenantId: string,
     actor: IActorContext,
@@ -308,7 +676,7 @@ export class ProductionJobService {
     const targetStatus = dto.toStatus;
 
     if (currentStatus === targetStatus) {
-      return job; // No-op
+      return job;
     }
 
     const allowedTransitions = ALLOWED_STATUS_TRANSITIONS[currentStatus];
@@ -320,7 +688,6 @@ export class ProductionJobService {
 
     const beforeState = job.toJSON();
 
-    // Append state transition history
     job.transitionHistory.push({
       fromStatus: currentStatus,
       toStatus: targetStatus,
@@ -334,7 +701,6 @@ export class ProductionJobService {
       notes: dto.notes || null
     });
 
-    // Milestone timestamps
     if (targetStatus === 'IN_PROGRESS' && !job.timeline.actualStartDate) {
       job.timeline.actualStartDate = new Date();
     }
@@ -396,7 +762,6 @@ export class ProductionJobService {
   ): Promise<any[]> {
     const jobs = await this.repo.findActiveQueueJobs(tenantId, filters);
 
-    // Sort by Priority Rank (AOG_CRITICAL:1 > URGENT:2 > HIGH:3 > NORMAL:4 > LOW:5), then Target Completion Date
     const sorted = [...jobs].sort((a, b) => {
       const pA = PRIORITY_WEIGHTS[a.priority] || 4;
       const pB = PRIORITY_WEIGHTS[b.priority] || 4;
@@ -627,6 +992,7 @@ export class ProductionJobService {
         actualCompletionDate: null
       },
       transitionHistory: [initialTransition],
+      assignmentHistory: [],
       idempotencyKey: dto.idempotencyKey || null,
       notes: dto.notes || null
     });

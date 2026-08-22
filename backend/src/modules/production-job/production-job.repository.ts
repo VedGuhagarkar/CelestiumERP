@@ -18,6 +18,13 @@ export interface IProductionJobRepository {
     pagination: PaginationOptions
   ): Promise<PaginatedResult<ProductionJobDocument>>;
   findActiveQueueJobs(tenantId: string, filters?: any): Promise<ProductionJobDocument[]>;
+  findConflictingJobs(
+    tenantId: string,
+    furnaceId: string,
+    startDate: Date,
+    endDate: Date,
+    excludeJobId?: string
+  ): Promise<ProductionJobDocument[]>;
   findById(tenantId: string, id: string): Promise<ProductionJobDocument | null>;
   create(tenantId: string, data: Partial<ProductionJobDocument>): Promise<ProductionJobDocument>;
   updateById(tenantId: string, id: string, update: any): Promise<ProductionJobDocument | null>;
@@ -159,6 +166,29 @@ export class ProductionJobRepository
       .find(query)
       .sort({ 'timeline.targetCompletionDate': 1, createdAt: 1 })
       .exec();
+  }
+
+  public async findConflictingJobs(
+    tenantId: string,
+    furnaceId: string,
+    startDate: Date,
+    endDate: Date,
+    excludeJobId?: string
+  ): Promise<ProductionJobDocument[]> {
+    const query: any = {
+      tenantId,
+      isDeleted: false,
+      'equipmentAssignment.furnaceId': furnaceId,
+      status: { $in: ['SCHEDULED', 'IN_PROGRESS', 'PAUSED'] },
+      'timeline.plannedStartDate': { $lt: endDate },
+      'timeline.targetCompletionDate': { $gt: startDate }
+    };
+
+    if (excludeJobId) {
+      query._id = { $ne: excludeJobId };
+    }
+
+    return this.model.find(query).exec();
   }
 }
 

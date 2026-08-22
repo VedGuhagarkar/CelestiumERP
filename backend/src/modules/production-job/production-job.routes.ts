@@ -8,6 +8,10 @@ import { PERMISSIONS } from '../rbac/rbac.constants.js';
 import {
   createDirectJobSchema,
   updateJobSchema,
+  assignOperatorSchema,
+  removeOperatorSchema,
+  assignFurnaceSchema,
+  removeFurnaceSchema,
   transitionJobSchema,
   cancelJobSchema,
   convertPlanToJobSchema,
@@ -78,7 +82,43 @@ productionJobRouter.patch(
   asyncHandler(productionJobController.updateJob)
 );
 
-// 8. Execute Lifecycle State Transition
+// 8. Assign / Reallocate Operator to Job
+productionJobRouter.post(
+  '/:id/assign-operator',
+  authenticateJwt,
+  requirePermission(PERMISSIONS.PRODUCTION_JOB_UPDATE),
+  validateRequest(assignOperatorSchema),
+  asyncHandler(productionJobController.assignOperator)
+);
+
+// 9. Remove Operator from Job
+productionJobRouter.post(
+  '/:id/remove-operator',
+  authenticateJwt,
+  requirePermission(PERMISSIONS.PRODUCTION_JOB_UPDATE),
+  validateRequest(removeOperatorSchema),
+  asyncHandler(productionJobController.removeOperator)
+);
+
+// 10. Assign / Reallocate Furnace to Job
+productionJobRouter.post(
+  '/:id/assign-furnace',
+  authenticateJwt,
+  requirePermission(PERMISSIONS.PRODUCTION_JOB_UPDATE),
+  validateRequest(assignFurnaceSchema),
+  asyncHandler(productionJobController.assignFurnace)
+);
+
+// 11. Remove Furnace from Job
+productionJobRouter.post(
+  '/:id/remove-furnace',
+  authenticateJwt,
+  requirePermission(PERMISSIONS.PRODUCTION_JOB_UPDATE),
+  validateRequest(removeFurnaceSchema),
+  asyncHandler(productionJobController.removeFurnace)
+);
+
+// 12. Execute Lifecycle State Transition
 productionJobRouter.post(
   '/:id/transition',
   authenticateJwt,
@@ -87,7 +127,7 @@ productionJobRouter.post(
   asyncHandler(productionJobController.transitionJob)
 );
 
-// 9. Controlled Production Job Cancellation
+// 13. Controlled Production Job Cancellation
 productionJobRouter.post(
   '/:id/cancel',
   authenticateJwt,
