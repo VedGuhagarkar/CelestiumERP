@@ -31,6 +31,7 @@ import { qualityInspectionRouter } from '../modules/quality-inspection/quality-i
 import { metallurgicalLabRouter } from '../modules/metallurgical-lab/metallurgical-lab.routes.js';
 import { qualityPlanningRouter } from '../modules/quality-planning/quality-planning.routes.js';
 import { ncrRouter, capaRouter } from '../modules/ncr-capa/ncr-capa.routes.js';
+import { qualityDocumentationRouter } from '../modules/quality-documentation/quality-documentation.routes.js';
 
 /**
  * Root API v1 Router
@@ -83,6 +84,7 @@ v1Router.use('/metallurgical-lab', metallurgicalLabRouter);
 v1Router.use('/quality-plans', qualityPlanningRouter);
 v1Router.use('/ncrs', ncrRouter);
 v1Router.use('/capas', capaRouter);
+v1Router.use('/quality-documents', qualityDocumentationRouter);
 
 
 
