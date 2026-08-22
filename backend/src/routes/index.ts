@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { ApiResponse } from '../core/responses/api-response.js';
 import { getDatabaseHealth } from '../core/database/health.js';
 import { config } from '../config/app.config.js';
+import { authRouter } from '../modules/auth/auth.routes.js';
 
 /**
  * Root API v1 Router
@@ -27,4 +28,5 @@ v1Router.get('/health', async (_req: Request, res: Response) => {
   );
 });
 
-// Domain route mount points will be registered here as domain modules are built
+// Domain Route Mount Points
+v1Router.use('/auth', authRouter);
