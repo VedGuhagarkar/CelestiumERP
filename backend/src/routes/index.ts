@@ -27,6 +27,7 @@ import {
 import { constraintAnalysisRouter } from '../modules/constraint-analysis/constraint-analysis.routes.js';
 import { productionJobRouter } from '../modules/production-job/production-job.routes.js';
 import { productionScheduleRouter } from '../modules/production-schedule/production-schedule.routes.js';
+import { qualityInspectionRouter } from '../modules/quality-inspection/quality-inspection.routes.js';
 
 /**
  * Root API v1 Router
@@ -74,6 +75,8 @@ v1Router.use('/workforce-capacity', workforceCapacityRouter);
 v1Router.use('/constraint-analysis', constraintAnalysisRouter);
 v1Router.use('/production-jobs', productionJobRouter);
 v1Router.use('/production-schedules', productionScheduleRouter);
+v1Router.use('/quality-inspections', qualityInspectionRouter);
+
 
 
 
