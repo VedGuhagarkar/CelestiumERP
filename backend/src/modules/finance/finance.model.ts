@@ -164,6 +164,8 @@ const JournalEntrySchema = new Schema<JournalEntryDocument>(
         'DISPATCH',
         'MAINTENANCE',
         'WORKFORCE',
+        'BILLING',
+        'COSTING',
         'MANUAL'
       ],
       default: 'MANUAL'

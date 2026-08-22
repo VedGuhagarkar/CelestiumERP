@@ -28,6 +28,8 @@ export const SourceModuleTypeEnum = z.enum([
   'DISPATCH',
   'MAINTENANCE',
   'WORKFORCE',
+  'BILLING',
+  'COSTING',
   'MANUAL'
 ]);
 

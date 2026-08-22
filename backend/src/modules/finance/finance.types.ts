@@ -28,6 +28,8 @@ export type SourceModuleType =
   | 'DISPATCH'
   | 'MAINTENANCE'
   | 'WORKFORCE'
+  | 'BILLING'
+  | 'COSTING'
   | 'MANUAL';
 
 export interface IActorSnapshot {

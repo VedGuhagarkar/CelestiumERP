@@ -97,6 +97,7 @@ export const DomainEvents = {
   PERIOD_CLOSED: 'Finance.PeriodClosed',
   PERIOD_REOPENED: 'Finance.PeriodReopened',
   INVOICE_ISSUED: 'Finance.InvoiceIssued',
+  INVOICE_VOIDED: 'Finance.InvoiceVoided',
   PAYMENT_RECEIVED: 'Finance.PaymentReceived',
 
   // System & Audit Events
