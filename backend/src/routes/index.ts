@@ -20,6 +20,10 @@ import {
   furnaceRouter,
   furnaceCapacityRouter
 } from '../modules/furnace-capacity/furnace-capacity.routes.js';
+import {
+  workforceRouter,
+  workforceCapacityRouter
+} from '../modules/workforce-capacity/workforce-capacity.routes.js';
 
 /**
  * Root API v1 Router
@@ -62,6 +66,9 @@ v1Router.use('/production-plans', productionPlanRouter);
 v1Router.use('/material-requirements', materialRequirementsRouter);
 v1Router.use('/furnaces', furnaceRouter);
 v1Router.use('/furnace-capacity', furnaceCapacityRouter);
+v1Router.use('/workforce', workforceRouter);
+v1Router.use('/workforce-capacity', workforceCapacityRouter);
+
 
 
 
