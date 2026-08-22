@@ -41,6 +41,7 @@ import { financeRouter } from '../modules/finance/finance.routes.js';
 import { costingRouter } from '../modules/costing/costing.routes.js';
 import { billingRouter } from '../modules/billing/billing.routes.js';
 import { reportingRouter } from '../modules/reporting/reporting.routes.js';
+import { notificationRouter } from '../modules/notification/notification.routes.js';
 
 /**
  * Root API v1 Router
@@ -103,6 +104,7 @@ v1Router.use('/finance', financeRouter);
 v1Router.use('/costing', costingRouter);
 v1Router.use('/billing', billingRouter);
 v1Router.use('/reporting', reportingRouter);
+v1Router.use('/notifications', notificationRouter);
 
 
 
