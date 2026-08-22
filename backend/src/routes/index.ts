@@ -12,6 +12,7 @@ import { specificationRouter } from '../modules/specification/specification.rout
 import { heatLotRouter } from '../modules/traceability/heat-lot.routes.js';
 import { inventoryRouter } from '../modules/inventory/inventory.routes.js';
 import { warehouseRouter } from '../modules/warehouse/warehouse.routes.js';
+import { quarantineRouter } from '../modules/quarantine/quarantine.routes.js';
 
 /**
  * Root API v1 Router
@@ -48,3 +49,4 @@ v1Router.use('/specifications', specificationRouter);
 v1Router.use('/heat-lots', heatLotRouter);
 v1Router.use('/inventory', inventoryRouter);
 v1Router.use('/warehouses', warehouseRouter);
+v1Router.use('/quarantine', quarantineRouter);
