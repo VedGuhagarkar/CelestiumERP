@@ -143,6 +143,174 @@ const jobResourceAssignmentHistorySchema = new Schema(
   { _id: false }
 );
 
+const furnaceChargeSchema = new Schema(
+  {
+    chargeNumber: { type: String, required: true, uppercase: true },
+    loadedWeightKg: { type: Number, required: true, min: 0.1 },
+    loadedPieceCount: { type: Number, required: true, min: 1 },
+    fixtureId: { type: String, default: null },
+    initialFurnaceTempC: { type: Number, required: true },
+    initialAtmosphereLevel: { type: Number, default: null },
+    thermocoupleLocations: { type: [String], default: [] },
+    startedAt: { type: Date, default: Date.now },
+    startedBy: {
+      userId: { type: String, required: true },
+      email: { type: String, default: null },
+      role: { type: String, default: null }
+    }
+  },
+  { _id: false }
+);
+
+const cycleTimerSchema = new Schema(
+  {
+    cycleStartTime: { type: Date, required: true },
+    cycleEndTime: { type: Date, default: null },
+    totalRunDurationMinutes: { type: Number, default: 0, min: 0 },
+    totalDowntimeDurationMinutes: { type: Number, default: 0, min: 0 }
+  },
+  { _id: false }
+);
+
+const stageProgressSchema = new Schema(
+  {
+    stageSequence: { type: Number, required: true },
+    stageName: { type: String, required: true },
+    stageType: {
+      type: String,
+      enum: ['PREHEAT', 'SOAK', 'QUENCH', 'TEMPER', 'OTHER'],
+      required: true
+    },
+    targetTemperatureC: { type: Number, required: true },
+    actualTemperatureC: { type: Number, required: true },
+    targetDurationMinutes: { type: Number, required: true },
+    actualDurationMinutes: { type: Number, required: true },
+    quenchMedium: { type: String, default: null },
+    quenchAgitationSpeedRpm: { type: Number, default: null },
+    quenchMediaInitialTempC: { type: Number, default: null },
+    quenchMediaFinalTempC: { type: Number, default: null },
+    atmosphereDetails: {
+      carbonPotential: { type: Number, default: null },
+      nitrogenFlow: { type: Number, default: null },
+      vacuumPressureMbar: { type: Number, default: null }
+    },
+    recordedBy: {
+      userId: { type: String, required: true },
+      email: { type: String, default: null },
+      role: { type: String, default: null }
+    },
+    timestamp: { type: Date, default: Date.now },
+    notes: { type: String, default: null }
+  },
+  { _id: false }
+);
+
+const downtimeLogSchema = new Schema(
+  {
+    downtimeId: { type: String, required: true },
+    category: {
+      type: String,
+      enum: [
+        'MECHANICAL_FAILURE',
+        'ELECTRICAL_FAILURE',
+        'ATMOSPHERE_LOSS',
+        'POWER_OUTAGE',
+        'OPERATOR_BREAK',
+        'PLANNED_STOP',
+        'UNPLANNED_STOP',
+        'PROCESS_ABORT',
+        'OTHER'
+      ],
+      required: true
+    },
+    reason: { type: String, required: true },
+    startTime: { type: Date, required: true },
+    endTime: { type: Date, default: null },
+    durationMinutes: { type: Number, default: null },
+    impactOnCycle: { type: String, default: null },
+    actionTaken: { type: String, default: null },
+    loggedBy: {
+      userId: { type: String, required: true },
+      email: { type: String, default: null },
+      role: { type: String, default: null }
+    },
+    notes: { type: String, default: null }
+  },
+  { _id: false }
+);
+
+const productionLogSchema = new Schema(
+  {
+    logId: { type: String, required: true },
+    type: {
+      type: String,
+      enum: [
+        'SHIFT_HANDOVER',
+        'OPERATOR_NOTE',
+        'PYROMETRY_READING',
+        'ATMOSPHERE_ADJUSTMENT',
+        'ANOMALY_REPORT'
+      ],
+      required: true
+    },
+    shift: { type: String, default: null },
+    message: { type: String, required: true },
+    recordedBy: {
+      userId: { type: String, required: true },
+      email: { type: String, default: null },
+      role: { type: String, default: null }
+    },
+    timestamp: { type: Date, default: Date.now }
+  },
+  { _id: false }
+);
+
+const qualityHandoffSchema = new Schema(
+  {
+    inspectionRequestId: { type: String, required: true, uppercase: true },
+    status: {
+      type: String,
+      enum: ['PENDING_INSPECTION', 'INSPECTING', 'APPROVED', 'REJECTED'],
+      default: 'PENDING_INSPECTION'
+    },
+    requestedAt: { type: Date, default: Date.now },
+    pyrometryArchiveId: { type: String, required: true, uppercase: true },
+    completedQuantity: { type: Number, required: true },
+    scrappedQuantity: { type: Number, default: 0 },
+    notes: { type: String, default: null }
+  },
+  { _id: false }
+);
+
+const storagePlacementSchema = new Schema(
+  {
+    warehouseId: { type: String, required: true },
+    locationBay: { type: String, required: true },
+    palletId: { type: String, default: null },
+    placedAt: { type: Date, default: Date.now },
+    placedBy: {
+      userId: { type: String, required: true },
+      email: { type: String, default: null },
+      role: { type: String, default: null }
+    },
+    notes: { type: String, default: null }
+  },
+  { _id: false }
+);
+
+const jobExecutionSchema = new Schema(
+  {
+    furnaceCharge: { type: furnaceChargeSchema, default: null },
+    cycleTimer: { type: cycleTimerSchema, default: null },
+    stageProgress: { type: [stageProgressSchema], default: [] },
+    downtimeLog: { type: [downtimeLogSchema], default: [] },
+    productionLogs: { type: [productionLogSchema], default: [] },
+    qualityHandoff: { type: qualityHandoffSchema, default: null },
+    storagePlacement: { type: storagePlacementSchema, default: null }
+  },
+  { _id: false }
+);
+
 const productionJobSchema = createBaseSchema<ProductionJobDocument>({
   jobNumber: { type: String, required: true, uppercase: true },
   planId: { type: String, default: null },
@@ -179,6 +347,7 @@ const productionJobSchema = createBaseSchema<ProductionJobDocument>({
   equipmentAssignment: { type: jobEquipmentAssignmentSchema, default: () => ({}) },
   operatorAssignment: { type: jobOperatorAssignmentSchema, default: () => ({}) },
   timeline: { type: jobTimelineSchema, required: true },
+  execution: { type: jobExecutionSchema, default: () => ({ stageProgress: [], downtimeLog: [], productionLogs: [] }) },
   transitionHistory: { type: [jobStateTransitionSchema], default: [] },
   assignmentHistory: { type: [jobResourceAssignmentHistorySchema], default: [] },
   idempotencyKey: { type: String, default: null },

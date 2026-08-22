@@ -131,6 +131,171 @@ export class ProductionJobController extends BaseController {
     }
   };
 
+  public startJobExecution = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const user = this.getUser(req);
+      const job = await this.service.startJobExecution(
+        tenantId,
+        { userId: user.userId, email: user.email, role: user.roles?.[0] },
+        req.params.id as string,
+        req.body
+      );
+      this.sendSuccess(res, job, 'Furnace cycle execution started successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public recordStageProgress = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const user = this.getUser(req);
+      const job = await this.service.recordStageProgress(
+        tenantId,
+        { userId: user.userId, email: user.email, role: user.roles?.[0] },
+        req.params.id as string,
+        req.body
+      );
+      this.sendSuccess(res, job, 'Heat treatment stage progress recorded successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public pauseJobExecution = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const user = this.getUser(req);
+      const job = await this.service.pauseJobExecution(
+        tenantId,
+        { userId: user.userId, email: user.email, role: user.roles?.[0] },
+        req.params.id as string,
+        req.body
+      );
+      this.sendSuccess(res, job, 'Furnace cycle paused and downtime logged successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public resumeJobExecution = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const user = this.getUser(req);
+      const job = await this.service.resumeJobExecution(
+        tenantId,
+        { userId: user.userId, email: user.email, role: user.roles?.[0] },
+        req.params.id as string,
+        req.body
+      );
+      this.sendSuccess(res, job, 'Furnace cycle resumed successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public addProductionLog = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const user = this.getUser(req);
+      const job = await this.service.addProductionLog(
+        tenantId,
+        { userId: user.userId, email: user.email, role: user.roles?.[0] },
+        req.params.id as string,
+        req.body
+      );
+      this.sendSuccess(res, job, 'Production log recorded successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public completeJobExecution = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const user = this.getUser(req);
+      const job = await this.service.completeJobExecution(
+        tenantId,
+        { userId: user.userId, email: user.email, role: user.roles?.[0] },
+        req.params.id as string,
+        req.body
+      );
+      this.sendSuccess(
+        res,
+        job,
+        'Production execution completed and handed off to Quality Control'
+      );
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public transitionToStorage = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const user = this.getUser(req);
+      const job = await this.service.transitionToStorage(
+        tenantId,
+        { userId: user.userId, email: user.email, role: user.roles?.[0] },
+        req.params.id as string,
+        req.body
+      );
+      this.sendSuccess(res, job, 'Production job transferred to warehouse storage');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public getMachineUtilizationAndDowntime = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const stats = await this.service.getMachineUtilizationAndDowntime(
+        tenantId,
+        req.query.furnaceId as string
+      );
+      this.sendSuccess(
+        res,
+        stats,
+        'Machine utilization and downtime analytics retrieved successfully'
+      );
+    } catch (error) {
+      next(error);
+    }
+  };
+
   public transitionJob = async (
     req: Request,
     res: Response,

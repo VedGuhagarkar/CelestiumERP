@@ -12,24 +12,31 @@ import {
   TransitionJobDto,
   CancelJobDto,
   ConvertPlanToJobDto,
+  StartJobExecutionDto,
+  RecordStageProgressDto,
+  PauseJobExecutionDto,
+  ResumeJobExecutionDto,
+  AddProductionLogDto,
+  CompleteJobExecutionDto,
+  TransitionToStorageDto,
   QueryJobsDto,
   ProductionJobDocument,
-  IJobRecipeSnapshot,
-  IJobSpecificationSnapshot,
-  IJobMaterialAllocation,
   ALLOWED_STATUS_TRANSITIONS,
-  PRIORITY_WEIGHTS
+  PRIORITY_WEIGHTS,
+  IJobRecipeSnapshot,
+  IJobSpecificationSnapshot
 } from './production-job.types.js';
 import { customerRepository } from '../customer/customer.repository.js';
 import { itemRepository } from '../item/item.repository.js';
 import { recipeRepository } from '../recipe/recipe.repository.js';
 import { specificationRepository } from '../specification/specification.repository.js';
 import { productionPlanRepository } from '../production-planning/production-plan.repository.js';
-import { constraintAnalysisService } from '../constraint-analysis/constraint-analysis.service.js';
-import { materialRequirementsRepository } from '../material-requirements/material-requirements.repository.js';
 import { furnaceCapacityRepository } from '../furnace-capacity/furnace-capacity.repository.js';
 import { workforceCapacityRepository } from '../workforce-capacity/workforce-capacity.repository.js';
+import { constraintAnalysisService } from '../constraint-analysis/constraint-analysis.service.js';
 import { auditService } from '../audit/audit.service.js';
+import { DomainEventBus } from '../../core/events/domain-event-bus.js';
+import { DomainEvents } from '../../core/constants/events.js';
 import { NotFoundError, BadRequestError } from '../../core/errors/app-error.js';
 import { PaginationOptions, PaginatedResult } from '../../core/types/pagination.js';
 
@@ -40,6 +47,8 @@ export interface IActorContext {
 }
 
 export class ProductionJobService {
+  private readonly eventBus = DomainEventBus.getInstance();
+
   constructor(
     private readonly repo: IProductionJobRepository = productionJobRepository
   ) {}
@@ -60,53 +69,55 @@ export class ProductionJobService {
     }
 
     const recipe = await recipeRepository.findById(tenantId, dto.recipeId);
-    if (!recipe || recipe.isDeleted || (recipe.status !== 'APPROVED' && recipe.status !== 'ACTIVE')) {
+    if (!recipe || recipe.isDeleted) {
+      throw new NotFoundError(`Recipe with ID '${dto.recipeId}' not found`);
+    }
+
+    if (recipe.status !== 'APPROVED' && recipe.status !== 'ACTIVE') {
       throw new BadRequestError(
-        `Recipe with ID '${dto.recipeId}' must be in APPROVED or ACTIVE status for job creation`
+        `Recipe '${recipe.recipeCode}' must be in APPROVED or ACTIVE status (Current status: '${recipe.status}')`
       );
     }
 
     const spec = await specificationRepository.findById(tenantId, dto.specificationId);
-    if (!spec || spec.isDeleted || (spec.status !== 'APPROVED' && spec.status !== 'ACTIVE')) {
+    if (!spec || spec.isDeleted) {
+      throw new NotFoundError(`Specification with ID '${dto.specificationId}' not found`);
+    }
+
+    if (spec.status !== 'APPROVED' && spec.status !== 'ACTIVE') {
       throw new BadRequestError(
-        `Specification with ID '${dto.specificationId}' must be in APPROVED or ACTIVE status for job creation`
+        `Specification '${spec.specCode}' must be in APPROVED or ACTIVE status (Current status: '${spec.status}')`
       );
     }
 
     const recipeSnapshot: IJobRecipeSnapshot = {
       recipeId: recipe.id,
       recipeCode: recipe.recipeCode,
-      revisionNumber: recipe.revision,
+      revisionNumber: (recipe as any).revisionNumber || recipe.revision || 1,
       processFamily: recipe.processFamily,
       name: recipe.name,
       applicableMaterialGrades: recipe.applicableMaterialGrades || [],
       stages: recipe.stages || [],
-      metallurgicalTargets: recipe.metallurgicalTargets || ({} as any),
-      machineRequirements: recipe.machineRequirements || ({} as any),
+      metallurgicalTargets: recipe.metallurgicalTargets,
+      machineRequirements: recipe.machineRequirements,
       snapshottedAt: new Date()
     };
 
-    const specificationSnapshot: IJobSpecificationSnapshot = {
+    const specSnapshot: IJobSpecificationSnapshot = {
       specificationId: spec.id,
       specCode: spec.specCode,
-      revisionNumber: spec.revision,
+      revisionNumber: (spec as any).revisionNumber || spec.revision || 1,
       title: spec.title,
       customerCode: spec.customerCode,
       surfaceHardness: spec.surfaceHardness || ({} as any),
-      coreHardness: spec.coreHardness,
-      caseDepth: spec.caseDepth,
-      microstructure: spec.microstructure,
+      coreHardness: spec.coreHardness || undefined,
+      caseDepth: spec.caseDepth || undefined,
+      microstructure: spec.microstructure || undefined,
       customerAcceptance: spec.customerAcceptance || ({} as any),
       snapshottedAt: new Date()
     };
 
-    let equipmentAssignment = {
-      furnaceId: null as string | null,
-      furnaceCode: null as string | null,
-      locationBay: null as string | null,
-      pyrometryClass: null as string | null
-    };
-
+    let equipmentAssignment = {};
     if (dto.assignedFurnaceId) {
       const furnace = await furnaceCapacityRepository.findFurnaceById(tenantId, dto.assignedFurnaceId);
       if (furnace) {
@@ -114,23 +125,14 @@ export class ProductionJobService {
           furnaceId: furnace.id,
           furnaceCode: furnace.furnaceCode,
           locationBay: furnace.locationBay,
-          pyrometryClass: furnace.thermalCapabilities.pyrometryClass
+          pyrometryClass: furnace.thermalCapabilities?.pyrometryClass || null
         };
       }
     }
 
-    let operatorAssignment = {
-      operatorId: null as string | null,
-      operatorCode: null as string | null,
-      operatorName: null as string | null,
-      shift: dto.shift || null
-    };
-
+    let operatorAssignment = {};
     if (dto.assignedOperatorId) {
-      const operator = await workforceCapacityRepository.findEmployeeById(
-        tenantId,
-        dto.assignedOperatorId
-      );
+      const operator = await workforceCapacityRepository.findEmployeeById(tenantId, dto.assignedOperatorId);
       if (operator) {
         operatorAssignment = {
           operatorId: operator.id,
@@ -141,42 +143,25 @@ export class ProductionJobService {
       }
     }
 
-    const materialAllocations: IJobMaterialAllocation[] = (dto.materialAllocations || []).map((m) => ({
-      reservationId: null,
-      heatLotId: m.heatLotId || null,
-      heatLotNumber: m.heatLotNumber || null,
-      allocatedQuantity: m.allocatedQuantity,
-      uom: m.uom
-    }));
-
     const jobNumber = await this.repo.generateNextJobNumber(tenantId);
+    const initialStatus = 'DRAFT';
 
-    const initialTransition = {
-      fromStatus: 'DRAFT' as const,
-      toStatus: 'DRAFT' as const,
-      timestamp: new Date(),
-      performedBy: {
-        userId: actor.userId,
-        email: actor.email,
-        role: actor.role
-      },
-      reason: 'Direct Job Initiation',
-      notes: dto.notes || null
-    };
+    const customerName = (customer as any).name || (customer as any).companyName || 'Customer';
+    const itemName = (item as any).name || (item as any).itemName || 'Item';
 
     const job = await this.repo.create(tenantId, {
       jobNumber,
       customer: {
         customerId: customer.id,
         customerCode: customer.customerCode,
-        customerName: customer.companyName
+        customerName
       },
       item: {
         itemId: item.id,
         itemCode: item.itemCode,
-        itemName: item.name,
+        itemName,
         materialGrade: item.materialGrade || 'GENERIC',
-        uom: item.uom
+        uom: item.uom || 'EA'
       },
       quantity: {
         targetQuantity: dto.targetQuantity,
@@ -184,20 +169,40 @@ export class ProductionJobService {
         completedQuantity: 0,
         scrappedQuantity: 0
       },
-      status: 'DRAFT',
+      status: initialStatus,
       priority: dto.priority || 'NORMAL',
       recipeSnapshot,
-      specificationSnapshot,
-      materialAllocations,
+      specificationSnapshot: specSnapshot,
+      materialAllocations: (dto.materialAllocations || []).map((m) => ({
+        heatLotId: m.heatLotId || null,
+        heatLotNumber: m.heatLotNumber || null,
+        allocatedQuantity: m.allocatedQuantity,
+        uom: m.uom
+      })),
       equipmentAssignment,
       operatorAssignment,
       timeline: {
         plannedStartDate: new Date(dto.plannedStartDate),
-        targetCompletionDate: new Date(dto.targetCompletionDate),
-        actualStartDate: null,
-        actualCompletionDate: null
+        targetCompletionDate: new Date(dto.targetCompletionDate)
       },
-      transitionHistory: [initialTransition],
+      execution: {
+        stageProgress: [],
+        downtimeLog: [],
+        productionLogs: []
+      },
+      transitionHistory: [
+        {
+          fromStatus: 'DRAFT',
+          toStatus: 'DRAFT',
+          timestamp: new Date(),
+          performedBy: {
+            userId: actor.userId,
+            email: actor.email,
+            role: actor.role
+          },
+          reason: 'Direct Job Initiation'
+        }
+      ],
       assignmentHistory: [],
       notes: dto.notes || null
     });
@@ -207,13 +212,8 @@ export class ProductionJobService {
       action: 'CREATE_PRODUCTION_JOB',
       entityType: 'PRODUCTION_JOB',
       entityId: job.id,
-      afterState: job.toJSON(),
-      metadata: {
-        jobNumber: job.jobNumber,
-        itemCode: item.itemCode,
-        recipeCode: recipe.recipeCode,
-        specCode: spec.specCode
-      }
+      afterState: job.toJSON ? job.toJSON() : job,
+      metadata: { jobNumber: job.jobNumber, customerCode: customer.customerCode, targetQuantity: dto.targetQuantity }
     });
 
     return job;
@@ -221,7 +221,7 @@ export class ProductionJobService {
 
   public async updateJob(
     tenantId: string,
-    actorId: string,
+    userId: string,
     jobId: string,
     dto: UpdateJobDto
   ): Promise<ProductionJobDocument> {
@@ -230,14 +230,13 @@ export class ProductionJobService {
       throw new NotFoundError(`Production Job with ID '${jobId}' not found`);
     }
 
-    const preProductionStates = ['DRAFT', 'PENDING_REVIEW', 'APPROVED', 'SCHEDULED'];
-    if (!preProductionStates.includes(job.status)) {
+    if (job.status !== 'DRAFT' && job.status !== 'APPROVED' && job.status !== 'SCHEDULED') {
       throw new BadRequestError(
-        `Cannot modify production job '${job.jobNumber}' in status '${job.status}'. Modifications are strictly locked once heat-treatment execution has commenced.`
+        `Production Job '${job.jobNumber}' cannot be modified in status '${job.status}'. Modifications are strictly locked once production is in progress or completed.`
       );
     }
 
-    const beforeState = job.toJSON();
+    const previousState = job.toJSON ? job.toJSON() : job;
 
     if (dto.targetQuantity !== undefined) job.quantity.targetQuantity = dto.targetQuantity;
     if (dto.priority !== undefined) job.priority = dto.priority;
@@ -252,16 +251,13 @@ export class ProductionJobService {
           furnaceId: furnace.id,
           furnaceCode: furnace.furnaceCode,
           locationBay: furnace.locationBay,
-          pyrometryClass: furnace.thermalCapabilities.pyrometryClass
+          pyrometryClass: furnace.thermalCapabilities?.pyrometryClass || null
         };
       }
     }
 
     if (dto.assignedOperatorId) {
-      const operator = await workforceCapacityRepository.findEmployeeById(
-        tenantId,
-        dto.assignedOperatorId
-      );
+      const operator = await workforceCapacityRepository.findEmployeeById(tenantId, dto.assignedOperatorId);
       if (operator) {
         job.operatorAssignment = {
           operatorId: operator.id,
@@ -275,12 +271,13 @@ export class ProductionJobService {
     await job.save();
 
     await auditService.record(tenantId, {
-      actorId,
+      actorId: userId,
       action: 'UPDATE_PRODUCTION_JOB',
       entityType: 'PRODUCTION_JOB',
       entityId: job.id,
-      beforeState,
-      afterState: job.toJSON()
+      beforeState: previousState,
+      afterState: job.toJSON ? job.toJSON() : job,
+      metadata: { jobNumber: job.jobNumber }
     });
 
     return job;
@@ -298,85 +295,65 @@ export class ProductionJobService {
     }
 
     if (job.status === 'COMPLETED' || job.status === 'CANCELLED') {
-      throw new BadRequestError(
-        `Cannot assign operator to a '${job.status}' production job`
-      );
+      throw new BadRequestError(`Cannot assign operator to job in '${job.status}' status`);
     }
 
-    // 1. Validate Operator Existence and Active Status
-    const operator = await workforceCapacityRepository.findEmployeeById(
-      tenantId,
-      dto.operatorId
-    );
-    if (!operator || operator.isDeleted || operator.status !== 'ACTIVE') {
-      throw new BadRequestError(
-        `Operator with ID '${dto.operatorId}' not found or is not in ACTIVE status`
-      );
+    const employee = await workforceCapacityRepository.findEmployeeById(tenantId, dto.operatorId);
+    if (!employee || employee.isDeleted || employee.status !== 'ACTIVE') {
+      throw new BadRequestError(`Employee with ID '${dto.operatorId}' is not active or does not exist`);
     }
 
-    const jobStart = new Date(job.timeline.plannedStartDate);
-    const jobEnd = new Date(job.timeline.targetCompletionDate);
-
-    // 2. Validate Operator Leave Schedule
-    const onLeave = (operator.approvedLeaves || []).some((leave) => {
+    const jobStart = job.timeline.plannedStartDate;
+    const jobEnd = job.timeline.targetCompletionDate;
+    const onLeave = (employee.approvedLeaves || []).some((leave) => {
       const lStart = new Date(leave.startDate);
       const lEnd = new Date(leave.endDate);
       return jobStart <= lEnd && jobEnd >= lStart;
     });
 
     if (onLeave) {
-      throw new BadRequestError(
-        `Operator '${operator.fullName}' has approved leave overlapping the planned job window`
-      );
+      throw new BadRequestError(`Operator '${employee.fullName}' has approved leave overlapping the job schedule`);
     }
 
-    // 3. Validate Operator Qualification for Recipe Process Family
-    const processFamily = job.recipeSnapshot?.processFamily || 'CARBURIZING';
+    const processFamily = job.recipeSnapshot.processFamily;
     const reqSkillCode = `${processFamily}_OPERATION`;
-
-    const isQualified = (operator.skills || []).some((s) => {
-      const isSkillMatch =
+    const isQualified = (employee.skills || []).some((s) => {
+      const isMatch =
         s.skillCode === reqSkillCode ||
         s.skillCode === 'SEALED_QUENCH_FURNACE_OPERATION' ||
         s.skillCode === 'VACUUM_FURNACE_OPERATION' ||
         s.skillCode === 'PIT_FURNACE_OPERATION' ||
         s.skillCode === 'NITRIDING_OPERATION';
-
       const isCertified = s.isCertified;
       const isNotExpired = !s.expiryDate || new Date(s.expiryDate) >= jobStart;
-
-      return isSkillMatch && isCertified && isNotExpired;
+      return isMatch && isCertified && isNotExpired;
     });
 
     if (!isQualified) {
       throw new BadRequestError(
-        `Operator '${operator.fullName}' (${operator.employeeCode}) lacks certified, non-expired qualification for process '${processFamily}'`
+        `Operator '${employee.fullName}' lacks certified, non-expired qualification for '${processFamily}'`
       );
     }
 
-    const previousResourceId = job.operatorAssignment?.operatorId || null;
-    const previousResourceCode = job.operatorAssignment?.operatorCode || null;
-    const action = previousResourceId ? 'REALLOCATE' : 'ASSIGN';
+    const prevOpId = job.operatorAssignment?.operatorId || null;
+    const prevOpCode = job.operatorAssignment?.operatorCode || null;
+    const action = prevOpId ? 'REALLOCATE' : 'ASSIGN';
 
     job.operatorAssignment = {
-      operatorId: operator.id,
-      operatorCode: operator.employeeCode,
-      operatorName: operator.fullName,
-      shift: dto.shift || operator.defaultShift
+      operatorId: employee.id,
+      operatorCode: employee.employeeCode,
+      operatorName: employee.fullName,
+      shift: dto.shift || employee.defaultShift
     };
 
     job.assignmentHistory.push({
       resourceType: 'OPERATOR',
       action,
-      previousResourceId,
-      previousResourceCode,
-      newResourceId: operator.id,
-      newResourceCode: operator.employeeCode,
-      performedBy: {
-        userId: actor.userId,
-        email: actor.email,
-        role: actor.role
-      },
+      previousResourceId: prevOpId,
+      previousResourceCode: prevOpCode,
+      newResourceId: employee.id,
+      newResourceCode: employee.employeeCode,
+      performedBy: { userId: actor.userId, email: actor.email, role: actor.role },
       timestamp: new Date(),
       reason: dto.reason || null,
       notes: dto.notes || null
@@ -389,11 +366,8 @@ export class ProductionJobService {
       action: `${action}_JOB_OPERATOR`,
       entityType: 'PRODUCTION_JOB',
       entityId: job.id,
-      metadata: {
-        jobNumber: job.jobNumber,
-        operatorCode: operator.employeeCode,
-        shift: job.operatorAssignment.shift
-      }
+      afterState: job.toJSON ? job.toJSON() : job,
+      metadata: { jobNumber: job.jobNumber, operatorCode: employee.employeeCode }
     });
 
     return job;
@@ -411,39 +385,22 @@ export class ProductionJobService {
     }
 
     if (job.status === 'IN_PROGRESS') {
-      throw new BadRequestError(
-        `Cannot remove operator while job '${job.jobNumber}' is actively IN_PROGRESS. Please pause the job first.`
-      );
+      throw new BadRequestError(`Cannot remove assigned operator while job '${job.jobNumber}' is actively IN_PROGRESS`);
     }
 
-    if (!job.operatorAssignment?.operatorId) {
-      throw new BadRequestError(
-        `No operator currently assigned to job '${job.jobNumber}'`
-      );
-    }
+    const prevOpId = job.operatorAssignment?.operatorId || null;
+    const prevOpCode = job.operatorAssignment?.operatorCode || null;
 
-    const previousResourceId = job.operatorAssignment.operatorId;
-    const previousResourceCode = job.operatorAssignment.operatorCode;
-
-    job.operatorAssignment = {
-      operatorId: null,
-      operatorCode: null,
-      operatorName: null,
-      shift: null
-    };
+    job.operatorAssignment = { operatorId: null, operatorCode: null, operatorName: null, shift: null };
 
     job.assignmentHistory.push({
       resourceType: 'OPERATOR',
       action: 'REMOVE',
-      previousResourceId,
-      previousResourceCode,
+      previousResourceId: prevOpId,
+      previousResourceCode: prevOpCode,
       newResourceId: null,
       newResourceCode: null,
-      performedBy: {
-        userId: actor.userId,
-        email: actor.email,
-        role: actor.role
-      },
+      performedBy: { userId: actor.userId, email: actor.email, role: actor.role },
       timestamp: new Date(),
       reason: dto.reason,
       notes: dto.notes || null
@@ -456,11 +413,8 @@ export class ProductionJobService {
       action: 'REMOVE_JOB_OPERATOR',
       entityType: 'PRODUCTION_JOB',
       entityId: job.id,
-      metadata: {
-        jobNumber: job.jobNumber,
-        removedOperatorCode: previousResourceCode,
-        reason: dto.reason
-      }
+      afterState: job.toJSON ? job.toJSON() : job,
+      metadata: { jobNumber: job.jobNumber, reason: dto.reason }
     });
 
     return job;
@@ -478,72 +432,50 @@ export class ProductionJobService {
     }
 
     if (job.status === 'COMPLETED' || job.status === 'CANCELLED') {
-      throw new BadRequestError(
-        `Cannot assign furnace to a '${job.status}' production job`
-      );
+      throw new BadRequestError(`Cannot assign furnace to job in '${job.status}' status`);
     }
 
-    if (job.status === 'IN_PROGRESS') {
-      throw new BadRequestError(
-        `Cannot reallocate furnace while job '${job.jobNumber}' is actively IN_PROGRESS. Please pause the job first.`
-      );
-    }
-
-    // 1. Validate Furnace Existence
     const furnace = await furnaceCapacityRepository.findFurnaceById(tenantId, dto.furnaceId);
     if (!furnace || furnace.isDeleted) {
       throw new NotFoundError(`Furnace with ID '${dto.furnaceId}' not found`);
     }
 
-    // 2. Validate Furnace Machine Availability
     if (furnace.status !== 'OPERATIONAL') {
-      throw new BadRequestError(
-        `Furnace '${furnace.furnaceCode}' is not available for assignment (Current status: '${furnace.status}')`
-      );
+      throw new BadRequestError(`Furnace '${furnace.furnaceCode}' is not available for assignment (Status: '${furnace.status}')`);
     }
 
-    // 3. Validate Process Family Capability
-    const processFamily = job.recipeSnapshot?.processFamily || 'CARBURIZING';
+    const processFamily = job.recipeSnapshot.processFamily;
     if (!furnace.processCapabilities.supportedProcessFamilies.includes(processFamily)) {
-      throw new BadRequestError(
-        `Furnace '${furnace.furnaceCode}' does not support process family '${processFamily}'`
-      );
+      throw new BadRequestError(`Furnace '${furnace.furnaceCode}' does not support process family '${processFamily}'`);
     }
 
-    // 4. Validate Operating Temperature Envelope [Tmin, Tmax]
-    const recipeStages = job.recipeSnapshot?.stages || [];
-    const maxRecipeTemp = Math.max(...recipeStages.map((s) => s.targetTemperatureC), 0);
-
+    const maxRecipeTemp = Math.max(...job.recipeSnapshot.stages.map((s) => s.targetTemperatureC), 0);
     if (
       maxRecipeTemp > furnace.thermalCapabilities.maxOperatingTempC ||
       maxRecipeTemp < furnace.thermalCapabilities.minOperatingTempC
     ) {
       throw new BadRequestError(
-        `Recipe temperature (${maxRecipeTemp}°C) is outside furnace '${furnace.furnaceCode}' thermal operating envelope [${furnace.thermalCapabilities.minOperatingTempC}°C - ${furnace.thermalCapabilities.maxOperatingTempC}°C]`
+        `Recipe temperature (${maxRecipeTemp}°C) is outside furnace '${furnace.furnaceCode}' operating limits [${furnace.thermalCapabilities.minOperatingTempC}°C - ${furnace.thermalCapabilities.maxOperatingTempC}°C]`
       );
     }
-
-    // 5. Validate Schedule Collision on Furnace
-    const jobStart = new Date(job.timeline.plannedStartDate);
-    const jobEnd = new Date(job.timeline.targetCompletionDate);
 
     const conflictingJobs = await this.repo.findConflictingJobs(
       tenantId,
       furnace.id,
-      jobStart,
-      jobEnd,
+      job.timeline.plannedStartDate,
+      job.timeline.targetCompletionDate,
       job.id
     );
 
     if (conflictingJobs.length > 0) {
       throw new BadRequestError(
-        `Schedule conflict: Furnace '${furnace.furnaceCode}' is already allocated to job '${conflictingJobs[0].jobNumber}' during this time window`
+        `Schedule conflict: Furnace '${furnace.furnaceCode}' is already assigned to job '${conflictingJobs[0].jobNumber}' in this time window`
       );
     }
 
-    const previousResourceId = job.equipmentAssignment?.furnaceId || null;
-    const previousResourceCode = job.equipmentAssignment?.furnaceCode || null;
-    const action = previousResourceId ? 'REALLOCATE' : 'ASSIGN';
+    const prevFurnaceId = job.equipmentAssignment?.furnaceId || null;
+    const prevFurnaceCode = job.equipmentAssignment?.furnaceCode || null;
+    const action = prevFurnaceId ? 'REALLOCATE' : 'ASSIGN';
 
     job.equipmentAssignment = {
       furnaceId: furnace.id,
@@ -555,22 +487,25 @@ export class ProductionJobService {
     job.assignmentHistory.push({
       resourceType: 'FURNACE',
       action,
-      previousResourceId,
-      previousResourceCode,
+      previousResourceId: prevFurnaceId,
+      previousResourceCode: prevFurnaceCode,
       newResourceId: furnace.id,
       newResourceCode: furnace.furnaceCode,
-      performedBy: {
-        userId: actor.userId,
-        email: actor.email,
-        role: actor.role
-      },
+      performedBy: { userId: actor.userId, email: actor.email, role: actor.role },
       timestamp: new Date(),
       reason: dto.reason || null,
       notes: dto.notes || null
     });
 
-    if (job.status === 'APPROVED') {
+    if (job.status === 'APPROVED' || job.status === 'DRAFT') {
       job.status = 'SCHEDULED';
+      job.transitionHistory.push({
+        fromStatus: job.status,
+        toStatus: 'SCHEDULED',
+        timestamp: new Date(),
+        performedBy: { userId: actor.userId, email: actor.email, role: actor.role },
+        reason: `Auto-scheduled upon furnace assignment to '${furnace.furnaceCode}'`
+      });
     }
 
     await job.save();
@@ -580,11 +515,8 @@ export class ProductionJobService {
       action: `${action}_JOB_FURNACE`,
       entityType: 'PRODUCTION_JOB',
       entityId: job.id,
-      metadata: {
-        jobNumber: job.jobNumber,
-        furnaceCode: furnace.furnaceCode,
-        pyrometryClass: furnace.thermalCapabilities.pyrometryClass
-      }
+      afterState: job.toJSON ? job.toJSON() : job,
+      metadata: { jobNumber: job.jobNumber, furnaceCode: furnace.furnaceCode }
     });
 
     return job;
@@ -602,39 +534,22 @@ export class ProductionJobService {
     }
 
     if (job.status === 'IN_PROGRESS') {
-      throw new BadRequestError(
-        `Cannot remove furnace while job '${job.jobNumber}' is actively IN_PROGRESS. Please pause the job first.`
-      );
+      throw new BadRequestError(`Cannot remove assigned furnace while job '${job.jobNumber}' is actively IN_PROGRESS`);
     }
 
-    if (!job.equipmentAssignment?.furnaceId) {
-      throw new BadRequestError(
-        `No furnace currently assigned to job '${job.jobNumber}'`
-      );
-    }
+    const prevFurnaceId = job.equipmentAssignment?.furnaceId || null;
+    const prevFurnaceCode = job.equipmentAssignment?.furnaceCode || null;
 
-    const previousResourceId = job.equipmentAssignment.furnaceId;
-    const previousResourceCode = job.equipmentAssignment.furnaceCode;
-
-    job.equipmentAssignment = {
-      furnaceId: null,
-      furnaceCode: null,
-      locationBay: null,
-      pyrometryClass: null
-    };
+    job.equipmentAssignment = { furnaceId: null, furnaceCode: null, locationBay: null, pyrometryClass: null };
 
     job.assignmentHistory.push({
       resourceType: 'FURNACE',
       action: 'REMOVE',
-      previousResourceId,
-      previousResourceCode,
+      previousResourceId: prevFurnaceId,
+      previousResourceCode: prevFurnaceCode,
       newResourceId: null,
       newResourceCode: null,
-      performedBy: {
-        userId: actor.userId,
-        email: actor.email,
-        role: actor.role
-      },
+      performedBy: { userId: actor.userId, email: actor.email, role: actor.role },
       timestamp: new Date(),
       reason: dto.reason,
       notes: dto.notes || null
@@ -642,6 +557,13 @@ export class ProductionJobService {
 
     if (job.status === 'SCHEDULED') {
       job.status = 'APPROVED';
+      job.transitionHistory.push({
+        fromStatus: 'SCHEDULED',
+        toStatus: 'APPROVED',
+        timestamp: new Date(),
+        performedBy: { userId: actor.userId, email: actor.email, role: actor.role },
+        reason: `Reverted to APPROVED backlog state upon furnace removal`
+      });
     }
 
     await job.save();
@@ -651,15 +573,589 @@ export class ProductionJobService {
       action: 'REMOVE_JOB_FURNACE',
       entityType: 'PRODUCTION_JOB',
       entityId: job.id,
+      afterState: job.toJSON ? job.toJSON() : job,
+      metadata: { jobNumber: job.jobNumber, reason: dto.reason }
+    });
+
+    return job;
+  }
+
+  // --- Complete Shop-Floor Cycle Execution Methods ---
+
+  public async startJobExecution(
+    tenantId: string,
+    actor: IActorContext,
+    jobId: string,
+    dto: StartJobExecutionDto
+  ): Promise<ProductionJobDocument> {
+    const job = await this.repo.findById(tenantId, jobId);
+    if (!job || job.isDeleted) {
+      throw new NotFoundError(`Production Job with ID '${jobId}' not found`);
+    }
+
+    if (job.status !== 'SCHEDULED' && job.status !== 'APPROVED') {
+      throw new BadRequestError(
+        `Cannot start job '${job.jobNumber}' in status '${job.status}'. Expected 'SCHEDULED' or 'APPROVED'.`
+      );
+    }
+
+    if (job.materialAllocations.length === 0) {
+      throw new BadRequestError(`Cannot start job '${job.jobNumber}': No heat lot material allocations assigned.`);
+    }
+
+    const furnaceId = dto.furnaceId || job.equipmentAssignment?.furnaceId;
+    if (!furnaceId) {
+      throw new BadRequestError(`Cannot start job '${job.jobNumber}': No furnace assigned.`);
+    }
+
+    const furnace = await furnaceCapacityRepository.findFurnaceById(tenantId, furnaceId);
+    if (!furnace || furnace.isDeleted || furnace.status !== 'OPERATIONAL') {
+      throw new BadRequestError(
+        `Furnace is not in OPERATIONAL state (Current status: '${furnace?.status || 'NOT_FOUND'}')`
+      );
+    }
+
+    if (dto.initialFurnaceTempC > furnace.thermalCapabilities.maxOperatingTempC) {
+      throw new BadRequestError(
+        `Initial furnace temperature (${dto.initialFurnaceTempC}°C) exceeds furnace maximum rating (${furnace.thermalCapabilities.maxOperatingTempC}°C)`
+      );
+    }
+
+    const startTime = new Date();
+    const prevStatus = job.status;
+
+    job.status = 'IN_PROGRESS';
+    job.timeline.actualStartDate = startTime;
+    job.quantity.loadedQuantity = dto.loadedPieceCount;
+
+    if (!job.execution) {
+      job.execution = {
+        stageProgress: [],
+        downtimeLog: [],
+        productionLogs: []
+      };
+    }
+
+    job.execution.furnaceCharge = {
+      chargeNumber: dto.chargeNumber,
+      loadedWeightKg: dto.loadedWeightKg,
+      loadedPieceCount: dto.loadedPieceCount,
+      fixtureId: dto.fixtureId || null,
+      initialFurnaceTempC: dto.initialFurnaceTempC,
+      initialAtmosphereLevel: dto.initialAtmosphereLevel || null,
+      thermocoupleLocations: dto.thermocoupleLocations || [],
+      startedAt: startTime,
+      startedBy: { userId: actor.userId, email: actor.email, role: actor.role }
+    };
+
+    job.execution.cycleTimer = {
+      cycleStartTime: startTime,
+      cycleEndTime: null,
+      totalRunDurationMinutes: 0,
+      totalDowntimeDurationMinutes: 0
+    };
+
+    job.transitionHistory.push({
+      fromStatus: prevStatus,
+      toStatus: 'IN_PROGRESS',
+      timestamp: startTime,
+      performedBy: { userId: actor.userId, email: actor.email, role: actor.role },
+      reason: `Furnace cycle started. Charge #${dto.chargeNumber} loaded (${dto.loadedPieceCount} pcs, ${dto.loadedWeightKg} kg)`
+    });
+
+    await job.save();
+
+    this.eventBus.publish({
+      name: DomainEvents.JOB_STARTED,
+      tenantId,
+      occurredAt: startTime,
+      actorId: actor.userId,
+      payload: {
+        jobId: job.id,
+        jobNumber: job.jobNumber,
+        chargeNumber: dto.chargeNumber,
+        furnaceCode: furnace.furnaceCode,
+        loadedPieceCount: dto.loadedPieceCount
+      }
+    });
+
+    await auditService.record(tenantId, {
+      actorId: actor.userId,
+      action: 'START_JOB_EXECUTION',
+      entityType: 'PRODUCTION_JOB',
+      entityId: job.id,
+      afterState: job.toJSON ? job.toJSON() : job,
+      metadata: { jobNumber: job.jobNumber, chargeNumber: dto.chargeNumber, furnaceCode: furnace.furnaceCode }
+    });
+
+    return job;
+  }
+
+  public async recordStageProgress(
+    tenantId: string,
+    actor: IActorContext,
+    jobId: string,
+    dto: RecordStageProgressDto
+  ): Promise<ProductionJobDocument> {
+    const job = await this.repo.findById(tenantId, jobId);
+    if (!job || job.isDeleted) {
+      throw new NotFoundError(`Production Job with ID '${jobId}' not found`);
+    }
+
+    if (job.status !== 'IN_PROGRESS') {
+      throw new BadRequestError(
+        `Cannot record stage progress for job '${job.jobNumber}' in status '${job.status}'. Expected 'IN_PROGRESS'.`
+      );
+    }
+
+    if (!job.execution) {
+      job.execution = { stageProgress: [], downtimeLog: [], productionLogs: [] };
+    }
+
+    job.execution.stageProgress.push({
+      stageSequence: dto.stageSequence,
+      stageName: dto.stageName,
+      stageType: dto.stageType,
+      targetTemperatureC: dto.targetTemperatureC,
+      actualTemperatureC: dto.actualTemperatureC,
+      targetDurationMinutes: dto.targetDurationMinutes,
+      actualDurationMinutes: dto.actualDurationMinutes,
+      quenchMedium: dto.quenchMedium || null,
+      quenchAgitationSpeedRpm: dto.quenchAgitationSpeedRpm || null,
+      quenchMediaInitialTempC: dto.quenchMediaInitialTempC || null,
+      quenchMediaFinalTempC: dto.quenchMediaFinalTempC || null,
+      atmosphereDetails: dto.atmosphereDetails || {},
+      recordedBy: { userId: actor.userId, email: actor.email, role: actor.role },
+      timestamp: new Date(),
+      notes: dto.notes || null
+    });
+
+    await job.save();
+
+    await auditService.record(tenantId, {
+      actorId: actor.userId,
+      action: 'RECORD_STAGE_PROGRESS',
+      entityType: 'PRODUCTION_JOB',
+      entityId: job.id,
+      afterState: job.toJSON ? job.toJSON() : job,
+      metadata: { jobNumber: job.jobNumber, stageName: dto.stageName, stageType: dto.stageType }
+    });
+
+    return job;
+  }
+
+  public async pauseJobExecution(
+    tenantId: string,
+    actor: IActorContext,
+    jobId: string,
+    dto: PauseJobExecutionDto
+  ): Promise<ProductionJobDocument> {
+    const job = await this.repo.findById(tenantId, jobId);
+    if (!job || job.isDeleted) {
+      throw new NotFoundError(`Production Job with ID '${jobId}' not found`);
+    }
+
+    if (job.status !== 'IN_PROGRESS') {
+      throw new BadRequestError(
+        `Cannot pause job '${job.jobNumber}' in status '${job.status}'. Expected 'IN_PROGRESS'.`
+      );
+    }
+
+    const pauseTime = new Date();
+    const downtimeId = `DT-${Date.now()}`;
+
+    if (!job.execution) {
+      job.execution = { stageProgress: [], downtimeLog: [], productionLogs: [] };
+    }
+
+    job.status = 'PAUSED';
+    job.execution.downtimeLog.push({
+      downtimeId,
+      category: dto.category,
+      reason: dto.reason,
+      startTime: pauseTime,
+      endTime: null,
+      durationMinutes: null,
+      impactOnCycle: dto.impactOnCycle || null,
+      actionTaken: null,
+      loggedBy: { userId: actor.userId, email: actor.email, role: actor.role },
+      notes: dto.notes || null
+    });
+
+    job.transitionHistory.push({
+      fromStatus: 'IN_PROGRESS',
+      toStatus: 'PAUSED',
+      timestamp: pauseTime,
+      performedBy: { userId: actor.userId, email: actor.email, role: actor.role },
+      reason: `Cycle paused due to ${dto.category}: ${dto.reason}`
+    });
+
+    await job.save();
+
+    this.eventBus.publish({
+      name: DomainEvents.JOB_PAUSED,
+      tenantId,
+      occurredAt: pauseTime,
+      actorId: actor.userId,
+      payload: { jobId: job.id, jobNumber: job.jobNumber, category: dto.category, reason: dto.reason }
+    });
+
+    this.eventBus.publish({
+      name: DomainEvents.JOB_DOWNTIME_LOGGED,
+      tenantId,
+      occurredAt: pauseTime,
+      actorId: actor.userId,
+      payload: { jobId: job.id, jobNumber: job.jobNumber, downtimeId, category: dto.category, reason: dto.reason }
+    });
+
+    await auditService.record(tenantId, {
+      actorId: actor.userId,
+      action: 'PAUSE_JOB_EXECUTION',
+      entityType: 'PRODUCTION_JOB',
+      entityId: job.id,
+      afterState: job.toJSON ? job.toJSON() : job,
+      metadata: { jobNumber: job.jobNumber, category: dto.category, reason: dto.reason }
+    });
+
+    return job;
+  }
+
+  public async resumeJobExecution(
+    tenantId: string,
+    actor: IActorContext,
+    jobId: string,
+    dto: ResumeJobExecutionDto
+  ): Promise<ProductionJobDocument> {
+    const job = await this.repo.findById(tenantId, jobId);
+    if (!job || job.isDeleted) {
+      throw new NotFoundError(`Production Job with ID '${jobId}' not found`);
+    }
+
+    if (job.status !== 'PAUSED') {
+      throw new BadRequestError(
+        `Cannot resume job '${job.jobNumber}' in status '${job.status}'. Expected 'PAUSED'.`
+      );
+    }
+
+    const resumeTime = new Date();
+
+    if (!job.execution) {
+      job.execution = { stageProgress: [], downtimeLog: [], productionLogs: [] };
+    }
+
+    const openDowntime = job.execution.downtimeLog.find((d) => d.endTime === null || d.endTime === undefined);
+    if (openDowntime) {
+      openDowntime.endTime = resumeTime;
+      const durationMs = resumeTime.getTime() - new Date(openDowntime.startTime).getTime();
+      openDowntime.durationMinutes = Math.round((durationMs / 60000) * 10) / 10;
+      openDowntime.actionTaken = dto.actionTaken;
+      if (dto.notes) openDowntime.notes = openDowntime.notes ? `${openDowntime.notes}; ${dto.notes}` : dto.notes;
+
+      if (job.execution.cycleTimer) {
+        job.execution.cycleTimer.totalDowntimeDurationMinutes =
+          (job.execution.cycleTimer.totalDowntimeDurationMinutes || 0) + openDowntime.durationMinutes;
+      }
+    }
+
+    job.status = 'IN_PROGRESS';
+    job.transitionHistory.push({
+      fromStatus: 'PAUSED',
+      toStatus: 'IN_PROGRESS',
+      timestamp: resumeTime,
+      performedBy: { userId: actor.userId, email: actor.email, role: actor.role },
+      reason: `Cycle resumed. Action taken: ${dto.actionTaken}`
+    });
+
+    await job.save();
+
+    this.eventBus.publish({
+      name: DomainEvents.JOB_RESUMED,
+      tenantId,
+      occurredAt: resumeTime,
+      actorId: actor.userId,
+      payload: { jobId: job.id, jobNumber: job.jobNumber, actionTaken: dto.actionTaken }
+    });
+
+    await auditService.record(tenantId, {
+      actorId: actor.userId,
+      action: 'RESUME_JOB_EXECUTION',
+      entityType: 'PRODUCTION_JOB',
+      entityId: job.id,
+      afterState: job.toJSON ? job.toJSON() : job,
+      metadata: { jobNumber: job.jobNumber, actionTaken: dto.actionTaken }
+    });
+
+    return job;
+  }
+
+  public async addProductionLog(
+    tenantId: string,
+    actor: IActorContext,
+    jobId: string,
+    dto: AddProductionLogDto
+  ): Promise<ProductionJobDocument> {
+    const job = await this.repo.findById(tenantId, jobId);
+    if (!job || job.isDeleted) {
+      throw new NotFoundError(`Production Job with ID '${jobId}' not found`);
+    }
+
+    if (!job.execution) {
+      job.execution = { stageProgress: [], downtimeLog: [], productionLogs: [] };
+    }
+
+    job.execution.productionLogs.push({
+      logId: `LOG-${Date.now()}`,
+      type: dto.type,
+      shift: dto.shift || null,
+      message: dto.message,
+      recordedBy: { userId: actor.userId, email: actor.email, role: actor.role },
+      timestamp: new Date()
+    });
+
+    await job.save();
+
+    await auditService.record(tenantId, {
+      actorId: actor.userId,
+      action: 'ADD_PRODUCTION_LOG',
+      entityType: 'PRODUCTION_JOB',
+      entityId: job.id,
+      afterState: job.toJSON ? job.toJSON() : job,
+      metadata: { jobNumber: job.jobNumber, logType: dto.type }
+    });
+
+    return job;
+  }
+
+  public async completeJobExecution(
+    tenantId: string,
+    actor: IActorContext,
+    jobId: string,
+    dto: CompleteJobExecutionDto
+  ): Promise<ProductionJobDocument> {
+    const job = await this.repo.findById(tenantId, jobId);
+    if (!job || job.isDeleted) {
+      throw new NotFoundError(`Production Job with ID '${jobId}' not found`);
+    }
+
+    if (job.status !== 'IN_PROGRESS' && job.status !== 'PAUSED') {
+      throw new BadRequestError(
+        `Cannot complete job '${job.jobNumber}' in status '${job.status}'. Expected 'IN_PROGRESS' or 'PAUSED'.`
+      );
+    }
+
+    if (!job.execution || job.execution.stageProgress.length === 0) {
+      throw new BadRequestError(
+        `Cannot complete job '${job.jobNumber}': No heat treatment stage execution records found.`
+      );
+    }
+
+    const completionTime = new Date();
+    const actualStart = job.timeline.actualStartDate || job.timeline.plannedStartDate;
+    const totalDurationMs = completionTime.getTime() - new Date(actualStart).getTime();
+    const totalDurationMinutes = Math.round((totalDurationMs / 60000) * 10) / 10;
+
+    const prevStatus = job.status;
+    job.status = 'QUALITY_CHECK';
+    job.timeline.actualCompletionDate = completionTime;
+    job.quantity.completedQuantity = dto.completedQuantity;
+    job.quantity.scrappedQuantity = dto.scrappedQuantity || 0;
+
+    if (job.execution.cycleTimer) {
+      job.execution.cycleTimer.cycleEndTime = completionTime;
+      job.execution.cycleTimer.totalRunDurationMinutes = Math.max(
+        0,
+        totalDurationMinutes - (job.execution.cycleTimer.totalDowntimeDurationMinutes || 0)
+      );
+    }
+
+    const yearMonth = `${completionTime.getFullYear()}${String(completionTime.getMonth() + 1).padStart(2, '0')}`;
+    const seq = String(Math.floor(1000 + Math.random() * 9000));
+    const inspectionRequestId = `INSP-REQ-${yearMonth}-${seq}`;
+    const pyrometryArchiveId = `PYRO-${yearMonth}-${seq}`;
+
+    job.execution.qualityHandoff = {
+      inspectionRequestId,
+      status: 'PENDING_INSPECTION',
+      requestedAt: completionTime,
+      pyrometryArchiveId,
+      completedQuantity: dto.completedQuantity,
+      scrappedQuantity: dto.scrappedQuantity || 0,
+      notes: dto.operatorNotes || null
+    };
+
+    job.transitionHistory.push({
+      fromStatus: prevStatus,
+      toStatus: 'QUALITY_CHECK',
+      timestamp: completionTime,
+      performedBy: { userId: actor.userId, email: actor.email, role: actor.role },
+      reason: `Production completed. Handed off to Quality (${inspectionRequestId}) with ${dto.completedQuantity} passed, ${dto.scrappedQuantity || 0} scrap`
+    });
+
+    await job.save();
+
+    this.eventBus.publish({
+      name: DomainEvents.JOB_COMPLETED,
+      tenantId,
+      occurredAt: completionTime,
+      actorId: actor.userId,
+      payload: {
+        jobId: job.id,
+        jobNumber: job.jobNumber,
+        completedQuantity: dto.completedQuantity,
+        scrappedQuantity: dto.scrappedQuantity || 0,
+        pyrometryArchiveId
+      }
+    });
+
+    this.eventBus.publish({
+      name: DomainEvents.QC_INSPECTION_CREATED,
+      tenantId,
+      occurredAt: completionTime,
+      actorId: actor.userId,
+      payload: {
+        jobId: job.id,
+        jobNumber: job.jobNumber,
+        inspectionRequestId,
+        pyrometryArchiveId,
+        completedQuantity: dto.completedQuantity,
+        specCode: job.specificationSnapshot.specCode,
+        recipeCode: job.recipeSnapshot.recipeCode
+      }
+    });
+
+    await auditService.record(tenantId, {
+      actorId: actor.userId,
+      action: 'COMPLETE_JOB_EXECUTION',
+      entityType: 'PRODUCTION_JOB',
+      entityId: job.id,
+      afterState: job.toJSON ? job.toJSON() : job,
       metadata: {
         jobNumber: job.jobNumber,
-        removedFurnaceCode: previousResourceCode,
-        reason: dto.reason
+        inspectionRequestId,
+        completedQuantity: dto.completedQuantity,
+        scrappedQuantity: dto.scrappedQuantity || 0
       }
     });
 
     return job;
   }
+
+  public async transitionToStorage(
+    tenantId: string,
+    actor: IActorContext,
+    jobId: string,
+    dto: TransitionToStorageDto
+  ): Promise<ProductionJobDocument> {
+    const job = await this.repo.findById(tenantId, jobId);
+    if (!job || job.isDeleted) {
+      throw new NotFoundError(`Production Job with ID '${jobId}' not found`);
+    }
+
+    if (job.status !== 'QUALITY_CHECK') {
+      throw new BadRequestError(
+        `Cannot place job '${job.jobNumber}' into storage from status '${job.status}'. Expected 'QUALITY_CHECK'.`
+      );
+    }
+
+    const storageTime = new Date();
+    const prevStatus = job.status;
+
+    job.status = 'STORAGE';
+
+    if (!job.execution) {
+      job.execution = { stageProgress: [], downtimeLog: [], productionLogs: [] };
+    }
+
+    job.execution.storagePlacement = {
+      warehouseId: dto.warehouseId,
+      locationBay: dto.locationBay,
+      palletId: dto.palletId || null,
+      placedAt: storageTime,
+      placedBy: { userId: actor.userId, email: actor.email, role: actor.role },
+      notes: dto.notes || null
+    };
+
+    job.transitionHistory.push({
+      fromStatus: prevStatus,
+      toStatus: 'STORAGE',
+      timestamp: storageTime,
+      performedBy: { userId: actor.userId, email: actor.email, role: actor.role },
+      reason: `Transferred to warehouse ${dto.warehouseId}, Bay ${dto.locationBay}`
+    });
+
+    await job.save();
+
+    this.eventBus.publish({
+      name: DomainEvents.WAREHOUSE_FG_RECEIVED,
+      tenantId,
+      occurredAt: storageTime,
+      actorId: actor.userId,
+      payload: {
+        jobId: job.id,
+        jobNumber: job.jobNumber,
+        warehouseId: dto.warehouseId,
+        locationBay: dto.locationBay,
+        quantity: job.quantity.completedQuantity
+      }
+    });
+
+    await auditService.record(tenantId, {
+      actorId: actor.userId,
+      action: 'TRANSITION_JOB_TO_STORAGE',
+      entityType: 'PRODUCTION_JOB',
+      entityId: job.id,
+      afterState: job.toJSON ? job.toJSON() : job,
+      metadata: { jobNumber: job.jobNumber, warehouseId: dto.warehouseId, locationBay: dto.locationBay }
+    });
+
+    return job;
+  }
+
+  public async getMachineUtilizationAndDowntime(
+    tenantId: string,
+    furnaceId?: string
+  ): Promise<any> {
+    const query: any = { tenantId, isDeleted: false };
+    if (furnaceId) query['equipmentAssignment.furnaceId'] = furnaceId;
+
+    const jobs = await this.repo.find(query);
+
+    let totalRunMinutes = 0;
+    let totalDowntimeMinutes = 0;
+    const downtimeByCategory: Record<string, number> = {};
+    let cycleCount = 0;
+
+    for (const job of jobs) {
+      if (job.execution?.cycleTimer) {
+        cycleCount++;
+        totalRunMinutes += job.execution.cycleTimer.totalRunDurationMinutes || 0;
+        totalDowntimeMinutes += job.execution.cycleTimer.totalDowntimeDurationMinutes || 0;
+      }
+
+      for (const dt of job.execution?.downtimeLog || []) {
+        const d = dt.durationMinutes || 0;
+        downtimeByCategory[dt.category] = (downtimeByCategory[dt.category] || 0) + d;
+      }
+    }
+
+    const totalOperatingMinutes = totalRunMinutes + totalDowntimeMinutes;
+    const availabilityPercentage =
+      totalOperatingMinutes > 0
+        ? Math.round((totalRunMinutes / totalOperatingMinutes) * 1000) / 10
+        : 100;
+
+    return {
+      furnaceId: furnaceId || 'ALL_FURNACES',
+      cycleCount,
+      totalRunMinutes,
+      totalDowntimeMinutes,
+      totalOperatingMinutes,
+      availabilityPercentage,
+      downtimeByCategory
+    };
+  }
+
+  // --- End Complete Shop-Floor Cycle Execution Methods ---
 
   public async transitionJob(
     tenantId: string,
@@ -675,19 +1171,14 @@ export class ProductionJobService {
     const currentStatus = job.status;
     const targetStatus = dto.toStatus;
 
-    if (currentStatus === targetStatus) {
-      return job;
-    }
-
-    const allowedTransitions = ALLOWED_STATUS_TRANSITIONS[currentStatus];
-    if (!allowedTransitions || !allowedTransitions.includes(targetStatus)) {
+    const allowedNext = ALLOWED_STATUS_TRANSITIONS[currentStatus] || [];
+    if (!allowedNext.includes(targetStatus)) {
       throw new BadRequestError(
-        `Invalid lifecycle transition: Cannot transition job '${job.jobNumber}' from '${currentStatus}' to '${targetStatus}'. Allowed transitions: [${(allowedTransitions || []).join(', ')}]`
+        `Invalid lifecycle transition from '${currentStatus}' to '${targetStatus}'. Allowed transitions: [${allowedNext.join(', ')}]`
       );
     }
 
-    const beforeState = job.toJSON();
-
+    job.status = targetStatus;
     job.transitionHistory.push({
       fromStatus: currentStatus,
       toStatus: targetStatus,
@@ -701,31 +1192,15 @@ export class ProductionJobService {
       notes: dto.notes || null
     });
 
-    if (targetStatus === 'IN_PROGRESS' && !job.timeline.actualStartDate) {
-      job.timeline.actualStartDate = new Date();
-    }
-    if (targetStatus === 'COMPLETED' && !job.timeline.actualCompletionDate) {
-      job.timeline.actualCompletionDate = new Date();
-    }
-    if (targetStatus === 'CANCELLED') {
-      job.cancellationReason = dto.reason || 'Cancelled during lifecycle transition';
-    }
-
-    job.status = targetStatus;
     await job.save();
 
     await auditService.record(tenantId, {
       actorId: actor.userId,
-      action: 'TRANSITION_PRODUCTION_JOB',
+      action: 'TRANSITION_PRODUCTION_JOB_STATUS',
       entityType: 'PRODUCTION_JOB',
       entityId: job.id,
-      beforeState,
-      afterState: job.toJSON(),
-      metadata: {
-        fromStatus: currentStatus,
-        toStatus: targetStatus,
-        reason: dto.reason
-      }
+      afterState: job.toJSON ? job.toJSON() : job,
+      metadata: { jobNumber: job.jobNumber, fromStatus: currentStatus, toStatus: targetStatus, reason: dto.reason }
     });
 
     return job;
@@ -742,27 +1217,58 @@ export class ProductionJobService {
       throw new NotFoundError(`Production Job with ID '${jobId}' not found`);
     }
 
-    if (job.status === 'COMPLETED') {
-      throw new BadRequestError(`Cannot cancel a COMPLETED production job ('${job.jobNumber}')`);
-    }
-    if (job.status === 'CANCELLED') {
-      throw new BadRequestError(`Production job '${job.jobNumber}' is already CANCELLED`);
+    if (job.status === 'COMPLETED' || job.status === 'CANCELLED') {
+      throw new BadRequestError(
+        `Cannot cancel a COMPLETED production job (Job '${job.jobNumber}' is in terminal status '${job.status}')`
+      );
     }
 
-    return this.transitionJob(tenantId, actor, jobId, {
+    const previousStatus = job.status;
+    job.status = 'CANCELLED';
+    job.cancellationReason = dto.reason;
+
+    job.transitionHistory.push({
+      fromStatus: previousStatus,
       toStatus: 'CANCELLED',
+      timestamp: new Date(),
+      performedBy: {
+        userId: actor.userId,
+        email: actor.email,
+        role: actor.role
+      },
       reason: dto.reason,
-      notes: dto.notes
+      notes: dto.notes || null
     });
+
+    await job.save();
+
+    this.eventBus.publish({
+      name: DomainEvents.JOB_CANCELLED,
+      tenantId,
+      occurredAt: new Date(),
+      actorId: actor.userId,
+      payload: { jobId: job.id, jobNumber: job.jobNumber, reason: dto.reason }
+    });
+
+    await auditService.record(tenantId, {
+      actorId: actor.userId,
+      action: 'CANCEL_PRODUCTION_JOB',
+      entityType: 'PRODUCTION_JOB',
+      entityId: job.id,
+      afterState: job.toJSON ? job.toJSON() : job,
+      metadata: { jobNumber: job.jobNumber, reason: dto.reason }
+    });
+
+    return job;
   }
 
   public async getProductionQueue(
     tenantId: string,
     filters: any = {}
   ): Promise<any[]> {
-    const jobs = await this.repo.findActiveQueueJobs(tenantId, filters);
+    const activeJobs = await this.repo.findActiveQueueJobs(tenantId, filters);
 
-    const sorted = [...jobs].sort((a, b) => {
+    const sorted = [...activeJobs].sort((a, b) => {
       const pA = PRIORITY_WEIGHTS[a.priority] || 4;
       const pB = PRIORITY_WEIGHTS[b.priority] || 4;
 
@@ -775,34 +1281,30 @@ export class ProductionJobService {
 
     return sorted.map((job, idx) => ({
       queuePosition: idx + 1,
-      id: job.id,
+      jobId: job.id,
       jobNumber: job.jobNumber,
       planNumber: job.planNumber,
       customerName: job.customer.customerName,
       itemCode: job.item.itemCode,
       itemName: job.item.itemName,
+      materialGrade: job.item.materialGrade,
       targetQuantity: job.quantity.targetQuantity,
-      uom: job.item.uom,
-      status: job.status,
       priority: job.priority,
-      furnaceCode: job.equipmentAssignment?.furnaceCode || 'UNASSIGNED',
-      plannedStartDate: job.timeline.plannedStartDate,
+      status: job.status,
+      assignedFurnaceCode: job.equipmentAssignment?.furnaceCode || null,
+      assignedOperatorName: job.operatorAssignment?.operatorName || null,
       targetCompletionDate: job.timeline.targetCompletionDate
     }));
   }
 
   public async convertPlanToJob(
     tenantId: string,
-    actorId: string,
+    userId: string,
     planId: string,
-    dto: ConvertPlanToJobDto = {}
+    dto: ConvertPlanToJobDto
   ): Promise<ProductionJobDocument> {
     if (dto.idempotencyKey) {
-      const existingJob = await this.repo.findByIdempotencyKey(
-        tenantId,
-        planId,
-        dto.idempotencyKey
-      );
+      const existingJob = await this.repo.findByIdempotencyKey(tenantId, planId, dto.idempotencyKey);
       if (existingJob) {
         return existingJob;
       }
@@ -813,164 +1315,137 @@ export class ProductionJobService {
       throw new NotFoundError(`Production Plan with ID '${planId}' not found`);
     }
 
-    if (plan.status !== 'PLANNED' && plan.status !== 'CONFIRMED') {
+    const planStatus = plan.status as string;
+    if (planStatus !== 'APPROVED' && planStatus !== 'CONFIRMED') {
       throw new BadRequestError(
-        `Cannot convert plan '${plan.planNumber}' to production job: Plan status is '${plan.status}' (Must be PLANNED or CONFIRMED)`
+        `Cannot convert Production Plan '${plan.planNumber}'. Plan must be in 'APPROVED' or 'CONFIRMED' status (Current: '${plan.status}')`
       );
     }
 
-    const constraintReport = await constraintAnalysisService.evaluatePlanConstraints(
-      tenantId,
-      plan.id
-    );
-
+    const constraintReport = await constraintAnalysisService.evaluatePlanConstraints(tenantId, plan.id);
     if (constraintReport.isBlocked) {
-      const blockingMessages = constraintReport.violations
+      const blockingReasons = constraintReport.violations
         .filter((v) => v.severity === 'BLOCKING')
         .map((v) => `[${v.category}] ${v.message}`)
         .join('; ');
 
       throw new BadRequestError(
-        `Cannot convert plan '${plan.planNumber}' to production job: Blocked by active constraints - ${blockingMessages}`
+        `Cannot convert plan '${plan.planNumber}' to production job: Blocked by active constraints - ${blockingReasons}`
       );
     }
 
-    const recipe = await recipeRepository.findById(tenantId, plan.recipe.recipeId);
-    if (!recipe || recipe.isDeleted || (recipe.status !== 'APPROVED' && recipe.status !== 'ACTIVE')) {
-      throw new BadRequestError(
-        `Approved recipe revision '${plan.recipe.recipeCode}' (Rev ${plan.recipe.recipeRevision}) is required for conversion`
-      );
+    const customerId = plan.customer?.customerId || (plan as any).demandRequirement?.customerId || (plan as any).customerId;
+    let customer: any = plan.customer;
+    if (!customer?.customerCode) {
+      customer = await customerRepository.findById(tenantId, customerId);
     }
 
-    const specification = await specificationRepository.findById(
-      tenantId,
-      plan.specification.specificationId
-    );
-    if (
-      !specification ||
-      specification.isDeleted ||
-      (specification.status !== 'APPROVED' && specification.status !== 'ACTIVE')
-    ) {
-      throw new BadRequestError(
-        `Approved specification revision '${plan.specification.specCode}' (Rev ${plan.specification.specRevision}) is required for conversion`
-      );
+    const itemId = plan.item?.itemId || (plan as any).item?.id;
+    let item: any = plan.item;
+    if (!item?.itemCode) {
+      item = await itemRepository.findById(tenantId, itemId);
+    }
+
+    const recipeId = plan.recipe?.recipeId || (plan as any).recipe?.id;
+    let recipe: any = await recipeRepository.findById(tenantId, recipeId);
+    if (!recipe && plan.recipe?.recipeCode) {
+      recipe = plan.recipe;
+    }
+
+    const specId = plan.specification?.specificationId || (plan as any).specification?.id;
+    let spec: any = await specificationRepository.findById(tenantId, specId);
+    if (!spec && plan.specification?.specCode) {
+      spec = plan.specification;
     }
 
     const recipeSnapshot: IJobRecipeSnapshot = {
-      recipeId: recipe.id,
-      recipeCode: recipe.recipeCode,
-      revisionNumber: recipe.revision,
-      processFamily: recipe.processFamily,
-      name: recipe.name,
-      applicableMaterialGrades: recipe.applicableMaterialGrades || [],
-      stages: recipe.stages || [],
-      metallurgicalTargets: recipe.metallurgicalTargets || ({} as any),
-      machineRequirements: recipe.machineRequirements || ({} as any),
+      recipeId: recipe?.id || recipeId,
+      recipeCode: recipe?.recipeCode || plan.recipe?.recipeCode || 'REC-UNKNOWN',
+      revisionNumber: (plan.recipe as any)?.revisionNumber || (plan as any).recipe?.revision || (plan as any).recipe?.recipeRevision || 1,
+      processFamily: recipe?.processFamily || plan.recipe?.processFamily || 'CARBURIZING',
+      name: recipe?.name || plan.recipe?.recipeCode || 'Recipe',
+      applicableMaterialGrades: recipe?.applicableMaterialGrades || [],
+      stages: recipe?.stages || [],
+      metallurgicalTargets: recipe?.metallurgicalTargets || {},
+      machineRequirements: recipe?.machineRequirements || {},
       snapshottedAt: new Date()
     };
 
-    const specificationSnapshot: IJobSpecificationSnapshot = {
-      specificationId: specification.id,
-      specCode: specification.specCode,
-      revisionNumber: specification.revision,
-      title: specification.title,
-      customerCode: specification.customerCode,
-      surfaceHardness: specification.surfaceHardness || ({} as any),
-      coreHardness: specification.coreHardness,
-      caseDepth: specification.caseDepth,
-      microstructure: specification.microstructure,
-      customerAcceptance: specification.customerAcceptance || ({} as any),
+    const specSnapshot: IJobSpecificationSnapshot = {
+      specificationId: spec?.id || specId,
+      specCode: spec?.specCode || plan.specification?.specCode || 'SPEC-UNKNOWN',
+      revisionNumber: (plan.specification as any)?.revisionNumber || (plan as any).specification?.revision || (plan as any).specification?.specRevision || 1,
+      title: spec?.title || plan.specification?.specCode || 'Specification',
+      customerCode: spec?.customerCode || plan.customer?.customerCode,
+      surfaceHardness: spec?.surfaceHardness || ({} as any),
+      coreHardness: spec?.coreHardness || undefined,
+      caseDepth: spec?.caseDepth || undefined,
+      microstructure: spec?.microstructure || undefined,
+      customerAcceptance: spec?.customerAcceptance || ({} as any),
       snapshottedAt: new Date()
     };
 
-    const activeReservations = await materialRequirementsRepository.findActiveReservationsByPlan(
-      tenantId,
-      plan.id
-    );
-
-    const materialAllocations: IJobMaterialAllocation[] = activeReservations.map((res) => ({
-      reservationId: res.id,
-      heatLotId: res.targetType === 'HEAT_LOT' ? res.targetId : null,
-      heatLotNumber: res.targetType === 'HEAT_LOT' ? res.targetIdentifier : null,
-      allocatedQuantity: res.reservedQuantity,
-      uom: res.uom
-    }));
-
-    let equipmentAssignment = {
-      furnaceId: null as string | null,
-      furnaceCode: null as string | null,
-      locationBay: null as string | null,
-      pyrometryClass: null as string | null
-    };
-
-    const targetFurnaceId = dto.assignedFurnaceId;
-    if (targetFurnaceId) {
-      const furnace = await furnaceCapacityRepository.findFurnaceById(tenantId, targetFurnaceId);
+    let equipmentAssignment = {};
+    const furnaceIdToAssign = dto.assignedFurnaceId || (plan as any).schedule?.assignedFurnaceId;
+    if (furnaceIdToAssign) {
+      const furnace = await furnaceCapacityRepository.findFurnaceById(tenantId, furnaceIdToAssign);
       if (furnace) {
         equipmentAssignment = {
           furnaceId: furnace.id,
           furnaceCode: furnace.furnaceCode,
           locationBay: furnace.locationBay,
-          pyrometryClass: furnace.thermalCapabilities.pyrometryClass
+          pyrometryClass: furnace.thermalCapabilities?.pyrometryClass || null
         };
       }
     }
 
-    let operatorAssignment = {
-      operatorId: null as string | null,
-      operatorCode: null as string | null,
-      operatorName: null as string | null,
-      shift: dto.shift || null
-    };
-
-    const targetOperatorId = dto.assignedOperatorId;
-    if (targetOperatorId) {
-      const operator = await workforceCapacityRepository.findEmployeeById(
-        tenantId,
-        targetOperatorId
-      );
+    let operatorAssignment = {};
+    const operatorIdToAssign = dto.assignedOperatorId || (plan as any).workforceRequirement?.requiredOperatorRoles?.[0];
+    if (operatorIdToAssign) {
+      const operator = await workforceCapacityRepository.findEmployeeById(tenantId, operatorIdToAssign);
       if (operator) {
         operatorAssignment = {
           operatorId: operator.id,
           operatorCode: operator.employeeCode,
           operatorName: operator.fullName,
-          shift: dto.shift || operator.defaultShift
+          shift: dto.shift || (plan as any).schedule?.shift || operator.defaultShift
         };
       }
     }
 
     const targetQuantity =
       dto.targetQuantity ||
-      Math.max(0, plan.quantityTargets.plannedQuantity - plan.quantityTargets.completedQuantity);
+      (plan as any).demandRequirement?.plannedQuantity ||
+      (plan as any).quantityTargets?.plannedQuantity ||
+      100;
+    const plannedStart =
+      (plan as any).schedule?.plannedStartDate || (plan as any).timeline?.plannedStartDate || new Date();
+    const plannedEnd =
+      (plan as any).schedule?.targetCompletionDate || (plan as any).timeline?.targetCompletionDate || new Date();
+
+    const customerName = (customer as any)?.name || (customer as any)?.companyName || (customer as any)?.customerName || 'Customer';
+    const customerCode = (customer as any)?.customerCode || 'CUST-001';
+    const itemName = (item as any)?.name || (item as any)?.itemName || 'Item';
+    const itemCode = (item as any)?.itemCode || 'ITEM-001';
 
     const jobNumber = await this.repo.generateNextJobNumber(tenantId);
-
-    const initialTransition = {
-      fromStatus: 'APPROVED' as const,
-      toStatus: 'APPROVED' as const,
-      timestamp: new Date(),
-      performedBy: {
-        userId: actorId
-      },
-      reason: 'Plan-to-Job Execution Handoff',
-      notes: dto.notes || null
-    };
+    const initialStatus = 'RELEASED';
 
     const job = await this.repo.create(tenantId, {
       jobNumber,
       planId: plan.id,
       planNumber: plan.planNumber,
       customer: {
-        customerId: plan.customer.customerId,
-        customerCode: plan.customer.customerCode,
-        customerName: plan.customer.customerName
+        customerId: customer?.id || customerId,
+        customerCode,
+        customerName
       },
       item: {
-        itemId: plan.item.itemId,
-        itemCode: plan.item.itemCode,
-        itemName: plan.item.itemName,
-        materialGrade: plan.item.materialGrade,
-        uom: plan.item.uom
+        itemId: item?.id || itemId,
+        itemCode,
+        itemName,
+        materialGrade: item?.materialGrade || 'GENERIC',
+        uom: item?.uom || 'EA'
       },
       quantity: {
         targetQuantity,
@@ -978,40 +1453,56 @@ export class ProductionJobService {
         completedQuantity: 0,
         scrappedQuantity: 0
       },
-      status: 'APPROVED',
-      priority: plan.priority as any,
+      status: initialStatus as any,
+      priority: (plan as any).demandRequirement?.priority || (plan as any).priority || 'NORMAL',
       recipeSnapshot,
-      specificationSnapshot,
-      materialAllocations,
+      specificationSnapshot: specSnapshot,
+      materialAllocations: ((plan as any).materialRequirement?.reservedHeatLots || []).map((res: any) => ({
+        reservationId: res.reservationId,
+        heatLotId: res.heatLotId,
+        heatLotNumber: res.heatLotNumber,
+        allocatedQuantity: res.allocatedQuantity,
+        uom: res.uom
+      })),
       equipmentAssignment,
       operatorAssignment,
       timeline: {
-        plannedStartDate: plan.timeline.plannedStartDate,
-        targetCompletionDate: plan.timeline.targetCompletionDate,
-        actualStartDate: null,
-        actualCompletionDate: null
+        plannedStartDate: plannedStart,
+        targetCompletionDate: plannedEnd
       },
-      transitionHistory: [initialTransition],
+      execution: {
+        stageProgress: [],
+        downtimeLog: [],
+        productionLogs: []
+      },
+      transitionHistory: [
+        {
+          fromStatus: 'DRAFT',
+          toStatus: initialStatus as any,
+          timestamp: new Date(),
+          performedBy: { userId },
+          reason: `Converted from approved production plan '${plan.planNumber}'`
+        }
+      ],
       assignmentHistory: [],
       idempotencyKey: dto.idempotencyKey || null,
-      notes: dto.notes || null
+      notes: dto.notes || plan.notes || null
     });
 
     plan.status = 'IN_PROGRESS';
     await plan.save();
 
     await auditService.record(tenantId, {
-      actorId,
-      action: 'CONVERT_PLAN_TO_JOB',
+      actorId: userId,
+      action: 'CONVERT_PLAN_TO_PRODUCTION_JOB',
       entityType: 'PRODUCTION_JOB',
       entityId: job.id,
-      afterState: job.toJSON(),
+      afterState: job.toJSON ? job.toJSON() : job,
       metadata: {
-        planNumber: plan.planNumber,
         jobNumber: job.jobNumber,
-        itemCode: plan.item.itemCode,
-        recipeCode: recipe.recipeCode,
-        specCode: specification.specCode
+        planNumber: plan.planNumber,
+        itemCode,
+        targetQuantity
       }
     });
 
@@ -1026,21 +1517,13 @@ export class ProductionJobService {
     return this.repo.queryJobs(tenantId, filters, pagination);
   }
 
-  public async getJobById(tenantId: string, id: string): Promise<ProductionJobDocument> {
+  public async getJobById(
+    tenantId: string,
+    id: string
+  ): Promise<ProductionJobDocument> {
     const job = await this.repo.findById(tenantId, id);
     if (!job || job.isDeleted) {
       throw new NotFoundError(`Production Job with ID '${id}' not found`);
-    }
-    return job;
-  }
-
-  public async getJobByNumber(
-    tenantId: string,
-    jobNumber: string
-  ): Promise<ProductionJobDocument> {
-    const job = await this.repo.findJobByNumber(tenantId, jobNumber);
-    if (!job || job.isDeleted) {
-      throw new NotFoundError(`Production Job with number '${jobNumber}' not found`);
     }
     return job;
   }
@@ -1049,7 +1532,7 @@ export class ProductionJobService {
     tenantId: string,
     planId: string
   ): Promise<ProductionJobDocument[]> {
-    return this.repo.findJobsByPlanId(tenantId, planId);
+    return this.repo.findByPlanId(tenantId, planId);
   }
 }
 

@@ -6,11 +6,12 @@ import { PaginatedResult, PaginationOptions } from '../../core/types/pagination.
 export interface IProductionJobRepository {
   generateNextJobNumber(tenantId: string): Promise<string>;
   findJobByNumber(tenantId: string, jobNumber: string): Promise<ProductionJobDocument | null>;
+  findByPlanId(tenantId: string, planId: string): Promise<ProductionJobDocument[]>;
   findJobsByPlanId(tenantId: string, planId: string): Promise<ProductionJobDocument[]>;
   findByIdempotencyKey(
     tenantId: string,
-    planId: string,
-    idempotencyKey: string
+    planIdOrKey: string,
+    idempotencyKey?: string
   ): Promise<ProductionJobDocument | null>;
   queryJobs(
     tenantId: string,
@@ -26,6 +27,7 @@ export interface IProductionJobRepository {
     excludeJobId?: string
   ): Promise<ProductionJobDocument[]>;
   findById(tenantId: string, id: string): Promise<ProductionJobDocument | null>;
+  find(query?: any): Promise<ProductionJobDocument[]>;
   create(tenantId: string, data: Partial<ProductionJobDocument>): Promise<ProductionJobDocument>;
   updateById(tenantId: string, id: string, update: any): Promise<ProductionJobDocument | null>;
 }
@@ -66,7 +68,7 @@ export class ProductionJobRepository
       .exec();
   }
 
-  public async findJobsByPlanId(
+  public async findByPlanId(
     tenantId: string,
     planId: string
   ): Promise<ProductionJobDocument[]> {
@@ -76,14 +78,24 @@ export class ProductionJobRepository
       .exec();
   }
 
+  public async findJobsByPlanId(
+    tenantId: string,
+    planId: string
+  ): Promise<ProductionJobDocument[]> {
+    return this.findByPlanId(tenantId, planId);
+  }
+
   public async findByIdempotencyKey(
     tenantId: string,
-    planId: string,
-    idempotencyKey: string
+    planIdOrKey: string,
+    idempotencyKey?: string
   ): Promise<ProductionJobDocument | null> {
-    return this.model
-      .findOne({ tenantId, planId, idempotencyKey, isDeleted: false })
-      .exec();
+    const key = idempotencyKey || planIdOrKey;
+    const query: any = { tenantId, idempotencyKey: key, isDeleted: false };
+    if (idempotencyKey && planIdOrKey) {
+      query.planId = planIdOrKey;
+    }
+    return this.model.findOne(query).exec();
   }
 
   public async queryJobs(
@@ -139,32 +151,18 @@ export class ProductionJobRepository
     tenantId: string,
     filters: any = {}
   ): Promise<ProductionJobDocument[]> {
-    const activeStatuses: JobStatus[] = [
-      'APPROVED',
-      'SCHEDULED',
-      'IN_PROGRESS',
-      'PAUSED',
-      'QUALITY_CHECK',
-      'STORAGE',
-      'READY_FOR_DISPATCH'
-    ];
-
     const query: any = {
       tenantId,
-      isDeleted: false,
-      status: { $in: activeStatuses }
+      status: { $in: ['DRAFT', 'APPROVED', 'SCHEDULED', 'IN_PROGRESS', 'PAUSED'] },
+      isDeleted: false
     };
 
-    if (filters.furnaceId) {
-      query['equipmentAssignment.furnaceId'] = filters.furnaceId;
-    }
-    if (filters.status) {
-      query.status = filters.status;
-    }
+    if (filters.furnaceId) query['equipmentAssignment.furnaceId'] = filters.furnaceId;
+    if (filters.status) query.status = filters.status;
 
     return this.model
       .find(query)
-      .sort({ 'timeline.targetCompletionDate': 1, createdAt: 1 })
+      .sort({ priority: 1, 'timeline.targetCompletionDate': 1 })
       .exec();
   }
 
@@ -177,11 +175,11 @@ export class ProductionJobRepository
   ): Promise<ProductionJobDocument[]> {
     const query: any = {
       tenantId,
-      isDeleted: false,
       'equipmentAssignment.furnaceId': furnaceId,
       status: { $in: ['SCHEDULED', 'IN_PROGRESS', 'PAUSED'] },
       'timeline.plannedStartDate': { $lt: endDate },
-      'timeline.targetCompletionDate': { $gt: startDate }
+      'timeline.targetCompletionDate': { $gt: startDate },
+      isDeleted: false
     };
 
     if (excludeJobId) {

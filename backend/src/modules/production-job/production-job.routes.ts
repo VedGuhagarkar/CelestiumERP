@@ -15,6 +15,13 @@ import {
   transitionJobSchema,
   cancelJobSchema,
   convertPlanToJobSchema,
+  startJobExecutionSchema,
+  recordStageProgressSchema,
+  pauseJobExecutionSchema,
+  resumeJobExecutionSchema,
+  addProductionLogSchema,
+  completeJobExecutionSchema,
+  transitionToStorageSchema,
   queryJobsSchema,
   getJobByIdSchema
 } from './production-job.validator.js';
@@ -47,7 +54,15 @@ productionJobRouter.get(
   asyncHandler(productionJobController.getProductionQueue)
 );
 
-// 4. Query and Filter Production Jobs
+// 4. Get Machine Utilization and Downtime Analytics for OEE
+productionJobRouter.get(
+  '/analytics/utilization',
+  authenticateJwt,
+  requirePermission(PERMISSIONS.PRODUCTION_JOB_VIEW),
+  asyncHandler(productionJobController.getMachineUtilizationAndDowntime)
+);
+
+// 5. Query and Filter Production Jobs
 productionJobRouter.get(
   '/',
   authenticateJwt,
@@ -56,7 +71,7 @@ productionJobRouter.get(
   asyncHandler(productionJobController.getJobs)
 );
 
-// 5. Get All Production Jobs Generated from a Specific Plan
+// 6. Get All Production Jobs Generated from a Specific Plan
 productionJobRouter.get(
   '/by-plan/:planId',
   authenticateJwt,
@@ -64,7 +79,7 @@ productionJobRouter.get(
   asyncHandler(productionJobController.getJobsByPlan)
 );
 
-// 6. Get Production Job Details & History by ID
+// 7. Get Production Job Details & History by ID
 productionJobRouter.get(
   '/:id',
   authenticateJwt,
@@ -73,7 +88,7 @@ productionJobRouter.get(
   asyncHandler(productionJobController.getJobById)
 );
 
-// 7. Update Production Job Details Before Execution
+// 8. Update Production Job Details Before Execution
 productionJobRouter.patch(
   '/:id',
   authenticateJwt,
@@ -82,7 +97,7 @@ productionJobRouter.patch(
   asyncHandler(productionJobController.updateJob)
 );
 
-// 8. Assign / Reallocate Operator to Job
+// 9. Assign / Reallocate Operator to Job
 productionJobRouter.post(
   '/:id/assign-operator',
   authenticateJwt,
@@ -91,7 +106,7 @@ productionJobRouter.post(
   asyncHandler(productionJobController.assignOperator)
 );
 
-// 9. Remove Operator from Job
+// 10. Remove Operator from Job
 productionJobRouter.post(
   '/:id/remove-operator',
   authenticateJwt,
@@ -100,7 +115,7 @@ productionJobRouter.post(
   asyncHandler(productionJobController.removeOperator)
 );
 
-// 10. Assign / Reallocate Furnace to Job
+// 11. Assign / Reallocate Furnace to Job
 productionJobRouter.post(
   '/:id/assign-furnace',
   authenticateJwt,
@@ -109,7 +124,7 @@ productionJobRouter.post(
   asyncHandler(productionJobController.assignFurnace)
 );
 
-// 11. Remove Furnace from Job
+// 12. Remove Furnace from Job
 productionJobRouter.post(
   '/:id/remove-furnace',
   authenticateJwt,
@@ -118,7 +133,72 @@ productionJobRouter.post(
   asyncHandler(productionJobController.removeFurnace)
 );
 
-// 12. Execute Lifecycle State Transition
+// --- Shop-Floor Cycle Execution Endpoints ---
+
+// 13. Start Furnace Cycle Execution
+productionJobRouter.post(
+  '/:id/start',
+  authenticateJwt,
+  requirePermission(PERMISSIONS.PRODUCTION_JOB_TRANSITION),
+  validateRequest(startJobExecutionSchema),
+  asyncHandler(productionJobController.startJobExecution)
+);
+
+// 14. Record Stage Progress (Preheat, Soak, Quench, Temper)
+productionJobRouter.post(
+  '/:id/stage-progress',
+  authenticateJwt,
+  requirePermission(PERMISSIONS.PRODUCTION_JOB_UPDATE),
+  validateRequest(recordStageProgressSchema),
+  asyncHandler(productionJobController.recordStageProgress)
+);
+
+// 15. Controlled Pause & Downtime Logging
+productionJobRouter.post(
+  '/:id/pause',
+  authenticateJwt,
+  requirePermission(PERMISSIONS.PRODUCTION_JOB_TRANSITION),
+  validateRequest(pauseJobExecutionSchema),
+  asyncHandler(productionJobController.pauseJobExecution)
+);
+
+// 16. Controlled Resume
+productionJobRouter.post(
+  '/:id/resume',
+  authenticateJwt,
+  requirePermission(PERMISSIONS.PRODUCTION_JOB_TRANSITION),
+  validateRequest(resumeJobExecutionSchema),
+  asyncHandler(productionJobController.resumeJobExecution)
+);
+
+// 17. Record Production / Shift Handover Notes
+productionJobRouter.post(
+  '/:id/notes',
+  authenticateJwt,
+  requirePermission(PERMISSIONS.PRODUCTION_JOB_UPDATE),
+  validateRequest(addProductionLogSchema),
+  asyncHandler(productionJobController.addProductionLog)
+);
+
+// 18. Complete Production Execution & Quality Handoff
+productionJobRouter.post(
+  '/:id/complete',
+  authenticateJwt,
+  requirePermission(PERMISSIONS.PRODUCTION_JOB_TRANSITION),
+  validateRequest(completeJobExecutionSchema),
+  asyncHandler(productionJobController.completeJobExecution)
+);
+
+// 19. Transfer Completed Production to Warehouse Storage
+productionJobRouter.post(
+  '/:id/transition-storage',
+  authenticateJwt,
+  requirePermission(PERMISSIONS.PRODUCTION_JOB_TRANSITION),
+  validateRequest(transitionToStorageSchema),
+  asyncHandler(productionJobController.transitionToStorage)
+);
+
+// 20. Execute Generic Lifecycle State Transition
 productionJobRouter.post(
   '/:id/transition',
   authenticateJwt,
@@ -127,7 +207,7 @@ productionJobRouter.post(
   asyncHandler(productionJobController.transitionJob)
 );
 
-// 13. Controlled Production Job Cancellation
+// 21. Controlled Production Job Cancellation
 productionJobRouter.post(
   '/:id/cancel',
   authenticateJwt,

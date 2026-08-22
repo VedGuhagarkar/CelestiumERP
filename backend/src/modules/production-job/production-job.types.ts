@@ -26,6 +26,26 @@ export type JobPriority = 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT' | 'AOG_CRITICAL';
 export type ResourceAssignmentAction = 'ASSIGN' | 'REALLOCATE' | 'REMOVE';
 export type ResourceType = 'OPERATOR' | 'FURNACE';
 
+export type StageProgressType = 'PREHEAT' | 'SOAK' | 'QUENCH' | 'TEMPER' | 'OTHER';
+
+export type DowntimeCategory =
+  | 'MECHANICAL_FAILURE'
+  | 'ELECTRICAL_FAILURE'
+  | 'ATMOSPHERE_LOSS'
+  | 'POWER_OUTAGE'
+  | 'OPERATOR_BREAK'
+  | 'PLANNED_STOP'
+  | 'UNPLANNED_STOP'
+  | 'PROCESS_ABORT'
+  | 'OTHER';
+
+export type ProductionLogType =
+  | 'SHIFT_HANDOVER'
+  | 'OPERATOR_NOTE'
+  | 'PYROMETRY_READING'
+  | 'ATMOSPHERE_ADJUSTMENT'
+  | 'ANOMALY_REPORT';
+
 export const PRIORITY_WEIGHTS: Record<JobPriority, number> = {
   AOG_CRITICAL: 1,
   URGENT: 2,
@@ -37,7 +57,7 @@ export const PRIORITY_WEIGHTS: Record<JobPriority, number> = {
 export const ALLOWED_STATUS_TRANSITIONS: Record<JobStatus, JobStatus[]> = {
   DRAFT: ['PENDING_REVIEW', 'CANCELLED'],
   PENDING_REVIEW: ['APPROVED', 'DRAFT', 'CANCELLED'],
-  APPROVED: ['SCHEDULED', 'CANCELLED'],
+  APPROVED: ['SCHEDULED', 'IN_PROGRESS', 'CANCELLED'],
   SCHEDULED: ['IN_PROGRESS', 'APPROVED', 'CANCELLED'],
   IN_PROGRESS: ['PAUSED', 'QUALITY_CHECK', 'CANCELLED'],
   PAUSED: ['IN_PROGRESS', 'CANCELLED'],
@@ -129,6 +149,118 @@ export interface IJobOperatorAssignment {
   shift?: string | null;
 }
 
+export interface IFurnaceCharge {
+  chargeNumber: string;
+  loadedWeightKg: number;
+  loadedPieceCount: number;
+  fixtureId?: string | null;
+  initialFurnaceTempC: number;
+  initialAtmosphereLevel?: number | null;
+  thermocoupleLocations?: string[];
+  startedAt: Date;
+  startedBy: {
+    userId: string;
+    email?: string;
+    role?: string;
+  };
+}
+
+export interface IJobCycleTimer {
+  cycleStartTime: Date;
+  cycleEndTime?: Date | null;
+  totalRunDurationMinutes: number;
+  totalDowntimeDurationMinutes: number;
+}
+
+export interface IJobStageProgress {
+  stageSequence: number;
+  stageName: string;
+  stageType: StageProgressType;
+  targetTemperatureC: number;
+  actualTemperatureC: number;
+  targetDurationMinutes: number;
+  actualDurationMinutes: number;
+  quenchMedium?: string | null;
+  quenchAgitationSpeedRpm?: number | null;
+  quenchMediaInitialTempC?: number | null;
+  quenchMediaFinalTempC?: number | null;
+  atmosphereDetails?: {
+    carbonPotential?: number;
+    nitrogenFlow?: number;
+    vacuumPressureMbar?: number;
+  };
+  recordedBy: {
+    userId: string;
+    email?: string;
+    role?: string;
+  };
+  timestamp: Date;
+  notes?: string | null;
+}
+
+export interface IJobDowntimeLog {
+  downtimeId: string;
+  category: DowntimeCategory;
+  reason: string;
+  startTime: Date;
+  endTime?: Date | null;
+  durationMinutes?: number | null;
+  impactOnCycle?: string | null;
+  actionTaken?: string | null;
+  loggedBy: {
+    userId: string;
+    email?: string;
+    role?: string;
+  };
+  notes?: string | null;
+}
+
+export interface IJobProductionLog {
+  logId: string;
+  type: ProductionLogType;
+  shift?: string | null;
+  message: string;
+  recordedBy: {
+    userId: string;
+    email?: string;
+    role?: string;
+  };
+  timestamp: Date;
+}
+
+export interface IJobQualityHandoff {
+  inspectionRequestId: string;
+  status: 'PENDING_INSPECTION' | 'INSPECTING' | 'APPROVED' | 'REJECTED';
+  requestedAt: Date;
+  pyrometryArchiveId: string;
+  completedQuantity: number;
+  scrappedQuantity: number;
+  notes?: string | null;
+}
+
+export interface IJobStoragePlacement {
+  warehouseId: string;
+  locationBay: string;
+  palletId?: string | null;
+  placedAt: Date;
+  placedBy: {
+    userId: string;
+    email?: string;
+    role?: string;
+  };
+  notes?: string | null;
+}
+
+export interface IJobExecution {
+  furnaceCharge?: IFurnaceCharge | null;
+  cycleTimer?: IJobCycleTimer | null;
+  stageProgress: IJobStageProgress[];
+  downtimeLog: IJobDowntimeLog[];
+  productionLogs: IJobProductionLog[];
+  qualityHandoff?: IJobQualityHandoff | null;
+  storagePlacement?: IJobStoragePlacement | null;
+}
+
 export interface IProductionJob {
   jobNumber: string;
   tenantId: string;
@@ -165,6 +297,7 @@ export interface IProductionJob {
     actualStartDate?: Date | null;
     actualCompletionDate?: Date | null;
   };
+  execution?: IJobExecution;
   transitionHistory: IJobStateTransition[];
   assignmentHistory: IJobResourceAssignmentHistory[];
   idempotencyKey?: string | null;
@@ -251,6 +384,71 @@ export interface ConvertPlanToJobDto {
   shift?: 'SHIFT_1_MORNING' | 'SHIFT_2_EVENING' | 'SHIFT_3_NIGHT' | 'GENERAL_DAY';
   targetQuantity?: number;
   idempotencyKey?: string;
+  notes?: string;
+}
+
+export interface StartJobExecutionDto {
+  chargeNumber: string;
+  loadedWeightKg: number;
+  loadedPieceCount: number;
+  fixtureId?: string;
+  initialFurnaceTempC: number;
+  initialAtmosphereLevel?: number;
+  thermocoupleLocations?: string[];
+  furnaceId?: string;
+  operatorId?: string;
+  shift?: string;
+  notes?: string;
+}
+
+export interface RecordStageProgressDto {
+  stageSequence: number;
+  stageName: string;
+  stageType: StageProgressType;
+  targetTemperatureC: number;
+  actualTemperatureC: number;
+  targetDurationMinutes: number;
+  actualDurationMinutes: number;
+  quenchMedium?: string;
+  quenchAgitationSpeedRpm?: number;
+  quenchMediaInitialTempC?: number;
+  quenchMediaFinalTempC?: number;
+  atmosphereDetails?: {
+    carbonPotential?: number;
+    nitrogenFlow?: number;
+    vacuumPressureMbar?: number;
+  };
+  notes?: string;
+}
+
+export interface PauseJobExecutionDto {
+  category: DowntimeCategory;
+  reason: string;
+  impactOnCycle?: string;
+  notes?: string;
+}
+
+export interface ResumeJobExecutionDto {
+  actionTaken: string;
+  notes?: string;
+}
+
+export interface AddProductionLogDto {
+  type: ProductionLogType;
+  shift?: string;
+  message: string;
+}
+
+export interface CompleteJobExecutionDto {
+  completedQuantity: number;
+  scrappedQuantity?: number;
+  operatorNotes?: string;
+}
+
+export interface TransitionToStorageDto {
+  warehouseId: string;
+  locationBay: string;
+  palletId?: string;
   notes?: string;
 }
 
