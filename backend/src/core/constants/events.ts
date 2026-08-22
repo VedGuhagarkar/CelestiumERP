@@ -69,6 +69,8 @@ export const DomainEvents = {
   WORKFORCE_LEAVE_REJECTED: 'Workforce.LeaveRejected',
   WORKFORCE_OVERTIME_REQUESTED: 'Workforce.OvertimeRequested',
   WORKFORCE_OVERTIME_APPROVED: 'Workforce.OvertimeApproved',
+  WORKFORCE_SHIFT_SWAPPED: 'Workforce.ShiftSwapped',
+  WORKFORCE_ATTENDANCE_CORRECTED: 'Workforce.AttendanceCorrected',
 
   // Dispatch Logistics Events
   DISPATCH_CREATED: 'Dispatch.Created',
