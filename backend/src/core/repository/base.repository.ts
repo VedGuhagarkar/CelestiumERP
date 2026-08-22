@@ -25,11 +25,15 @@ export abstract class BaseRepository<T extends Document> implements IBaseReposit
 
   /**
    * Helper to merge tenant filter with provided filter query
+   * Enforces mandatory, non-empty tenantId
    */
   protected withTenant(tenantId: string, filter: FilterQuery<T> = {}): FilterQuery<T> {
+    if (!tenantId || typeof tenantId !== 'string' || tenantId.trim() === '') {
+      throw new Error('SECURITY VIOLATION: tenantId must be a non-empty string for all repository operations');
+    }
     return {
       ...filter,
-      tenantId
+      tenantId: tenantId.trim()
     };
   }
 
