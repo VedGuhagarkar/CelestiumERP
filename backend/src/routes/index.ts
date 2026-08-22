@@ -11,6 +11,7 @@ import { recipeRouter } from '../modules/recipe/recipe.routes.js';
 import { specificationRouter } from '../modules/specification/specification.routes.js';
 import { heatLotRouter } from '../modules/traceability/heat-lot.routes.js';
 import { inventoryRouter } from '../modules/inventory/inventory.routes.js';
+import { warehouseRouter } from '../modules/warehouse/warehouse.routes.js';
 
 /**
  * Root API v1 Router
@@ -46,3 +47,4 @@ v1Router.use('/recipes', recipeRouter);
 v1Router.use('/specifications', specificationRouter);
 v1Router.use('/heat-lots', heatLotRouter);
 v1Router.use('/inventory', inventoryRouter);
+v1Router.use('/warehouses', warehouseRouter);
