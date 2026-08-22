@@ -24,6 +24,7 @@ import {
   workforceRouter,
   workforceCapacityRouter
 } from '../modules/workforce-capacity/workforce-capacity.routes.js';
+import { constraintAnalysisRouter } from '../modules/constraint-analysis/constraint-analysis.routes.js';
 
 /**
  * Root API v1 Router
@@ -68,6 +69,8 @@ v1Router.use('/furnaces', furnaceRouter);
 v1Router.use('/furnace-capacity', furnaceCapacityRouter);
 v1Router.use('/workforce', workforceRouter);
 v1Router.use('/workforce-capacity', workforceCapacityRouter);
+v1Router.use('/constraint-analysis', constraintAnalysisRouter);
+
 
 
 
