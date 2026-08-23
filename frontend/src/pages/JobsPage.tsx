@@ -17,7 +17,7 @@ import { AppCard } from '../design-system/surfaces/AppCard.js';
 import { AppButton } from '../design-system/buttons/AppButton.js';
 import { StatusBadge } from '../design-system/feedback/StatusBadge.js';
 import { env } from '../config/env.config.js';
-import { getAuthHeaders } from '../utils/apiAuth.js';
+import { authenticatedFetch } from '../utils/apiAuth.js';
 
 interface ProductionJob {
   _id?: string;
@@ -155,9 +155,7 @@ export const JobsPage: React.FC = () => {
   const fetchJobs = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch(`${env.API_BASE_URL}/production-jobs`, {
-        headers: getAuthHeaders()
-      });
+      const res = await authenticatedFetch(`${env.API_BASE_URL}/production-jobs`);
       if (res.ok) {
         const json = await res.json();
         if (json.data && Array.isArray(json.data) && json.data.length > 0) {

@@ -18,7 +18,7 @@ import { AppCard } from '../design-system/surfaces/AppCard.js';
 import { AppButton } from '../design-system/buttons/AppButton.js';
 import { StatusBadge } from '../design-system/feedback/StatusBadge.js';
 import { env } from '../config/env.config.js';
-import { getAuthHeaders } from '../utils/apiAuth.js';
+import { authenticatedFetch } from '../utils/apiAuth.js';
 
 interface QualityInspection {
   _id?: string;
@@ -157,8 +157,8 @@ export const QualityPage: React.FC = () => {
     setIsLoading(true);
     try {
       const [resQc, resNcr] = await Promise.all([
-        fetch(`${env.API_BASE_URL}/quality-inspections`, { headers: getAuthHeaders() }),
-        fetch(`${env.API_BASE_URL}/ncrs`, { headers: getAuthHeaders() })
+        authenticatedFetch(`${env.API_BASE_URL}/quality-inspections`),
+        authenticatedFetch(`${env.API_BASE_URL}/ncrs`)
       ]);
 
       if (resQc.ok) {

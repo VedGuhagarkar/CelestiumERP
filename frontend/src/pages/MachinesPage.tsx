@@ -16,7 +16,7 @@ import { AppCard } from '../design-system/surfaces/AppCard.js';
 import { AppButton } from '../design-system/buttons/AppButton.js';
 import { StatusBadge } from '../design-system/feedback/StatusBadge.js';
 import { env } from '../config/env.config.js';
-import { getAuthHeaders } from '../utils/apiAuth.js';
+import { authenticatedFetch } from '../utils/apiAuth.js';
 
 interface Machine {
   _id?: string;
@@ -174,8 +174,8 @@ export const MachinesPage: React.FC = () => {
     setIsLoading(true);
     try {
       const [resM, resW] = await Promise.all([
-        fetch(`${env.API_BASE_URL}/machines`, { headers: getAuthHeaders() }),
-        fetch(`${env.API_BASE_URL}/maintenance/work-orders`, { headers: getAuthHeaders() })
+        authenticatedFetch(`${env.API_BASE_URL}/machines`),
+        authenticatedFetch(`${env.API_BASE_URL}/maintenance/work-orders`)
       ]);
 
       if (resM.ok) {

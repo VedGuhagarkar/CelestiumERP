@@ -13,7 +13,7 @@ import { AppCard } from '../design-system/surfaces/AppCard.js';
 import { AppButton } from '../design-system/buttons/AppButton.js';
 import { StatusBadge } from '../design-system/feedback/StatusBadge.js';
 import { env } from '../config/env.config.js';
-import { getAuthHeaders } from '../utils/apiAuth.js';
+import { authenticatedFetch } from '../utils/apiAuth.js';
 
 interface DispatchConsignment {
   _id?: string;
@@ -111,9 +111,7 @@ export const DispatchPage: React.FC = () => {
   const fetchDispatches = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch(`${env.API_BASE_URL}/dispatches`, {
-        headers: getAuthHeaders()
-      });
+      const res = await authenticatedFetch(`${env.API_BASE_URL}/dispatches`);
       if (res.ok) {
         const json = await res.json();
         if (json.data && Array.isArray(json.data) && json.data.length > 0) setDispatches(json.data);

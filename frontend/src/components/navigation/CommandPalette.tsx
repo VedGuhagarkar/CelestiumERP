@@ -16,7 +16,7 @@ import {
   X
 } from 'lucide-react';
 import { env } from '../../config/env.config.js';
-import { getAuthHeaders } from '../../utils/apiAuth.js';
+import { authenticatedFetch } from '../../utils/apiAuth.js';
 import { StatusBadge } from '../../design-system/feedback/StatusBadge.js';
 
 interface SearchResultItem {
@@ -94,9 +94,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
 
   const fetchQuickActions = async () => {
     try {
-      const res = await fetch(`${env.API_BASE_URL}/search/quick-actions`, {
-        headers: getAuthHeaders()
-      });
+      const res = await authenticatedFetch(`${env.API_BASE_URL}/search/quick-actions`);
       if (res.ok) {
         const json = await res.json();
         setSearchData({
@@ -125,11 +123,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       setIsLoading(true);
       try {
         const catParam = activeCategory !== 'ALL' ? `&category=${activeCategory}` : '';
-        const res = await fetch(
-          `${env.API_BASE_URL}/search?q=${encodeURIComponent(query)}${catParam}`,
-          {
-            headers: getAuthHeaders()
-          }
+        const res = await authenticatedFetch(
+          `${env.API_BASE_URL}/search?q=${encodeURIComponent(query)}${catParam}`
         );
         if (res.ok) {
           const json = await res.json();

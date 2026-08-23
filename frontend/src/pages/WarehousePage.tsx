@@ -9,7 +9,7 @@ import { PageHeader } from '../design-system/navigation/PageHeader.js';
 import { AppCard } from '../design-system/surfaces/AppCard.js';
 import { AppButton } from '../design-system/buttons/AppButton.js';
 import { env } from '../config/env.config.js';
-import { getAuthHeaders } from '../utils/apiAuth.js';
+import { authenticatedFetch } from '../utils/apiAuth.js';
 
 interface WarehouseEntity {
   _id?: string;
@@ -64,9 +64,7 @@ export const WarehousePage: React.FC = () => {
   const fetchWarehouses = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch(`${env.API_BASE_URL}/warehouses`, {
-        headers: getAuthHeaders()
-      });
+      const res = await authenticatedFetch(`${env.API_BASE_URL}/warehouses`);
       if (res.ok) {
         const json = await res.json();
         if (json.data && Array.isArray(json.data) && json.data.length > 0) setWarehouses(json.data);

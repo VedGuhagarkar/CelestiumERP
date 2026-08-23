@@ -9,7 +9,7 @@ import { AppCard } from '../design-system/surfaces/AppCard.js';
 import { AppButton } from '../design-system/buttons/AppButton.js';
 import { StatusBadge } from '../design-system/feedback/StatusBadge.js';
 import { env } from '../config/env.config.js';
-import { getAuthHeaders } from '../utils/apiAuth.js';
+import { authenticatedFetch } from '../utils/apiAuth.js';
 
 interface Shift {
   shiftCode: string;
@@ -54,9 +54,7 @@ export const WorkforcePage: React.FC = () => {
   const fetchWorkforceData = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch(`${env.API_BASE_URL}/attendance/status`, {
-        headers: getAuthHeaders()
-      });
+      const res = await authenticatedFetch(`${env.API_BASE_URL}/attendance/status`);
       if (res.ok) {
         const json = await res.json();
         if (json.data && json.data.presentStaff) setStaff(json.data.presentStaff);
