@@ -44,6 +44,7 @@ export const App: React.FC = () => {
               <Route path="/quality" element={<QualityPage />} />
               <Route path="/quality/inspections" element={<QualityPage />} />
               <Route path="/quality/inspections/:id" element={<QualityPage />} />
+              <Route path="/quality-inspections" element={<QualityPage />} />
               <Route path="/quality/ncrs" element={<QualityPage />} />
               <Route path="/quality/ncrs/:id" element={<QualityPage />} />
               <Route path="/ncrs" element={<QualityPage />} />
