@@ -1,5 +1,4 @@
 import React from 'react';
-import { NavLink } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import {
   LayoutDashboard,
@@ -14,6 +13,7 @@ import {
   BarChart3,
   Settings
 } from 'lucide-react';
+import { NavigationItem } from '../design-system/navigation/NavigationItem.js';
 import type { RootState } from '../store/store.js';
 
 interface NavItem {
@@ -60,34 +60,13 @@ export const Sidebar: React.FC = () => {
     >
       <div style={{ padding: '16px 10px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
         {navItems.map((item) => (
-          <NavLink
+          <NavigationItem
             key={item.path}
-            to={item.path}
-            end={item.path === '/'}
-            style={({ isActive }) => ({
-              display: 'flex',
-              alignItems: 'center',
-              gap: '12px',
-              padding: isSidebarCollapsed ? '10px' : '10px 14px',
-              borderRadius: 'var(--radius-lg)',
-              color: isActive ? 'var(--color-primary)' : 'var(--color-text-secondary)',
-              backgroundColor: isActive ? 'var(--color-primary-subtle)' : 'transparent',
-              border: isActive ? '1px solid rgba(249, 115, 22, 0.25)' : '1px solid transparent',
-              textDecoration: 'none',
-              fontSize: '13px',
-              fontWeight: isActive ? 600 : 500,
-              transition: 'all var(--duration-fast) var(--ease-spring)',
-              justifyContent: isSidebarCollapsed ? 'center' : 'flex-start'
-            })}
-            title={isSidebarCollapsed ? item.label : undefined}
-          >
-            <span style={{ display: 'flex', alignItems: 'center' }}>{item.icon}</span>
-            {!isSidebarCollapsed && (
-              <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {item.label}
-              </span>
-            )}
-          </NavLink>
+            label={item.label}
+            path={item.path}
+            icon={item.icon}
+            collapsed={isSidebarCollapsed}
+          />
         ))}
       </div>
     </aside>

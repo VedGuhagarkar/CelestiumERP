@@ -1,24 +1,23 @@
 import React from 'react';
 import { Loader2 } from 'lucide-react';
+import type { ButtonVariant, ButtonSize } from './AppButton.js';
 
-export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'tinted' | 'pill';
-export type ButtonSize = 'sm' | 'md' | 'lg';
-
-export interface AppButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+export interface IconButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  icon: React.ReactNode;
   variant?: ButtonVariant;
   size?: ButtonSize;
   isLoading?: boolean;
-  leftIcon?: React.ReactNode;
-  rightIcon?: React.ReactNode;
+  'aria-label': string;
+  tooltip?: string;
 }
 
-export const AppButton: React.FC<AppButtonProps> = ({
-  children,
-  variant = 'primary',
+export const IconButton: React.FC<IconButtonProps> = ({
+  icon,
+  variant = 'ghost',
   size = 'md',
   isLoading = false,
-  leftIcon,
-  rightIcon,
+  'aria-label': ariaLabel,
+  tooltip,
   className = '',
   disabled,
   type = 'button',
@@ -26,10 +25,10 @@ export const AppButton: React.FC<AppButtonProps> = ({
   onClick,
   ...props
 }) => {
-  const sizeStyles: Record<ButtonSize, React.CSSProperties> = {
-    sm: { padding: '6px 12px', fontSize: '12px', borderRadius: 'var(--radius-md)' },
-    md: { padding: '10px 18px', fontSize: '14px', borderRadius: 'var(--radius-lg)' },
-    lg: { padding: '14px 24px', fontSize: '15px', borderRadius: 'var(--radius-xl)' }
+  const sizeMap: Record<ButtonSize, { width: string; height: string; borderRadius: string }> = {
+    sm: { width: '28px', height: '28px', borderRadius: 'var(--radius-md)' },
+    md: { width: '36px', height: '36px', borderRadius: 'var(--radius-lg)' },
+    lg: { width: '44px', height: '44px', borderRadius: 'var(--radius-xl)' }
   };
 
   const getVariantStyles = (): React.CSSProperties => {
@@ -80,14 +79,13 @@ export const AppButton: React.FC<AppButtonProps> = ({
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: '8px',
-    fontWeight: 600,
     cursor: disabled || isLoading ? 'not-allowed' : 'pointer',
     opacity: disabled || isLoading ? 0.6 : 1,
     transition: 'all var(--duration-fast) var(--ease-spring)',
     outline: 'none',
     userSelect: 'none',
-    ...sizeStyles[size],
+    padding: 0,
+    ...sizeMap[size],
     ...getVariantStyles(),
     ...style
   };
@@ -103,16 +101,15 @@ export const AppButton: React.FC<AppButtonProps> = ({
   return (
     <button
       type={type}
+      aria-label={ariaLabel}
+      title={tooltip || ariaLabel}
       disabled={disabled || isLoading}
       style={baseStyle}
       className={className}
       onClick={handleClick}
       {...props}
     >
-      {isLoading && <Loader2 size={16} className="animate-spin" />}
-      {!isLoading && leftIcon && <span style={{ display: 'inline-flex' }}>{leftIcon}</span>}
-      {children}
-      {!isLoading && rightIcon && <span style={{ display: 'inline-flex' }}>{rightIcon}</span>}
+      {isLoading ? <Loader2 size={16} className="animate-spin" /> : icon}
     </button>
   );
 };
