@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { FinishedGoodsModel, FinishedGoodsDocument } from './finished-goods.model.js';
 import { IFinishedGoods, FinishedGoodsFilterQuery } from './finished-goods.types.js';
 import { PaginationOptions, PaginatedResult } from '../../core/types/pagination.js';
@@ -47,7 +48,21 @@ export class FinishedGoodsRepository implements IFinishedGoodsRepository {
     tenantId: string,
     id: string
   ): Promise<FinishedGoodsDocument | null> {
-    return FinishedGoodsModel.findOne({ tenantId, _id: id, isDeleted: false });
+    if (!id || typeof id !== 'string') return null;
+    if (mongoose.isValidObjectId(id)) {
+      const byId = await FinishedGoodsModel.findOne({ tenantId, _id: id, isDeleted: false });
+      if (byId) return byId;
+    }
+    return FinishedGoodsModel.findOne({
+      tenantId,
+      isDeleted: false,
+      $or: [
+        { fgLotNumber: id.toUpperCase() },
+        { fgLotNumber: new RegExp(`^${id}$`, 'i') },
+        { itemCode: new RegExp(`^${id}$`, 'i') },
+        { jobCardNumber: new RegExp(`^${id}$`, 'i') }
+      ]
+    });
   }
 
   public async findByLotNumber(

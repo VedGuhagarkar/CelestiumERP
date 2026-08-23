@@ -26,13 +26,20 @@ export class RoleRepository extends BaseRepository<RoleDocument> implements IRol
   }
 
   public async seedDefaultRolesForTenant(tenantId: string): Promise<RoleDocument[]> {
-    const existingRoles = await this.find(tenantId);
-    const existingCodes = new Set(existingRoles.map((r) => r.code));
-
-    const rolesToSeed = DEFAULT_FACTORY_ROLES.filter((role) => !existingCodes.has(role.code));
-
-    if (rolesToSeed.length > 0) {
-      await this.insertMany(tenantId, rolesToSeed as any);
+    for (const defRole of DEFAULT_FACTORY_ROLES) {
+      await this.model.findOneAndUpdate(
+        { tenantId, code: defRole.code },
+        {
+          $set: {
+            name: defRole.name,
+            description: defRole.description,
+            isSystemRole: defRole.isSystemRole,
+            permissions: defRole.permissions,
+            status: 'active'
+          }
+        },
+        { upsert: true, new: true }
+      );
     }
 
     return this.find(tenantId);

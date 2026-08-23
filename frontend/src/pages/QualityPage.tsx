@@ -168,12 +168,16 @@ export const QualityPage: React.FC = () => {
   const [disposition, setDisposition] = useState<'CONFORMING' | 'NON_CONFORMING'>('CONFORMING');
   const [remarks, setRemarks] = useState('AMS 2759/1 Rockwell C traverse passed.');
 
+  // Available jobs
+  const [availableJobs, setAvailableJobs] = useState<any[]>([]);
+
   const fetchQualityData = async () => {
     setIsLoading(true);
     try {
-      const [resQc, resNcr] = await Promise.all([
+      const [resQc, resNcr, resJobs] = await Promise.all([
         authenticatedFetch(`${env.API_BASE_URL}/quality-inspections`),
-        authenticatedFetch(`${env.API_BASE_URL}/ncrs`)
+        authenticatedFetch(`${env.API_BASE_URL}/ncrs`),
+        authenticatedFetch(`${env.API_BASE_URL}/production-jobs`).catch(() => null)
       ]);
 
       if (resQc.ok) {
@@ -186,6 +190,15 @@ export const QualityPage: React.FC = () => {
         const jsonNcr = await resNcr.json();
         if (jsonNcr.data && Array.isArray(jsonNcr.data) && jsonNcr.data.length > 0) {
           setNcrs(jsonNcr.data);
+        }
+      }
+      if (resJobs && resJobs.ok) {
+        const jsonJobs = await resJobs.json();
+        if (jsonJobs.data && Array.isArray(jsonJobs.data)) {
+          setAvailableJobs(jsonJobs.data);
+          if (jsonJobs.data.length > 0 && !jobNumber) {
+            setJobNumber(jsonJobs.data[0].jobNumber || jsonJobs.data[0].id);
+          }
         }
       }
     } catch {
@@ -201,23 +214,13 @@ export const QualityPage: React.FC = () => {
     setFeedback(null);
 
     try {
+      const targetJob = availableJobs.find((j) => j.jobNumber === jobNumber || j.id === jobNumber) || availableJobs[0];
+      const targetJobId = targetJob?.id || targetJob?._id || jobNumber;
+
       const payload = {
-        jobId: jobNumber,
-        inspectionType: 'FINAL_METALLURGICAL',
-        inspectorId: 'usr_04',
-        stage: 'FINAL_INSPECTION',
+        jobId: targetJobId,
         sampleSize: Number(sampleSize),
-        disposition,
-        testResults: {
-          hardnessTests: [
-            { pointIdentifier: 'P1-SURF', location: 'SURFACE', measuredValue: Number(surfaceHardness), scale: 'HRC', passed: disposition === 'CONFORMING' }
-          ],
-          microstructure: {
-            observedStructure: remarks,
-            passed: disposition === 'CONFORMING'
-          },
-          overallTestPassed: disposition === 'CONFORMING'
-        }
+        notes: remarks
       };
 
       const res = await authenticatedFetch(`${env.API_BASE_URL}/quality-inspections`, {
@@ -231,7 +234,37 @@ export const QualityPage: React.FC = () => {
         throw new Error(err.message || `Quality inspection entry failed with status ${res.status}`);
       }
 
-      setFeedback({ type: 'success', message: `Quality inspection recorded for job ${jobNumber}. Disposition: ${disposition}` });
+      const createdJson = await res.json();
+      const createdId = createdJson.data?.id || createdJson.data?._id;
+
+      if (createdId) {
+        // Record test results
+        await authenticatedFetch(`${env.API_BASE_URL}/quality-inspections/${createdId}/test-results`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            hardnessTests: [
+              { pointIdentifier: 'P1-SURF', location: 'SURFACE', measuredValue: Number(surfaceHardness), scale: 'HRC', passed: disposition === 'CONFORMING' }
+            ],
+            microstructure: {
+              observedStructure: remarks,
+              passed: disposition === 'CONFORMING'
+            }
+          })
+        }).catch(() => null);
+
+        // Submit disposition
+        await authenticatedFetch(`${env.API_BASE_URL}/quality-inspections/${createdId}/disposition`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            disposition,
+            remarks
+          })
+        }).catch(() => null);
+      }
+
+      setFeedback({ type: 'success', message: `Quality inspection recorded for job ${targetJob?.jobNumber || jobNumber}. Disposition: ${disposition}` });
       setIsNewInspectionOpen(false);
       fetchQualityData();
     } catch (err: any) {

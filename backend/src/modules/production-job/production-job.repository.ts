@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { BaseRepository } from '../../core/repository/base.repository.js';
 import { ProductionJobDocument, JobStatus } from './production-job.types.js';
 import { ProductionJobModel } from './production-job.model.js';
@@ -38,6 +39,23 @@ export class ProductionJobRepository
 {
   constructor() {
     super(ProductionJobModel);
+  }
+
+  public override async findById(
+    tenantId: string,
+    id: string
+  ): Promise<ProductionJobDocument | null> {
+    if (!id || typeof id !== 'string') return null;
+    if (mongoose.isValidObjectId(id)) {
+      const doc = await super.findById(tenantId, id);
+      if (doc) return doc;
+    }
+    return this.findOne(tenantId, {
+      $or: [
+        { jobNumber: id.toUpperCase() },
+        { jobNumber: new RegExp(`^${id}$`, 'i') }
+      ]
+    });
   }
 
   public async generateNextJobNumber(tenantId: string): Promise<string> {
