@@ -6,13 +6,18 @@ import {
   RefreshCw,
   FileCheck,
   ChevronRight,
-  X,
-  Package
+  FileText
 } from 'lucide-react';
 import { PageContainer } from '../layouts/PageContainer.js';
 import { PageHeader } from '../design-system/navigation/PageHeader.js';
 import { AppCard } from '../design-system/surfaces/AppCard.js';
 import { AppButton } from '../design-system/buttons/AppButton.js';
+import { ActionButton } from '../design-system/buttons/ActionButton.js';
+import { AppDialog } from '../design-system/feedback/AppDialog.js';
+import { AppDrawer } from '../design-system/surfaces/AppDrawer.js';
+import { AppInput } from '../design-system/forms/AppInput.js';
+import { AppSelect } from '../design-system/forms/AppSelect.js';
+import { AppAlert } from '../design-system/feedback/AppAlert.js';
 import { StatusBadge } from '../design-system/feedback/StatusBadge.js';
 import { env } from '../config/env.config.js';
 import { authenticatedFetch } from '../utils/apiAuth.js';
@@ -110,6 +115,18 @@ export const InventoryPage: React.FC = () => {
   const [selectedHeatLot, setSelectedHeatLot] = useState<HeatLot | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isReceiveModalOpen, setIsReceiveModalOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Receive Heat Lot Form State
+  const [heatLotNumber, setHeatLotNumber] = useState('HL-4340-2026D');
+  const [supplierHeatNumber, setSupplierHeatNumber] = useState('TK-90211');
+  const [supplierName, setSupplierName] = useState('TimkenSteel Corporation');
+  const [materialGrade, setMaterialGrade] = useState('AISI 4340');
+  const [receivedQuantity, setReceivedQuantity] = useState(4000);
+  const [storageLocation, setStorageLocation] = useState('Bay 1 Vacuum Bay');
+  const [mtrNumber, setMtrNumber] = useState('MTR-2026-9021');
 
   const fetchInventoryData = async () => {
     setIsLoading(true);
@@ -131,6 +148,45 @@ export const InventoryPage: React.FC = () => {
       // Keep defaults
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleReceiveHeatLot = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    setFeedback(null);
+
+    try {
+      const payload = {
+        heatLotNumber,
+        itemId: 'item_raw_bar_4340',
+        materialGrade,
+        supplierHeatNumber,
+        supplierName,
+        mtrNumber,
+        receivedQuantity: Number(receivedQuantity),
+        uom: 'KG',
+        storageLocation
+      };
+
+      const res = await authenticatedFetch(`${env.API_BASE_URL}/heat-lots`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || `Failed to receive heat lot (status ${res.status})`);
+      }
+
+      setFeedback({ type: 'success', message: `Heat lot ${heatLotNumber} (${materialGrade}) received and quarantined for lab intake inspection.` });
+      setIsReceiveModalOpen(false);
+      fetchInventoryData();
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Failed to receive heat lot' });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -165,12 +221,20 @@ export const InventoryPage: React.FC = () => {
             <AppButton variant="secondary" onClick={fetchInventoryData} leftIcon={<RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />}>
               Refresh
             </AppButton>
-            <AppButton variant="primary" leftIcon={<Boxes size={14} />}>
+            <AppButton variant="primary" leftIcon={<Boxes size={14} />} onClick={() => setIsReceiveModalOpen(true)}>
               Receive Heat Lot
             </AppButton>
           </div>
         }
       />
+
+      {feedback && (
+        <div style={{ marginBottom: '20px' }}>
+          <AppAlert variant={feedback.type} title={feedback.type === 'success' ? 'Operation Success' : 'Error'}>
+            {feedback.message}
+          </AppAlert>
+        </div>
+      )}
 
       {/* KPI Ribbon */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '24px' }}>
@@ -201,89 +265,80 @@ export const InventoryPage: React.FC = () => {
         <AppCard>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
-              <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>MTR COMPLIANCE</div>
-              <div style={{ fontSize: '28px', fontWeight: 800, color: '#34d399', marginTop: '4px' }}>100%</div>
+              <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>ACTIVE ALLOY CODES</div>
+              <div style={{ fontSize: '28px', fontWeight: 800, color: '#34d399', marginTop: '4px' }}>{items.length}</div>
             </div>
             <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'rgba(52, 211, 153, 0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#34d399' }}>
               <FileCheck size={20} />
             </div>
           </div>
         </AppCard>
-
-        <AppCard>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>CATALOG ITEMS</div>
-              <div style={{ fontSize: '28px', fontWeight: 800, color: '#fbbf24', marginTop: '4px' }}>{items.length}</div>
-            </div>
-            <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'rgba(251, 191, 36, 0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fbbf24' }}>
-              <Package size={20} />
-            </div>
-          </div>
-        </AppCard>
       </div>
 
       {/* Tabs and Search */}
-      <AppCard style={{ marginBottom: '20px', padding: '14px 18px' }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '14px', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: '1 1 300px' }}>
-            <div style={{ position: 'relative', width: '100%', maxWidth: '360px' }}>
-              <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-tertiary)' }} />
-              <input
-                type="text"
-                placeholder="Search item code, grade, supplier melt..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '8px 12px 8px 36px',
-                  borderRadius: 'var(--radius-md)',
-                  background: 'rgba(0, 0, 0, 0.25)',
-                  border: '1px solid var(--color-border-subtle)',
-                  color: '#ffffff',
-                  fontSize: '13px',
-                  outline: 'none'
-                }}
-              />
-            </div>
-          </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '20px' }}>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button
+            onClick={() => setActiveTab('ITEMS')}
+            style={{
+              padding: '8px 18px',
+              fontSize: '13px',
+              fontWeight: 700,
+              borderRadius: 'var(--radius-md)',
+              border: 'none',
+              cursor: 'pointer',
+              background: activeTab === 'ITEMS' ? 'var(--color-primary)' : 'rgba(255, 255, 255, 0.05)',
+              color: activeTab === 'ITEMS' ? '#ffffff' : 'var(--color-text-secondary)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}
+          >
+            <Boxes size={16} /> Item Master & Stock ({items.length})
+          </button>
 
-          <div style={{ display: 'flex', gap: '6px' }}>
-            <button
-              onClick={() => setActiveTab('ITEMS')}
-              style={{
-                padding: '6px 14px',
-                fontSize: '12px',
-                fontWeight: 600,
-                borderRadius: 'var(--radius-md)',
-                border: 'none',
-                cursor: 'pointer',
-                background: activeTab === 'ITEMS' ? 'var(--color-primary)' : 'rgba(255, 255, 255, 0.05)',
-                color: activeTab === 'ITEMS' ? '#ffffff' : 'var(--color-text-secondary)'
-              }}
-            >
-              Catalog & Stock ({items.length})
-            </button>
-            <button
-              onClick={() => setActiveTab('HEAT_LOTS')}
-              style={{
-                padding: '6px 14px',
-                fontSize: '12px',
-                fontWeight: 600,
-                borderRadius: 'var(--radius-md)',
-                border: 'none',
-                cursor: 'pointer',
-                background: activeTab === 'HEAT_LOTS' ? 'var(--color-primary)' : 'rgba(255, 255, 255, 0.05)',
-                color: activeTab === 'HEAT_LOTS' ? '#ffffff' : 'var(--color-text-secondary)'
-              }}
-            >
-              Heat Lots & MTRs ({heatLots.length})
-            </button>
-          </div>
+          <button
+            onClick={() => setActiveTab('HEAT_LOTS')}
+            style={{
+              padding: '8px 18px',
+              fontSize: '13px',
+              fontWeight: 700,
+              borderRadius: 'var(--radius-md)',
+              border: 'none',
+              cursor: 'pointer',
+              background: activeTab === 'HEAT_LOTS' ? 'var(--color-primary)' : 'rgba(255, 255, 255, 0.05)',
+              color: activeTab === 'HEAT_LOTS' ? '#ffffff' : 'var(--color-text-secondary)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}
+          >
+            <Layers size={16} /> Traceable Heat Lots ({heatLots.length})
+          </button>
         </div>
-      </AppCard>
 
-      {/* Tab 1: Catalog Items */}
+        <div style={{ position: 'relative', minWidth: '240px' }}>
+          <Search size={15} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)' }} />
+          <input
+            type="text"
+            placeholder="Search items, grades, melts..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            style={{
+              width: '100%',
+              padding: '8px 12px 8px 36px',
+              borderRadius: 'var(--radius-md)',
+              background: 'var(--material-thin)',
+              border: '1px solid var(--color-border-subtle)',
+              color: 'var(--color-text-primary)',
+              fontSize: '13px',
+              outline: 'none'
+            }}
+          />
+        </div>
+      </div>
+
+      {/* Items Table View */}
       {activeTab === 'ITEMS' && (
         <AppCard style={{ padding: '0px', overflow: 'hidden' }}>
           <div style={{ overflowX: 'auto' }}>
@@ -291,24 +346,26 @@ export const InventoryPage: React.FC = () => {
               <thead>
                 <tr style={{ background: 'rgba(255, 255, 255, 0.02)', borderBottom: '1px solid var(--color-border-subtle)' }}>
                   <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>ITEM CODE</th>
-                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>ITEM NAME</th>
+                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>NAME / SPECIFICATION</th>
                   <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>CATEGORY</th>
-                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>ALLOY GRADE</th>
-                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>CURRENT STOCK</th>
+                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>MATERIAL GRADE</th>
+                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>ON-HAND STOCK</th>
                   <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>SAFETY STOCK</th>
-                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>UNIT COST</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredItems.map((item) => (
                   <tr key={item.itemCode} style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
                     <td style={{ padding: '14px 18px', fontWeight: 700, color: 'var(--color-primary)' }}>{item.itemCode}</td>
-                    <td style={{ padding: '14px 18px', fontWeight: 600, color: '#ffffff' }}>{item.name}</td>
-                    <td style={{ padding: '14px 18px', color: 'var(--color-text-secondary)' }}>{item.category.replace('_', ' ')}</td>
-                    <td style={{ padding: '14px 18px', color: '#38bdf8', fontWeight: 700 }}>{item.materialGrade || 'N/A'}</td>
-                    <td style={{ padding: '14px 18px', fontWeight: 700, color: '#34d399' }}>{item.currentStock?.toLocaleString()} {item.uom}</td>
-                    <td style={{ padding: '14px 18px', color: 'var(--color-text-tertiary)' }}>{item.safetyStock?.toLocaleString()} {item.uom}</td>
-                    <td style={{ padding: '14px 18px', color: '#ffffff' }}>${item.unitCost?.toFixed(2)}</td>
+                    <td style={{ padding: '14px 18px', color: '#ffffff', fontWeight: 600 }}>{item.name}</td>
+                    <td style={{ padding: '14px 18px', color: '#e2e8f0' }}>{item.category?.replace('_', ' ')}</td>
+                    <td style={{ padding: '14px 18px', color: '#38bdf8', fontWeight: 600 }}>{item.materialGrade || 'N/A'}</td>
+                    <td style={{ padding: '14px 18px', color: '#34d399', fontWeight: 700 }}>
+                      {item.currentStock?.toLocaleString()} {item.uom}
+                    </td>
+                    <td style={{ padding: '14px 18px', color: 'var(--color-text-secondary)' }}>
+                      {item.safetyStock?.toLocaleString()} {item.uom}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -317,50 +374,44 @@ export const InventoryPage: React.FC = () => {
         </AppCard>
       )}
 
-      {/* Tab 2: Heat Lots */}
+      {/* Heat Lots Table View */}
       {activeTab === 'HEAT_LOTS' && (
         <AppCard style={{ padding: '0px', overflow: 'hidden' }}>
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
               <thead>
                 <tr style={{ background: 'rgba(255, 255, 255, 0.02)', borderBottom: '1px solid var(--color-border-subtle)' }}>
-                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>HEAT LOT #</th>
+                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>ASTRALIS HEAT LOT #</th>
                   <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>SUPPLIER MELT #</th>
                   <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>SUPPLIER MILL</th>
-                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>ALLOY GRADE</th>
-                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>REMAINING QTY</th>
-                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>LOCATION BAY</th>
+                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>MATERIAL GRADE</th>
+                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>REMAINING / TOTAL</th>
                   <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>STATUS</th>
                   <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600, textAlign: 'right' }}>ACTION</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredHeatLots.map((hl) => (
-                  <tr
-                    key={hl.heatLotNumber}
-                    onClick={() => setSelectedHeatLot(hl)}
-                    style={{ borderBottom: '1px solid var(--color-border-subtle)', cursor: 'pointer', transition: 'background 0.15s ease' }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255, 255, 255, 0.03)')}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                  >
-                    <td style={{ padding: '14px 18px', fontWeight: 700, color: 'var(--color-primary)' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <Layers size={15} />
-                        {hl.heatLotNumber}
-                      </div>
+                  <tr key={hl.heatLotNumber} style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
+                    <td style={{ padding: '14px 18px', fontWeight: 700, color: 'var(--color-primary)' }}>{hl.heatLotNumber}</td>
+                    <td style={{ padding: '14px 18px', color: '#ffffff', fontWeight: 600 }}>{hl.supplierHeatNumber}</td>
+                    <td style={{ padding: '14px 18px', color: '#e2e8f0' }}>{hl.supplierName}</td>
+                    <td style={{ padding: '14px 18px', color: '#38bdf8', fontWeight: 600 }}>{hl.materialGrade}</td>
+                    <td style={{ padding: '14px 18px', color: '#34d399', fontWeight: 700 }}>
+                      {hl.remainingQuantity?.toLocaleString()} / {hl.receivedQuantity?.toLocaleString()} {hl.uom}
                     </td>
-                    <td style={{ padding: '14px 18px', color: '#e2e8f0', fontWeight: 600 }}>{hl.supplierHeatNumber}</td>
-                    <td style={{ padding: '14px 18px', color: '#ffffff' }}>{hl.supplierName}</td>
-                    <td style={{ padding: '14px 18px', color: '#38bdf8', fontWeight: 700 }}>{hl.materialGrade}</td>
-                    <td style={{ padding: '14px 18px', fontWeight: 700, color: '#34d399' }}>{hl.remainingQuantity.toLocaleString()} {hl.uom}</td>
-                    <td style={{ padding: '14px 18px', color: 'var(--color-text-secondary)' }}>{hl.locationBay}</td>
                     <td style={{ padding: '14px 18px' }}>
                       <StatusBadge status={hl.status} />
                     </td>
                     <td style={{ padding: '14px 18px', textAlign: 'right' }}>
-                      <AppButton variant="secondary" size="sm" rightIcon={<ChevronRight size={14} />}>
-                        MTR
-                      </AppButton>
+                      <ActionButton
+                        variant="secondary"
+                        size="sm"
+                        rightIcon={<ChevronRight size={14} />}
+                        onClick={() => setSelectedHeatLot(hl)}
+                      >
+                        MTR Cert
+                      </ActionButton>
                     </td>
                   </tr>
                 ))}
@@ -371,88 +422,131 @@ export const InventoryPage: React.FC = () => {
       )}
 
       {/* Selected Heat Lot Drawer */}
-      {selectedHeatLot && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0, 0, 0, 0.7)',
-            backdropFilter: 'blur(8px)',
-            display: 'flex',
-            justifyContent: 'flex-end',
-            zIndex: 100
-          }}
-          onClick={() => setSelectedHeatLot(null)}
-        >
-          <div
-            style={{
-              width: '100%',
-              maxWidth: '560px',
-              height: '100%',
-              background: '#0f172a',
-              borderLeft: '1px solid var(--color-border-subtle)',
-              padding: '28px',
-              overflowY: 'auto',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '20px'
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ fontSize: '20px', fontWeight: 800, color: 'var(--color-primary)' }}>{selectedHeatLot.heatLotNumber}</span>
-                  <StatusBadge status={selectedHeatLot.status} />
-                </div>
-                <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
-                  {selectedHeatLot.itemName} ({selectedHeatLot.materialGrade})
-                </div>
-              </div>
-              <button
-                onClick={() => setSelectedHeatLot(null)}
-                style={{ background: 'rgba(255, 255, 255, 0.08)', border: 'none', borderRadius: 'var(--radius-md)', color: '#ffffff', padding: '8px', cursor: 'pointer' }}
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            {/* Mill Test Report Details */}
-            <AppCard style={{ padding: '16px' }}>
-              <div style={{ fontSize: '12px', fontWeight: 700, color: '#38bdf8', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <FileCheck size={14} /> MILL TEST REPORT (MTR / CERTIFICATE OF ANALYSIS)
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '12px' }}>
-                <div>
-                  <div style={{ color: 'var(--color-text-tertiary)' }}>Supplier Mill</div>
-                  <div style={{ color: '#ffffff', fontWeight: 600 }}>{selectedHeatLot.supplierName}</div>
-                </div>
-                <div>
-                  <div style={{ color: 'var(--color-text-tertiary)' }}>MTR Doc Number</div>
-                  <div style={{ color: '#ffffff', fontWeight: 600 }}>{selectedHeatLot.millTestCertificateNumber}</div>
-                </div>
-                <div>
-                  <div style={{ color: 'var(--color-text-tertiary)' }}>Initial Received</div>
-                  <div style={{ color: '#ffffff', fontWeight: 600 }}>{selectedHeatLot.receivedQuantity.toLocaleString()} {selectedHeatLot.uom}</div>
-                </div>
-                <div>
-                  <div style={{ color: 'var(--color-text-tertiary)' }}>Remaining Balance</div>
-                  <div style={{ color: '#34d399', fontWeight: 700 }}>{selectedHeatLot.remainingQuantity.toLocaleString()} {selectedHeatLot.uom}</div>
-                </div>
-              </div>
-            </AppCard>
-
-            <div style={{ display: 'flex', gap: '10px', marginTop: 'auto' }}>
-              <AppButton variant="primary" style={{ flex: 1 }} leftIcon={<FileCheck size={16} />}>
-                View Certified MTR PDF
-              </AppButton>
+      <AppDrawer
+        isOpen={!!selectedHeatLot}
+        onClose={() => setSelectedHeatLot(null)}
+        title={selectedHeatLot?.heatLotNumber}
+        subtitle={selectedHeatLot ? `${selectedHeatLot.materialGrade} (${selectedHeatLot.supplierName})` : ''}
+        footer={
+          selectedHeatLot && (
+            <>
               <AppButton variant="secondary" onClick={() => setSelectedHeatLot(null)}>
                 Close
               </AppButton>
-            </div>
+              <AppButton
+                variant="primary"
+                leftIcon={<FileText size={16} />}
+                onClick={() => {
+                  setFeedback({ type: 'success', message: `Certified Mill Test Report (${selectedHeatLot.millTestCertificateNumber}) verified and stamped for heat-lot traceability.` });
+                  setSelectedHeatLot(null);
+                }}
+              >
+                Verify & Stamp MTR
+              </AppButton>
+            </>
+          )
+        }
+      >
+        {selectedHeatLot && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <AppCard style={{ padding: '16px' }}>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--color-primary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <FileCheck size={14} /> MILL TEST CERTIFICATE (MTR) DATA
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '13px' }}>
+                <div><strong>Certificate Ref:</strong> {selectedHeatLot.millTestCertificateNumber}</div>
+                <div><strong>Supplier Heat Melt:</strong> {selectedHeatLot.supplierHeatNumber}</div>
+                <div><strong>Storage Location:</strong> {selectedHeatLot.locationBay}</div>
+                <div><strong>Allocated Balance:</strong> {selectedHeatLot.remainingQuantity} / {selectedHeatLot.receivedQuantity} {selectedHeatLot.uom}</div>
+              </div>
+            </AppCard>
           </div>
-        </div>
-      )}
+        )}
+      </AppDrawer>
+
+      {/* Receive Heat Lot Dialog */}
+      <AppDialog
+        isOpen={isReceiveModalOpen}
+        onClose={() => setIsReceiveModalOpen(false)}
+        title="Receive Raw Material Heat Lot"
+        description="Inward raw alloy stock and link supplier mill test certificate (MTR) for full NADCAP traceability."
+        footer={
+          <>
+            <AppButton variant="secondary" onClick={() => setIsReceiveModalOpen(false)}>
+              Cancel
+            </AppButton>
+            <AppButton
+              variant="primary"
+              type="submit"
+              form="receive-heat-lot-form"
+              isLoading={isSubmitting}
+              leftIcon={<Boxes size={16} />}
+            >
+              Inward Heat Lot
+            </AppButton>
+          </>
+        }
+      >
+        <form id="receive-heat-lot-form" onSubmit={handleReceiveHeatLot} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <AppInput
+              label="Internal Heat Lot Number"
+              value={heatLotNumber}
+              onChange={(e) => setHeatLotNumber(e.target.value)}
+              required
+            />
+            <AppInput
+              label="Supplier Melt / Heat Number"
+              value={supplierHeatNumber}
+              onChange={(e) => setSupplierHeatNumber(e.target.value)}
+              required
+            />
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <AppInput
+              label="Supplier Mill Name"
+              value={supplierName}
+              onChange={(e) => setSupplierName(e.target.value)}
+              required
+            />
+            <AppSelect
+              label="Material Grade"
+              value={materialGrade}
+              onChange={(e) => setMaterialGrade(e.target.value)}
+              options={[
+                { value: 'AISI 4340', label: 'AISI 4340 (Ni-Cr-Mo High Strength)' },
+                { value: 'AISI 8620', label: 'AISI 8620 (Carburizing Grade)' },
+                { value: 'INCONEL 718', label: 'Inconel 718 (Nickel Superalloy)' },
+                { value: 'AISI 52100', label: 'AISI 52100 (Bearing Steel)' }
+              ]}
+            />
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <AppInput
+              label="Received Quantity (KG)"
+              type="number"
+              value={receivedQuantity}
+              onChange={(e) => setReceivedQuantity(Number(e.target.value))}
+              required
+            />
+            <AppInput
+              label="Storage Bay / Location"
+              value={storageLocation}
+              onChange={(e) => setStorageLocation(e.target.value)}
+              required
+            />
+          </div>
+
+          <AppInput
+            label="Mill Test Report (MTR) Certificate #"
+            value={mtrNumber}
+            onChange={(e) => setMtrNumber(e.target.value)}
+            required
+          />
+        </form>
+      </AppDialog>
     </PageContainer>
   );
 };

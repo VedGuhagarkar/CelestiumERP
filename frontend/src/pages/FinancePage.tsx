@@ -5,13 +5,16 @@ import {
   TrendingUp,
   CreditCard,
   RefreshCw,
-  Percent,
-  CheckCircle2
+  Percent
 } from 'lucide-react';
 import { PageContainer } from '../layouts/PageContainer.js';
 import { PageHeader } from '../design-system/navigation/PageHeader.js';
 import { AppCard } from '../design-system/surfaces/AppCard.js';
 import { AppButton } from '../design-system/buttons/AppButton.js';
+import { AppDialog } from '../design-system/feedback/AppDialog.js';
+import { AppInput } from '../design-system/forms/AppInput.js';
+import { AppSelect } from '../design-system/forms/AppSelect.js';
+import { AppAlert } from '../design-system/feedback/AppAlert.js';
 import { StatusBadge } from '../design-system/feedback/StatusBadge.js';
 import { env } from '../config/env.config.js';
 import { authenticatedFetch } from '../utils/apiAuth.js';
@@ -116,6 +119,15 @@ export const FinancePage: React.FC = () => {
   const [invoices, setInvoices] = useState<Invoice[]>(DEFAULT_INVOICES);
   const [jobCosts, setJobCosts] = useState<JobCostRecord[]>(DEFAULT_JOB_COSTS);
   const [isLoading, setIsLoading] = useState(false);
+  const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Invoice Form State
+  const [customerCode, setCustomerCode] = useState('CUST-TITAN-02');
+  const [customerName, setCustomerName] = useState('Titan Precision Defense LLC');
+  const [totalAmount, setTotalAmount] = useState(18500);
+  const [paymentTerms, setPaymentTerms] = useState(30);
 
   const fetchFinanceData = async () => {
     setIsLoading(true);
@@ -140,12 +152,56 @@ export const FinancePage: React.FC = () => {
     }
   };
 
+  const handleCreateInvoice = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    setFeedback(null);
+
+    try {
+      const payload = {
+        customerId: 'cust_titan_002',
+        customerCode,
+        customerName,
+        paymentTermsDays: Number(paymentTerms),
+        lines: [
+          {
+            itemCode: 'PART-GEAR-8620',
+            description: 'Gas Carburizing & Hardening Service Cycle',
+            quantity: 250,
+            uom: 'PCS',
+            unitPrice: Number(totalAmount) / 250
+          }
+        ],
+        notes: 'Commercial invoice for precision thermal processing.'
+      };
+
+      const res = await authenticatedFetch(`${env.API_BASE_URL}/billing/invoices`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || `Failed to create commercial invoice (status ${res.status})`);
+      }
+
+      setFeedback({ type: 'success', message: `Invoice for ${customerName} ($${Number(totalAmount).toLocaleString()}) generated and issued.` });
+      setIsInvoiceModalOpen(false);
+      fetchFinanceData();
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Failed to create commercial invoice' });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   useEffect(() => {
     fetchFinanceData();
   }, []);
 
-  const totalBilled = invoices.reduce((acc, i) => acc + i.totalAmount, 0);
-  const totalOutstanding = invoices.reduce((acc, i) => acc + i.outstandingBalance, 0);
+  const totalBilled = invoices.reduce((acc, i) => acc + (i.totalAmount || 0), 0);
+  const totalOutstanding = invoices.reduce((acc, i) => acc + (i.outstandingBalance || 0), 0);
 
   return (
     <PageContainer>
@@ -157,12 +213,20 @@ export const FinancePage: React.FC = () => {
             <AppButton variant="secondary" onClick={fetchFinanceData} leftIcon={<RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />}>
               Refresh
             </AppButton>
-            <AppButton variant="primary" leftIcon={<Receipt size={14} />}>
+            <AppButton variant="primary" leftIcon={<Receipt size={14} />} onClick={() => setIsInvoiceModalOpen(true)}>
               Create Invoice
             </AppButton>
           </div>
         }
       />
+
+      {feedback && (
+        <div style={{ marginBottom: '20px' }}>
+          <AppAlert variant={feedback.type} title={feedback.type === 'success' ? 'Operation Success' : 'Error'}>
+            {feedback.message}
+          </AppAlert>
+        </div>
+      )}
 
       {/* KPI Ribbon */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '24px' }}>
@@ -182,7 +246,9 @@ export const FinancePage: React.FC = () => {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
               <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>OUTSTANDING RECEIVABLES</div>
-              <div style={{ fontSize: '28px', fontWeight: 800, color: '#fbbf24', marginTop: '4px' }}>${totalOutstanding.toLocaleString()}</div>
+              <div style={{ fontSize: '28px', fontWeight: 800, color: totalOutstanding > 0 ? '#fbbf24' : '#34d399', marginTop: '4px' }}>
+                ${totalOutstanding.toLocaleString()}
+              </div>
             </div>
             <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'rgba(251, 191, 36, 0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fbbf24' }}>
               <CreditCard size={20} />
@@ -205,11 +271,11 @@ export const FinancePage: React.FC = () => {
         <AppCard>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
-              <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>FROZEN COSTINGS</div>
-              <div style={{ fontSize: '28px', fontWeight: 800, color: '#38bdf8', marginTop: '4px' }}>{jobCosts.length}</div>
+              <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>PROFITABLE JOBS</div>
+              <div style={{ fontSize: '28px', fontWeight: 800, color: '#38bdf8', marginTop: '4px' }}>100%</div>
             </div>
             <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'rgba(56, 189, 248, 0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#38bdf8' }}>
-              <CheckCircle2 size={20} />
+              <TrendingUp size={20} />
             </div>
           </div>
         </AppCard>
@@ -266,10 +332,9 @@ export const FinancePage: React.FC = () => {
                   <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>INVOICE #</th>
                   <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>CUSTOMER</th>
                   <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>INVOICE DATE</th>
-                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>SUBTOTAL</th>
-                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>TAX</th>
+                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>DUE DATE</th>
                   <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>TOTAL AMOUNT</th>
-                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>OUTSTANDING</th>
+                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>BALANCE DUE</th>
                   <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>STATUS</th>
                 </tr>
               </thead>
@@ -278,15 +343,14 @@ export const FinancePage: React.FC = () => {
                   <tr key={inv.invoiceNumber} style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
                     <td style={{ padding: '14px 18px', fontWeight: 700, color: 'var(--color-primary)' }}>{inv.invoiceNumber}</td>
                     <td style={{ padding: '14px 18px' }}>
-                      <div style={{ fontWeight: 600, color: '#ffffff' }}>{inv.customerName}</div>
+                      <div style={{ color: '#ffffff', fontWeight: 600 }}>{inv.customerName}</div>
                       <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>{inv.customerCode}</div>
                     </td>
                     <td style={{ padding: '14px 18px', color: '#e2e8f0' }}>{new Date(inv.invoiceDate).toLocaleDateString()}</td>
-                    <td style={{ padding: '14px 18px', color: '#ffffff' }}>${(inv.subtotal || inv.totalAmount * 0.9).toLocaleString()}</td>
-                    <td style={{ padding: '14px 18px', color: 'var(--color-text-secondary)' }}>${(inv.totalTaxAmount || inv.taxAmount || inv.totalAmount * 0.1).toLocaleString()}</td>
-                    <td style={{ padding: '14px 18px', fontWeight: 700, color: '#ffffff' }}>${inv.totalAmount.toLocaleString()}</td>
-                    <td style={{ padding: '14px 18px', fontWeight: 700, color: inv.outstandingBalance > 0 ? '#fbbf24' : '#34d399' }}>
-                      ${inv.outstandingBalance.toLocaleString()}
+                    <td style={{ padding: '14px 18px', color: '#e2e8f0' }}>{new Date(inv.dueDate).toLocaleDateString()}</td>
+                    <td style={{ padding: '14px 18px', color: '#ffffff', fontWeight: 700 }}>${inv.totalAmount?.toLocaleString()}</td>
+                    <td style={{ padding: '14px 18px', color: inv.outstandingBalance > 0 ? '#fbbf24' : '#34d399', fontWeight: 700 }}>
+                      ${inv.outstandingBalance?.toLocaleString()}
                     </td>
                     <td style={{ padding: '14px 18px' }}>
                       <StatusBadge status={inv.status} />
@@ -307,32 +371,30 @@ export const FinancePage: React.FC = () => {
               <thead>
                 <tr style={{ background: 'rgba(255, 255, 255, 0.02)', borderBottom: '1px solid var(--color-border-subtle)' }}>
                   <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>COSTING #</th>
-                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>JOB NUMBER</th>
-                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>CUSTOMER & PART</th>
+                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>JOB # / CUSTOMER</th>
                   <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>STANDARD COST</th>
                   <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>ACTUAL COST</th>
                   <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>BILLED REVENUE</th>
                   <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>GROSS MARGIN</th>
-                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>STATUS</th>
+                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>PROFIT STATUS</th>
                 </tr>
               </thead>
               <tbody>
                 {jobCosts.map((c) => (
                   <tr key={c.costingNumber} style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
-                    <td style={{ padding: '14px 18px', fontWeight: 700, color: '#38bdf8' }}>{c.costingNumber}</td>
-                    <td style={{ padding: '14px 18px', fontWeight: 600, color: '#ffffff' }}>{c.jobNumber}</td>
+                    <td style={{ padding: '14px 18px', fontWeight: 700, color: 'var(--color-primary)' }}>{c.costingNumber}</td>
                     <td style={{ padding: '14px 18px' }}>
-                      <div style={{ color: '#ffffff', fontWeight: 600 }}>{c.customerName}</div>
-                      <div style={{ fontSize: '11px', color: 'var(--color-primary)' }}>{c.itemCode}</div>
+                      <div style={{ color: '#ffffff', fontWeight: 600 }}>{c.jobNumber}</div>
+                      <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>{c.customerName}</div>
                     </td>
-                    <td style={{ padding: '14px 18px', color: 'var(--color-text-secondary)' }}>${c.totalStandardCost.toLocaleString()}</td>
-                    <td style={{ padding: '14px 18px', color: '#ffffff', fontWeight: 600 }}>${c.totalActualCost.toLocaleString()}</td>
-                    <td style={{ padding: '14px 18px', color: '#34d399', fontWeight: 700 }}>${c.totalRevenueBilled?.toLocaleString()}</td>
-                    <td style={{ padding: '14px 18px', fontWeight: 800, color: 'var(--color-primary)' }}>
-                      {c.grossMarginPercentage?.toFixed(1)}% (${c.grossProfit?.toLocaleString()})
-                    </td>
+                    <td style={{ padding: '14px 18px', color: '#e2e8f0' }}>${c.totalStandardCost?.toLocaleString()}</td>
+                    <td style={{ padding: '14px 18px', color: '#e2e8f0' }}>${c.totalActualCost?.toLocaleString()}</td>
+                    <td style={{ padding: '14px 18px', color: '#38bdf8', fontWeight: 700 }}>${c.totalRevenueBilled?.toLocaleString()}</td>
+                    <td style={{ padding: '14px 18px', color: '#34d399', fontWeight: 800 }}>{c.grossMarginPercentage}%</td>
                     <td style={{ padding: '14px 18px' }}>
-                      <StatusBadge status={c.profitabilityStatus} />
+                      <span style={{ fontSize: '11px', fontWeight: 700, padding: '3px 8px', borderRadius: '4px', background: 'rgba(52, 211, 153, 0.15)', color: '#34d399' }}>
+                        {c.profitabilityStatus}
+                      </span>
                     </td>
                   </tr>
                 ))}
@@ -341,6 +403,68 @@ export const FinancePage: React.FC = () => {
           </div>
         </AppCard>
       )}
+
+      {/* Create Invoice Dialog */}
+      <AppDialog
+        isOpen={isInvoiceModalOpen}
+        onClose={() => setIsInvoiceModalOpen(false)}
+        title="Issue Commercial Invoice"
+        description="Generate commercial invoice for completed thermal treatment batches."
+        footer={
+          <>
+            <AppButton variant="secondary" onClick={() => setIsInvoiceModalOpen(false)}>
+              Cancel
+            </AppButton>
+            <AppButton
+              variant="primary"
+              type="submit"
+              form="create-invoice-form"
+              isLoading={isSubmitting}
+              leftIcon={<Receipt size={16} />}
+            >
+              Issue Invoice
+            </AppButton>
+          </>
+        }
+      >
+        <form id="create-invoice-form" onSubmit={handleCreateInvoice} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <AppInput
+              label="Customer Code"
+              value={customerCode}
+              onChange={(e) => setCustomerCode(e.target.value)}
+              required
+            />
+            <AppInput
+              label="Customer Legal Entity"
+              value={customerName}
+              onChange={(e) => setCustomerName(e.target.value)}
+              required
+            />
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <AppInput
+              label="Total Invoice Amount ($)"
+              type="number"
+              value={totalAmount}
+              onChange={(e) => setTotalAmount(Number(e.target.value))}
+              required
+            />
+            <AppSelect
+              label="Payment Terms"
+              value={String(paymentTerms)}
+              onChange={(e) => setPaymentTerms(Number(e.target.value))}
+              options={[
+                { value: '30', label: 'Net 30 Days' },
+                { value: '60', label: 'Net 60 Days' },
+                { value: '15', label: 'Net 15 Days' },
+                { value: '0', label: 'Due Upon Receipt' }
+              ]}
+            />
+          </div>
+        </form>
+      </AppDialog>
     </PageContainer>
   );
 };

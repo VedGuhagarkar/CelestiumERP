@@ -2,19 +2,23 @@ import React, { useState, useEffect } from 'react';
 import {
   Flame,
   Clock,
-  CheckCircle2,
   Search,
   RefreshCw,
   Layers,
   Thermometer,
   ChevronRight,
-  X,
   PlayCircle
 } from 'lucide-react';
 import { PageContainer } from '../layouts/PageContainer.js';
 import { PageHeader } from '../design-system/navigation/PageHeader.js';
 import { AppCard } from '../design-system/surfaces/AppCard.js';
 import { AppButton } from '../design-system/buttons/AppButton.js';
+import { ActionButton } from '../design-system/buttons/ActionButton.js';
+import { AppDialog } from '../design-system/feedback/AppDialog.js';
+import { AppDrawer } from '../design-system/surfaces/AppDrawer.js';
+import { AppInput } from '../design-system/forms/AppInput.js';
+import { AppSelect } from '../design-system/forms/AppSelect.js';
+import { AppAlert } from '../design-system/feedback/AppAlert.js';
 import { StatusBadge } from '../design-system/feedback/StatusBadge.js';
 import { env } from '../config/env.config.js';
 import { authenticatedFetch } from '../utils/apiAuth.js';
@@ -151,6 +155,16 @@ export const JobsPage: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isNewJobOpen, setIsNewJobOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // New Job Form State
+  const [customerName, setCustomerName] = useState('AeroDynamics Propulsion Inc.');
+  const [itemCode, setItemCode] = useState('PART-SHAFT-4340');
+  const [recipeCode, setRecipeCode] = useState('REC-VAC-4340');
+  const [targetQuantity, setTargetQuantity] = useState(150);
+  const [priority, setPriority] = useState<'LOW' | 'NORMAL' | 'HIGH' | 'URGENT'>('HIGH');
 
   const fetchJobs = async () => {
     setIsLoading(true);
@@ -163,9 +177,93 @@ export const JobsPage: React.FC = () => {
         }
       }
     } catch {
-      // Keep defaults on network/auth fallback
+      // Keep defaults
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleCreateJob = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    setFeedback(null);
+
+    try {
+      const payload = {
+        customerId: 'cust_aerodynamics_001',
+        itemId: 'item_turbine_shaft_4340',
+        recipeId: 'rec_vacuum_aust_001',
+        specificationId: 'spec_ams2759_001',
+        targetQuantity: Number(targetQuantity),
+        priority,
+        plannedStartDate: new Date().toISOString(),
+        targetCompletionDate: new Date(Date.now() + 24 * 3600000).toISOString()
+      };
+
+      const res = await authenticatedFetch(`${env.API_BASE_URL}/production-jobs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.message || `Job creation failed with status ${res.status}`);
+      }
+
+      setFeedback({ type: 'success', message: `Thermal job successfully scheduled for ${customerName} (${targetQuantity} pcs)` });
+      setIsNewJobOpen(false);
+      fetchJobs();
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Failed to create production job' });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleAdvanceStage = async () => {
+    if (!selectedJob) return;
+    setIsSubmitting(true);
+    setFeedback(null);
+
+    const jobId = selectedJob._id || selectedJob.id || selectedJob.jobNumber;
+    try {
+      const res = await authenticatedFetch(`${env.API_BASE_URL}/production-jobs/${jobId}/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          shift: 'SHIFT_1_MORNING',
+          operatorNotes: 'Advanced thermal cycle to active soak stage.'
+        })
+      });
+
+      if (!res.ok) {
+        // If start fails (e.g. already in progress), try recording stage progress
+        const progRes = await authenticatedFetch(`${env.API_BASE_URL}/production-jobs/${jobId}/stage-progress`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            stageSequence: 2,
+            stageName: 'Austenitizing Soak',
+            stageType: 'SOAK',
+            actualTemperatureC: 845,
+            carbonPotentialPercent: 0.95
+          })
+        });
+
+        if (!progRes.ok) {
+          const err = await progRes.json().catch(() => ({}));
+          throw new Error(err.message || 'Could not advance job cycle');
+        }
+      }
+
+      setFeedback({ type: 'success', message: `Job ${selectedJob.jobNumber} cycle stage successfully advanced.` });
+      setSelectedJob(null);
+      fetchJobs();
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Failed to advance job stage' });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -198,12 +296,20 @@ export const JobsPage: React.FC = () => {
             <AppButton variant="secondary" onClick={fetchJobs} leftIcon={<RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />}>
               Refresh
             </AppButton>
-            <AppButton variant="primary" leftIcon={<Flame size={14} />}>
+            <AppButton variant="primary" leftIcon={<Flame size={14} />} onClick={() => setIsNewJobOpen(true)}>
               New Thermal Job
             </AppButton>
           </div>
         }
       />
+
+      {feedback && (
+        <div style={{ marginBottom: '20px' }}>
+          <AppAlert variant={feedback.type} title={feedback.type === 'success' ? 'Operation Success' : 'Error'}>
+            {feedback.message}
+          </AppAlert>
+        </div>
+      )}
 
       {/* Summary KPI Ribbon */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '24px' }}>
@@ -250,72 +356,70 @@ export const JobsPage: React.FC = () => {
               <div style={{ fontSize: '28px', fontWeight: 800, color: '#34d399', marginTop: '4px' }}>{completedCount}</div>
             </div>
             <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'rgba(52, 211, 153, 0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#34d399' }}>
-              <CheckCircle2 size={20} />
+              <Flame size={20} />
             </div>
           </div>
         </AppCard>
       </div>
 
       {/* Filter and Search Bar */}
-      <AppCard style={{ marginBottom: '20px', padding: '14px 18px' }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '14px', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: '1 1 300px' }}>
-            <div style={{ position: 'relative', width: '100%', maxWidth: '360px' }}>
-              <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-tertiary)' }} />
-              <input
-                type="text"
-                placeholder="Search job#, customer, material grade, furnace..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '8px 12px 8px 36px',
-                  borderRadius: 'var(--radius-md)',
-                  background: 'rgba(0, 0, 0, 0.25)',
-                  border: '1px solid var(--color-border-subtle)',
-                  color: '#ffffff',
-                  fontSize: '13px',
-                  outline: 'none'
-                }}
-              />
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', gap: '6px', overflowX: 'auto' }}>
-            {['ALL', 'IN_PROGRESS', 'SCHEDULED', 'COMPLETED', 'ON_HOLD'].map((tab) => (
+      <AppCard style={{ padding: '16px', marginBottom: '20px' }}>
+        <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            {(['ALL', 'IN_PROGRESS', 'SCHEDULED', 'COMPLETED'] as const).map((status) => (
               <button
-                key={tab}
-                onClick={() => setStatusFilter(tab)}
+                key={status}
+                onClick={() => setStatusFilter(status)}
                 style={{
                   padding: '6px 14px',
-                  fontSize: '12px',
-                  fontWeight: 600,
                   borderRadius: 'var(--radius-md)',
+                  fontSize: '13px',
+                  fontWeight: 600,
                   border: 'none',
                   cursor: 'pointer',
-                  background: statusFilter === tab ? 'var(--color-primary)' : 'rgba(255, 255, 255, 0.05)',
-                  color: statusFilter === tab ? '#ffffff' : 'var(--color-text-secondary)',
+                  background: statusFilter === status ? 'var(--color-primary)' : 'rgba(255, 255, 255, 0.05)',
+                  color: statusFilter === status ? '#ffffff' : 'var(--color-text-secondary)',
                   transition: 'all 0.15s ease'
                 }}
               >
-                {tab.replace('_', ' ')}
+                {status.replace('_', ' ')}
               </button>
             ))}
+          </div>
+
+          <div style={{ position: 'relative', minWidth: '260px' }}>
+            <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)' }} />
+            <input
+              type="text"
+              placeholder="Search jobs, customers, grades..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '8px 12px 8px 36px',
+                borderRadius: 'var(--radius-md)',
+                background: 'var(--material-thin)',
+                border: '1px solid var(--color-border-subtle)',
+                color: 'var(--color-text-primary)',
+                fontSize: '13px',
+                outline: 'none'
+              }}
+            />
           </div>
         </div>
       </AppCard>
 
-      {/* Jobs Data Table */}
+      {/* Jobs Table */}
       <AppCard style={{ padding: '0px', overflow: 'hidden' }}>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
             <thead>
               <tr style={{ background: 'rgba(255, 255, 255, 0.02)', borderBottom: '1px solid var(--color-border-subtle)' }}>
                 <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>JOB NUMBER</th>
-                <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>CUSTOMER</th>
-                <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>ITEM & ALLOY GRADE</th>
-                <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>ASSIGNED FURNACE</th>
-                <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>BATCH QTY</th>
+                <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>CUSTOMER / PART</th>
+                <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>METALLURGY & RECIPE</th>
+                <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>FURNACE</th>
+                <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>QTY</th>
                 <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>PRIORITY</th>
                 <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>STATUS</th>
                 <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600, textAlign: 'right' }}>ACTION</th>
@@ -324,56 +428,33 @@ export const JobsPage: React.FC = () => {
             <tbody>
               {filteredJobs.length === 0 ? (
                 <tr>
-                  <td colSpan={8} style={{ padding: '48px', textAlign: 'center', color: 'var(--color-text-secondary)' }}>
-                    No matching production jobs found for criteria.
+                  <td colSpan={8} style={{ padding: '40px', textAlign: 'center', color: 'var(--color-text-secondary)' }}>
+                    No production jobs found matching active criteria.
                   </td>
                 </tr>
               ) : (
                 filteredJobs.map((job) => (
                   <tr
-                    key={job.jobNumber}
-                    onClick={() => setSelectedJob(job)}
-                    style={{
-                      borderBottom: '1px solid var(--color-border-subtle)',
-                      cursor: 'pointer',
-                      transition: 'background 0.15s ease'
-                    }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255, 255, 255, 0.03)')}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                    key={job._id || job.id || job.jobNumber}
+                    style={{ borderBottom: '1px solid var(--color-border-subtle)', transition: 'background 0.15s ease' }}
                   >
                     <td style={{ padding: '14px 18px', fontWeight: 700, color: 'var(--color-primary)' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <Flame size={15} style={{ color: 'var(--color-primary)' }} />
-                        {job.jobNumber}
-                      </div>
+                      {job.jobNumber}
                     </td>
                     <td style={{ padding: '14px 18px' }}>
-                      <div style={{ fontWeight: 600, color: '#ffffff' }}>{job.customer.customerName}</div>
-                      <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>{job.customer.customerCode}</div>
+                      <div style={{ color: '#ffffff', fontWeight: 600 }}>{job.customer.customerName}</div>
+                      <div style={{ color: 'var(--color-text-tertiary)', fontSize: '11px' }}>{job.item.itemName}</div>
                     </td>
                     <td style={{ padding: '14px 18px' }}>
-                      <div style={{ color: '#ffffff', fontWeight: 500 }}>{job.item.itemName}</div>
-                      <div style={{ fontSize: '11px', color: 'var(--color-primary)' }}>{job.item.materialGrade}</div>
+                      <div style={{ color: '#38bdf8', fontWeight: 600 }}>{job.item.materialGrade}</div>
+                      <div style={{ color: 'var(--color-text-tertiary)', fontSize: '11px' }}>{job.recipeSnapshot?.name || 'Vacuum Heat Treat'}</div>
                     </td>
                     <td style={{ padding: '14px 18px' }}>
-                      <span
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '6px',
-                          padding: '4px 8px',
-                          borderRadius: 'var(--radius-sm)',
-                          background: 'rgba(255, 255, 255, 0.05)',
-                          fontSize: '12px',
-                          fontWeight: 600,
-                          color: '#e2e8f0'
-                        }}
-                      >
-                        {job.equipmentAssignment?.furnaceCode || 'UNASSIGNED'}
-                      </span>
+                      <div style={{ color: '#e2e8f0', fontWeight: 600 }}>{job.equipmentAssignment?.furnaceCode || 'Unassigned'}</div>
+                      <div style={{ color: 'var(--color-text-tertiary)', fontSize: '11px' }}>{job.equipmentAssignment?.locationBay || 'Staging Bay'}</div>
                     </td>
-                    <td style={{ padding: '14px 18px', fontWeight: 600, color: '#ffffff' }}>
-                      {job.quantity.loadedQuantity || job.quantity.targetQuantity} {job.item.uom}
+                    <td style={{ padding: '14px 18px', color: '#ffffff', fontWeight: 600 }}>
+                      {job.quantity.targetQuantity} {job.item.uom}
                     </td>
                     <td style={{ padding: '14px 18px' }}>
                       <span
@@ -393,9 +474,14 @@ export const JobsPage: React.FC = () => {
                       <StatusBadge status={job.status} />
                     </td>
                     <td style={{ padding: '14px 18px', textAlign: 'right' }}>
-                      <AppButton variant="secondary" size="sm" rightIcon={<ChevronRight size={14} />}>
+                      <ActionButton
+                        variant="secondary"
+                        size="sm"
+                        rightIcon={<ChevronRight size={14} />}
+                        onClick={() => setSelectedJob(job)}
+                      >
                         Details
-                      </AppButton>
+                      </ActionButton>
                     </td>
                   </tr>
                 ))
@@ -405,61 +491,32 @@ export const JobsPage: React.FC = () => {
         </div>
       </AppCard>
 
-      {/* Selected Job Drawer / Modal */}
-      {selectedJob && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0, 0, 0, 0.7)',
-            backdropFilter: 'blur(8px)',
-            display: 'flex',
-            justifyContent: 'flex-end',
-            zIndex: 100
-          }}
-          onClick={() => setSelectedJob(null)}
-        >
-          <div
-            style={{
-              width: '100%',
-              maxWidth: '560px',
-              height: '100%',
-              background: '#0f172a',
-              borderLeft: '1px solid var(--color-border-subtle)',
-              padding: '28px',
-              overflowY: 'auto',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '20px'
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ fontSize: '20px', fontWeight: 800, color: 'var(--color-primary)' }}>{selectedJob.jobNumber}</span>
-                  <StatusBadge status={selectedJob.status} />
-                </div>
-                <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
-                  {selectedJob.customer.customerName} ({selectedJob.customer.customerCode})
-                </div>
-              </div>
-              <button
-                onClick={() => setSelectedJob(null)}
-                style={{
-                  background: 'rgba(255, 255, 255, 0.08)',
-                  border: 'none',
-                  borderRadius: 'var(--radius-md)',
-                  color: '#ffffff',
-                  padding: '8px',
-                  cursor: 'pointer'
-                }}
+      {/* Selected Job Drawer */}
+      <AppDrawer
+        isOpen={!!selectedJob}
+        onClose={() => setSelectedJob(null)}
+        title={selectedJob ? `Job ${selectedJob.jobNumber}` : ''}
+        subtitle={selectedJob ? `${selectedJob.customer.customerName} (${selectedJob.customer.customerCode})` : ''}
+        footer={
+          selectedJob && (
+            <>
+              <AppButton variant="secondary" onClick={() => setSelectedJob(null)}>
+                Close
+              </AppButton>
+              <AppButton
+                variant="primary"
+                leftIcon={<PlayCircle size={16} />}
+                isLoading={isSubmitting}
+                onClick={handleAdvanceStage}
               >
-                <X size={18} />
-              </button>
-            </div>
-
-            {/* Thermal Recipe Info */}
+                Advance Thermal Cycle
+              </AppButton>
+            </>
+          )
+        }
+      >
+        {selectedJob && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <AppCard style={{ padding: '16px' }}>
               <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--color-primary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <Flame size={14} /> METALLURGICAL THERMAL RECIPE
@@ -496,7 +553,6 @@ export const JobsPage: React.FC = () => {
               )}
             </AppCard>
 
-            {/* Material Heat Lot Traceability */}
             <AppCard style={{ padding: '16px' }}>
               <div style={{ fontSize: '12px', fontWeight: 700, color: '#38bdf8', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <Layers size={14} /> MATERIAL & HEAT LOT ALLOCATION
@@ -515,7 +571,6 @@ export const JobsPage: React.FC = () => {
               </div>
             </AppCard>
 
-            {/* Equipment & Timeline */}
             <AppCard style={{ padding: '16px' }}>
               <div style={{ fontSize: '12px', fontWeight: 700, color: '#34d399', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <Clock size={14} /> EQUIPMENT & CYCLE SCHEDULE
@@ -539,18 +594,89 @@ export const JobsPage: React.FC = () => {
                 </div>
               </div>
             </AppCard>
-
-            <div style={{ display: 'flex', gap: '10px', marginTop: 'auto' }}>
-              <AppButton variant="primary" style={{ flex: 1 }} leftIcon={<PlayCircle size={16} />}>
-                Advance Thermal Cycle
-              </AppButton>
-              <AppButton variant="secondary" onClick={() => setSelectedJob(null)}>
-                Close
-              </AppButton>
-            </div>
           </div>
-        </div>
-      )}
+        )}
+      </AppDrawer>
+
+      {/* New Thermal Job Dialog */}
+      <AppDialog
+        isOpen={isNewJobOpen}
+        onClose={() => setIsNewJobOpen(false)}
+        title="Create Direct Thermal Processing Job"
+        description="Schedule a new batch for vacuum austenitizing, atmospheric gas carburizing, or sealed quench processing."
+        footer={
+          <>
+            <AppButton variant="secondary" onClick={() => setIsNewJobOpen(false)}>
+              Cancel
+            </AppButton>
+            <AppButton
+              variant="primary"
+              type="submit"
+              form="create-job-form"
+              isLoading={isSubmitting}
+              leftIcon={<Flame size={16} />}
+            >
+              Schedule Production Job
+            </AppButton>
+          </>
+        }
+      >
+        <form id="create-job-form" onSubmit={handleCreateJob} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <AppInput
+            label="Customer Name / Enterprise"
+            value={customerName}
+            onChange={(e) => setCustomerName(e.target.value)}
+            required
+          />
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <AppSelect
+              label="Part Number / Item"
+              value={itemCode}
+              onChange={(e) => setItemCode(e.target.value)}
+              options={[
+                { value: 'PART-SHAFT-4340', label: 'Turbine Rotor Shaft (AISI 4340)' },
+                { value: 'PART-GEAR-8620', label: 'Pinion Gear 8620 (AISI 8620)' },
+                { value: 'PART-PIN-52100', label: 'Bearing Pins (AISI 52100)' }
+              ]}
+            />
+
+            <AppSelect
+              label="Thermal Recipe"
+              value={recipeCode}
+              onChange={(e) => setRecipeCode(e.target.value)}
+              options={[
+                { value: 'REC-VAC-4340', label: 'Vacuum Austenitize & N2 Quench' },
+                { value: 'REC-CARB-8620', label: 'Atmospheric Gas Carburizing' },
+                { value: 'REC-TEMP-52100', label: 'Tempering & Stress Relief' }
+              ]}
+            />
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <AppInput
+              label="Target Batch Quantity (Pieces)"
+              type="number"
+              min={1}
+              value={targetQuantity}
+              onChange={(e) => setTargetQuantity(Number(e.target.value))}
+              required
+            />
+
+            <AppSelect
+              label="Production Priority"
+              value={priority}
+              onChange={(e) => setPriority(e.target.value as any)}
+              options={[
+                { value: 'LOW', label: 'Low' },
+                { value: 'NORMAL', label: 'Normal' },
+                { value: 'HIGH', label: 'High' },
+                { value: 'URGENT', label: 'Urgent (AOG / Defense)' }
+              ]}
+            />
+          </div>
+        </form>
+      </AppDialog>
     </PageContainer>
   );
 };

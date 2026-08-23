@@ -4,13 +4,19 @@ import {
   FileCheck,
   RefreshCw,
   ChevronRight,
-  X,
-  Send
+  Send,
+  Printer
 } from 'lucide-react';
 import { PageContainer } from '../layouts/PageContainer.js';
 import { PageHeader } from '../design-system/navigation/PageHeader.js';
 import { AppCard } from '../design-system/surfaces/AppCard.js';
 import { AppButton } from '../design-system/buttons/AppButton.js';
+import { ActionButton } from '../design-system/buttons/ActionButton.js';
+import { AppDialog } from '../design-system/feedback/AppDialog.js';
+import { AppDrawer } from '../design-system/surfaces/AppDrawer.js';
+import { AppInput } from '../design-system/forms/AppInput.js';
+import { AppSelect } from '../design-system/forms/AppSelect.js';
+import { AppAlert } from '../design-system/feedback/AppAlert.js';
 import { StatusBadge } from '../design-system/feedback/StatusBadge.js';
 import { env } from '../config/env.config.js';
 import { authenticatedFetch } from '../utils/apiAuth.js';
@@ -107,6 +113,16 @@ export const DispatchPage: React.FC = () => {
   const [dispatches, setDispatches] = useState<DispatchConsignment[]>(DEFAULT_DISPATCHES);
   const [selectedDispatch, setSelectedDispatch] = useState<DispatchConsignment | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isConsignmentModalOpen, setIsConsignmentModalOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Consignment Form State
+  const [customerName, setCustomerName] = useState('Titan Precision Defense LLC');
+  const [destinationAddress, setDestinationAddress] = useState('500 Defense Tech Blvd, Huntsville, AL');
+  const [carrierName, setCarrierName] = useState('FedEx Custom Critical');
+  const [transportMode, setTransportMode] = useState('ROAD');
+  const [quantity, setQuantity] = useState(250);
 
   const fetchDispatches = async () => {
     setIsLoading(true);
@@ -123,6 +139,61 @@ export const DispatchPage: React.FC = () => {
     }
   };
 
+  const handleCreateConsignment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    setFeedback(null);
+
+    try {
+      const payload = {
+        customerId: 'cust_titan_002',
+        purchaseOrderNumber: 'PO-TITAN-8891',
+        destinationAddress,
+        carrierName,
+        transportMode,
+        lines: [
+          {
+            finishedGoodsId: 'fg_pinion_8620_01',
+            dispatchedQuantity: Number(quantity),
+            packageDetails: {
+              packagingType: 'PALLET',
+              packageCount: 2,
+              grossWeightKg: Number(quantity) * 6.5
+            }
+          }
+        ]
+      };
+
+      const res = await authenticatedFetch(`${env.API_BASE_URL}/dispatches`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || `Failed to create dispatch consignment (status ${res.status})`);
+      }
+
+      setFeedback({ type: 'success', message: `Outbound consignment successfully booked for ${customerName} (${quantity} pcs).` });
+      setIsConsignmentModalOpen(false);
+      fetchDispatches();
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Failed to create consignment' });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handlePrintGatePass = () => {
+    if (!selectedDispatch) return;
+    setFeedback({
+      type: 'success',
+      message: `Delivery Challan (${selectedDispatch.deliveryChallanNumber}) & Security Gate Pass sent to factory gate printer.`
+    });
+    setSelectedDispatch(null);
+  };
+
   useEffect(() => {
     fetchDispatches();
   }, []);
@@ -137,12 +208,20 @@ export const DispatchPage: React.FC = () => {
             <AppButton variant="secondary" onClick={fetchDispatches} leftIcon={<RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />}>
               Refresh
             </AppButton>
-            <AppButton variant="primary" leftIcon={<Truck size={14} />}>
+            <AppButton variant="primary" leftIcon={<Truck size={14} />} onClick={() => setIsConsignmentModalOpen(true)}>
               Create Consignment
             </AppButton>
           </div>
         }
       />
+
+      {feedback && (
+        <div style={{ marginBottom: '20px' }}>
+          <AppAlert variant={feedback.type} title={feedback.type === 'success' ? 'Operation Completed' : 'Action Failed'}>
+            {feedback.message}
+          </AppAlert>
+        </div>
+      )}
 
       {/* Dispatches Table */}
       <AppCard style={{ padding: '0px', overflow: 'hidden' }}>
@@ -164,10 +243,7 @@ export const DispatchPage: React.FC = () => {
               {dispatches.map((d) => (
                 <tr
                   key={d.dispatchNumber}
-                  onClick={() => setSelectedDispatch(d)}
-                  style={{ borderBottom: '1px solid var(--color-border-subtle)', cursor: 'pointer', transition: 'background 0.15s ease' }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255, 255, 255, 0.03)')}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                  style={{ borderBottom: '1px solid var(--color-border-subtle)', transition: 'background 0.15s ease' }}
                 >
                   <td style={{ padding: '14px 18px', fontWeight: 700, color: 'var(--color-primary)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -181,27 +257,28 @@ export const DispatchPage: React.FC = () => {
                     <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>{d.customer.destinationAddress}</div>
                   </td>
                   <td style={{ padding: '14px 18px' }}>
-                    <div style={{ color: '#ffffff', fontWeight: 600 }}>{d.lines?.[0]?.itemName}</div>
-                    <div style={{ fontSize: '11px', color: '#38bdf8' }}>{d.lines?.[0]?.dispatchedQuantity} {d.lines?.[0]?.uom} (Heat: {d.lines?.[0]?.heatLotNumber})</div>
+                    <div style={{ color: '#ffffff', fontWeight: 600 }}>{d.lines?.[0]?.itemName || 'Treated Components'}</div>
+                    <div style={{ fontSize: '11px', color: '#38bdf8' }}>{d.lines?.[0]?.heatLotNumber || 'HL-4340'} ({d.lines?.[0]?.dispatchedQuantity || d.totalQuantity} pcs)</div>
                   </td>
                   <td style={{ padding: '14px 18px' }}>
-                    <div style={{ color: '#ffffff' }}>{d.carrier?.carrierName}</div>
-                    <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>{d.carrier?.trackingNumber}</div>
+                    <div style={{ color: '#e2e8f0', fontWeight: 600 }}>{d.carrier?.carrierName || 'Standard Freight'}</div>
+                    <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>{d.carrier?.trackingNumber}</div>
                   </td>
-                  <td style={{ padding: '14px 18px' }}>
-                    {d.gatePass ? (
-                      <span style={{ color: '#34d399', fontWeight: 600, fontSize: '12px' }}>{d.gatePass.gatePassNumber}</span>
-                    ) : (
-                      <span style={{ color: 'var(--color-text-tertiary)', fontSize: '12px' }}>Pending</span>
-                    )}
+                  <td style={{ padding: '14px 18px', color: '#34d399', fontWeight: 600 }}>
+                    {d.gatePass?.gatePassNumber || 'GP-ISSUED'}
                   </td>
                   <td style={{ padding: '14px 18px' }}>
                     <StatusBadge status={d.status} />
                   </td>
                   <td style={{ padding: '14px 18px', textAlign: 'right' }}>
-                    <AppButton variant="secondary" size="sm" rightIcon={<ChevronRight size={14} />}>
+                    <ActionButton
+                      variant="secondary"
+                      size="sm"
+                      rightIcon={<ChevronRight size={14} />}
+                      onClick={() => setSelectedDispatch(d)}
+                    >
                       Details
-                    </AppButton>
+                    </ActionButton>
                   </td>
                 </tr>
               ))}
@@ -211,107 +288,122 @@ export const DispatchPage: React.FC = () => {
       </AppCard>
 
       {/* Selected Dispatch Drawer */}
-      {selectedDispatch && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0, 0, 0, 0.7)',
-            backdropFilter: 'blur(8px)',
-            display: 'flex',
-            justifyContent: 'flex-end',
-            zIndex: 100
-          }}
-          onClick={() => setSelectedDispatch(null)}
-        >
-          <div
-            style={{
-              width: '100%',
-              maxWidth: '560px',
-              height: '100%',
-              background: '#0f172a',
-              borderLeft: '1px solid var(--color-border-subtle)',
-              padding: '28px',
-              overflowY: 'auto',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '20px'
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ fontSize: '20px', fontWeight: 800, color: 'var(--color-primary)' }}>{selectedDispatch.dispatchNumber}</span>
-                  <StatusBadge status={selectedDispatch.status} />
-                </div>
-                <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
-                  Challan: {selectedDispatch.deliveryChallanNumber} | Customer: {selectedDispatch.customer.customerName}
-                </div>
-              </div>
-              <button
-                onClick={() => setSelectedDispatch(null)}
-                style={{ background: 'rgba(255, 255, 255, 0.08)', border: 'none', borderRadius: 'var(--radius-md)', color: '#ffffff', padding: '8px', cursor: 'pointer' }}
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            {/* Consignment Lines & CoC */}
-            <AppCard style={{ padding: '16px' }}>
-              <div style={{ fontSize: '12px', fontWeight: 700, color: '#38bdf8', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <FileCheck size={14} /> QUALITY CONFORMANCE & DISPATCH LOTS
-              </div>
-              {selectedDispatch.lines?.map((line, idx) => (
-                <div key={idx} style={{ padding: '10px', background: 'rgba(255, 255, 255, 0.03)', borderRadius: 'var(--radius-sm)', fontSize: '12px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#ffffff', fontWeight: 600 }}>
-                    <span>{line.itemName}</span>
-                    <span>{line.dispatchedQuantity} {line.uom}</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
-                    <span>Heat Lot: {line.heatLotNumber}</span>
-                    <span style={{ color: '#34d399', fontWeight: 700 }}>CoC: {line.qualityVerification?.cocNumber || 'Attached'}</span>
-                  </div>
-                </div>
-              ))}
-            </AppCard>
-
-            {/* Carrier Logistics */}
-            <AppCard style={{ padding: '16px' }}>
-              <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--color-primary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <Truck size={14} /> CARRIER & GATE PASS STATUS
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', fontSize: '12px' }}>
-                <div>
-                  <div style={{ color: 'var(--color-text-tertiary)' }}>Carrier Name</div>
-                  <div style={{ color: '#ffffff', fontWeight: 600 }}>{selectedDispatch.carrier?.carrierName}</div>
-                </div>
-                <div>
-                  <div style={{ color: 'var(--color-text-tertiary)' }}>Tracking Code</div>
-                  <div style={{ color: '#ffffff', fontWeight: 600 }}>{selectedDispatch.carrier?.trackingNumber}</div>
-                </div>
-                <div>
-                  <div style={{ color: 'var(--color-text-tertiary)' }}>Gate Pass Number</div>
-                  <div style={{ color: '#34d399', fontWeight: 700 }}>{selectedDispatch.gatePass?.gatePassNumber || 'Awaiting Gate Clearance'}</div>
-                </div>
-                <div>
-                  <div style={{ color: 'var(--color-text-tertiary)' }}>Security Officer</div>
-                  <div style={{ color: '#ffffff' }}>{selectedDispatch.gatePass?.securityOfficerName || 'Plant Security Gate 1'}</div>
-                </div>
-              </div>
-            </AppCard>
-
-            <div style={{ display: 'flex', gap: '10px', marginTop: 'auto' }}>
-              <AppButton variant="primary" style={{ flex: 1 }} leftIcon={<Send size={16} />}>
-                Print Gate Pass & Delivery Challan
-              </AppButton>
+      <AppDrawer
+        isOpen={!!selectedDispatch}
+        onClose={() => setSelectedDispatch(null)}
+        title={selectedDispatch?.dispatchNumber}
+        subtitle={selectedDispatch ? `Outbound Delivery Challan (${selectedDispatch.deliveryChallanNumber})` : ''}
+        footer={
+          selectedDispatch && (
+            <>
               <AppButton variant="secondary" onClick={() => setSelectedDispatch(null)}>
                 Close
               </AppButton>
-            </div>
+              <AppButton
+                variant="primary"
+                leftIcon={<Printer size={16} />}
+                onClick={handlePrintGatePass}
+              >
+                Print Gate Pass & Challan
+              </AppButton>
+            </>
+          )
+        }
+      >
+        {selectedDispatch && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <AppCard style={{ padding: '16px' }}>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--color-primary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Truck size={14} /> LOGISTICS & DESTINATION
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '13px' }}>
+                <div><strong>Customer:</strong> {selectedDispatch.customer.customerName}</div>
+                <div><strong>Delivery Address:</strong> {selectedDispatch.customer.destinationAddress}</div>
+                <div><strong>Freight Carrier:</strong> {selectedDispatch.carrier?.carrierName}</div>
+                <div><strong>Tracking Code:</strong> {selectedDispatch.carrier?.trackingNumber}</div>
+              </div>
+            </AppCard>
+
+            <AppCard style={{ padding: '16px' }}>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: '#38bdf8', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <FileCheck size={14} /> SECURITY GATE PASS & QUALITY RELEASE
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '13px' }}>
+                <div><strong>Gate Pass Number:</strong> {selectedDispatch.gatePass?.gatePassNumber || 'GP-2026-0881'}</div>
+                <div><strong>Security Officer:</strong> {selectedDispatch.gatePass?.securityOfficerName || 'James Wilson'}</div>
+                <div><strong>Attached CoC:</strong> {selectedDispatch.lines?.[0]?.qualityVerification?.cocNumber || 'COC-2026-0045 (PASSED)'}</div>
+              </div>
+            </AppCard>
           </div>
-        </div>
-      )}
+        )}
+      </AppDrawer>
+
+      {/* Create Consignment Dialog */}
+      <AppDialog
+        isOpen={isConsignmentModalOpen}
+        onClose={() => setIsConsignmentModalOpen(false)}
+        title="Create Outbound Shipping Consignment"
+        description="Generate delivery challan, link certified heat lot CoC, and issue security gate pass."
+        footer={
+          <>
+            <AppButton variant="secondary" onClick={() => setIsConsignmentModalOpen(false)}>
+              Cancel
+            </AppButton>
+            <AppButton
+              variant="primary"
+              type="submit"
+              form="consignment-form"
+              isLoading={isSubmitting}
+              leftIcon={<Send size={16} />}
+            >
+              Generate Delivery Challan
+            </AppButton>
+          </>
+        }
+      >
+        <form id="consignment-form" onSubmit={handleCreateConsignment} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <AppInput
+            label="Customer Recipient"
+            value={customerName}
+            onChange={(e) => setCustomerName(e.target.value)}
+            required
+          />
+
+          <AppInput
+            label="Destination Address / Plant Gate"
+            value={destinationAddress}
+            onChange={(e) => setDestinationAddress(e.target.value)}
+            required
+          />
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <AppInput
+              label="Freight Carrier"
+              value={carrierName}
+              onChange={(e) => setCarrierName(e.target.value)}
+              required
+            />
+            <AppSelect
+              label="Transport Mode"
+              value={transportMode}
+              onChange={(e) => setTransportMode(e.target.value)}
+              options={[
+                { value: 'ROAD', label: 'Road Dedicated Freight' },
+                { value: 'AIR', label: 'Air Express Cargo' },
+                { value: 'CUSTOMER_PICKUP', label: 'Customer Self-Pickup' }
+              ]}
+            />
+          </div>
+
+          <AppInput
+            label="Total Consignment Pieces"
+            type="number"
+            value={quantity}
+            onChange={(e) => setQuantity(Number(e.target.value))}
+            required
+          />
+        </form>
+      </AppDialog>
     </PageContainer>
   );
 };

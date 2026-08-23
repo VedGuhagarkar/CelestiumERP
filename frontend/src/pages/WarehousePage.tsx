@@ -8,6 +8,10 @@ import { PageContainer } from '../layouts/PageContainer.js';
 import { PageHeader } from '../design-system/navigation/PageHeader.js';
 import { AppCard } from '../design-system/surfaces/AppCard.js';
 import { AppButton } from '../design-system/buttons/AppButton.js';
+import { AppDialog } from '../design-system/feedback/AppDialog.js';
+import { AppInput } from '../design-system/forms/AppInput.js';
+import { AppSelect } from '../design-system/forms/AppSelect.js';
+import { AppAlert } from '../design-system/feedback/AppAlert.js';
 import { env } from '../config/env.config.js';
 import { authenticatedFetch } from '../utils/apiAuth.js';
 
@@ -33,7 +37,7 @@ const DEFAULT_WAREHOUSES: WarehouseEntity[] = [
     id: 'wh_01',
     warehouseCode: 'WH-MAIN-01',
     name: 'Main Plant Thermal Processing Warehouse',
-    warehouseType: 'PLANT_STORAGE',
+    warehouseType: 'MAIN_PLANT',
     totalStorageCapacityKg: 50000,
     currentUtilizationPercent: 62.5,
     bays: [
@@ -47,7 +51,7 @@ const DEFAULT_WAREHOUSES: WarehouseEntity[] = [
     id: 'wh_02',
     warehouseCode: 'WH-FG-01',
     name: 'Finished Treated Goods & Outbound Shipping Warehouse',
-    warehouseType: 'FINISHED_GOODS',
+    warehouseType: 'FINISHED_STORE',
     totalStorageCapacityKg: 30000,
     currentUtilizationPercent: 38.0,
     bays: [
@@ -60,6 +64,15 @@ const DEFAULT_WAREHOUSES: WarehouseEntity[] = [
 export const WarehousePage: React.FC = () => {
   const [warehouses, setWarehouses] = useState<WarehouseEntity[]>(DEFAULT_WAREHOUSES);
   const [isLoading, setIsLoading] = useState(false);
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Add Warehouse Bay Form State
+  const [code, setCode] = useState('WH-RAW-02');
+  const [name, setName] = useState('Secondary Alloy Raw Stock Yard');
+  const [type, setType] = useState('RAW_MATERIAL_YARD');
+  const [plantArea, setPlantArea] = useState('North Plant Yard');
 
   const fetchWarehouses = async () => {
     setIsLoading(true);
@@ -67,12 +80,60 @@ export const WarehousePage: React.FC = () => {
       const res = await authenticatedFetch(`${env.API_BASE_URL}/warehouses`);
       if (res.ok) {
         const json = await res.json();
-        if (json.data && Array.isArray(json.data) && json.data.length > 0) setWarehouses(json.data);
+        if (json.data && Array.isArray(json.data) && json.data.length > 0) {
+          setWarehouses(
+            json.data.map((w: any) => ({
+              warehouseCode: w.code || w.warehouseCode || 'WH-01',
+              name: w.name,
+              warehouseType: w.type || w.warehouseType || 'MAIN_PLANT',
+              totalStorageCapacityKg: w.totalStorageCapacityKg || 40000,
+              currentUtilizationPercent: w.currentUtilizationPercent || 45,
+              bays: w.bays || [
+                { bayCode: `${w.code || 'BAY'}-01`, name: 'Standard Staging Bay', bayType: 'WIP_STAGING_BAY', currentOccupancyKg: 2000, capacityKg: 10000 }
+              ]
+            }))
+          );
+        }
       }
     } catch {
-      // Fallback to default
+      // Fallback
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleAddWarehouse = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    setFeedback(null);
+
+    try {
+      const payload = {
+        code,
+        name,
+        type,
+        plantArea,
+        description: 'Designated metallurgical staging and raw material storage location.'
+      };
+
+      const res = await authenticatedFetch(`${env.API_BASE_URL}/warehouses`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || `Failed to add warehouse storage bay (status ${res.status})`);
+      }
+
+      setFeedback({ type: 'success', message: `Warehouse / Bay ${code} (${name}) successfully provisioned.` });
+      setIsAddModalOpen(false);
+      fetchWarehouses();
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Failed to create warehouse bay' });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -90,12 +151,20 @@ export const WarehousePage: React.FC = () => {
             <AppButton variant="secondary" onClick={fetchWarehouses} leftIcon={<RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />}>
               Refresh
             </AppButton>
-            <AppButton variant="primary" leftIcon={<Warehouse size={14} />}>
+            <AppButton variant="primary" leftIcon={<Warehouse size={14} />} onClick={() => setIsAddModalOpen(true)}>
               Add Storage Bay
             </AppButton>
           </div>
         }
       />
+
+      {feedback && (
+        <div style={{ marginBottom: '20px' }}>
+          <AppAlert variant={feedback.type} title={feedback.type === 'success' ? 'Operation Success' : 'Error'}>
+            {feedback.message}
+          </AppAlert>
+        </div>
+      )}
 
       {/* Warehouses Grid */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -121,7 +190,7 @@ export const WarehousePage: React.FC = () => {
             {/* Storage Bays Sub-Grid */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '14px' }}>
               {wh.bays?.map((bay) => {
-                const occupancyPercent = Math.round((bay.currentOccupancyKg / bay.capacityKg) * 100);
+                const occupancyPercent = Math.round((bay.currentOccupancyKg / (bay.capacityKg || 1)) * 100);
                 const isQuarantine = bay.bayType === 'QUARANTINE_BAY';
 
                 return (
@@ -145,7 +214,7 @@ export const WarehousePage: React.FC = () => {
                     <div style={{ marginTop: '12px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--color-text-secondary)', marginBottom: '4px' }}>
                         <span>Occupancy</span>
-                        <span>{bay.currentOccupancyKg.toLocaleString()} / {bay.capacityKg.toLocaleString()} KG ({occupancyPercent}%)</span>
+                        <span>{bay.currentOccupancyKg.toLocaleString()} / {(bay.capacityKg || 10000).toLocaleString()} KG ({occupancyPercent}%)</span>
                       </div>
                       <div style={{ width: '100%', height: '6px', background: 'rgba(255, 255, 255, 0.08)', borderRadius: '3px', overflow: 'hidden' }}>
                         <div
@@ -165,6 +234,67 @@ export const WarehousePage: React.FC = () => {
           </AppCard>
         ))}
       </div>
+
+      {/* Add Storage Bay Dialog */}
+      <AppDialog
+        isOpen={isAddModalOpen}
+        onClose={() => setIsAddModalOpen(false)}
+        title="Add Storage Facility / Bay"
+        description="Register a new storage bay, raw yard, or quarantine containment zone."
+        footer={
+          <>
+            <AppButton variant="secondary" onClick={() => setIsAddModalOpen(false)}>
+              Cancel
+            </AppButton>
+            <AppButton
+              variant="primary"
+              type="submit"
+              form="add-warehouse-form"
+              isLoading={isSubmitting}
+              leftIcon={<Warehouse size={16} />}
+            >
+              Save Storage Bay
+            </AppButton>
+          </>
+        }
+      >
+        <form id="add-warehouse-form" onSubmit={handleAddWarehouse} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <AppInput
+              label="Warehouse Code"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              required
+            />
+            <AppInput
+              label="Facility Name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+            />
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <AppSelect
+              label="Facility Type"
+              value={type}
+              onChange={(e) => setType(e.target.value)}
+              options={[
+                { value: 'RAW_MATERIAL_YARD', label: 'Raw Material Storage Yard' },
+                { value: 'MAIN_PLANT', label: 'Main Heat Treatment Plant' },
+                { value: 'FINISHED_STORE', label: 'Finished Treated Goods Store' },
+                { value: 'GAS_YARD', label: 'Process Gas & Bulk N2 Yard' }
+              ]}
+            />
+            <AppInput
+              label="Plant Area / Bay"
+              value={plantArea}
+              onChange={(e) => setPlantArea(e.target.value)}
+              required
+            />
+          </div>
+        </form>
+      </AppDialog>
     </PageContainer>
   );
 };

@@ -5,6 +5,7 @@ export type AlertType = 'info' | 'success' | 'warning' | 'error';
 
 export interface AppAlertProps {
   type?: AlertType;
+  variant?: AlertType;
   title?: string;
   children: React.ReactNode;
   onClose?: () => void;
@@ -13,13 +14,15 @@ export interface AppAlertProps {
 
 export const AppAlert: React.FC<AppAlertProps> = ({
   type = 'info',
+  variant,
   title,
   children,
   onClose,
   className = ''
 }) => {
+  const alertType = variant || type;
   const getStyles = () => {
-    switch (type) {
+    switch (alertType) {
       case 'success':
         return {
           bg: 'var(--color-success-subtle)',

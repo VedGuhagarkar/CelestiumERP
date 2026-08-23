@@ -7,6 +7,10 @@ import { PageContainer } from '../layouts/PageContainer.js';
 import { PageHeader } from '../design-system/navigation/PageHeader.js';
 import { AppCard } from '../design-system/surfaces/AppCard.js';
 import { AppButton } from '../design-system/buttons/AppButton.js';
+import { AppDialog } from '../design-system/feedback/AppDialog.js';
+import { AppInput } from '../design-system/forms/AppInput.js';
+import { AppSelect } from '../design-system/forms/AppSelect.js';
+import { AppAlert } from '../design-system/feedback/AppAlert.js';
 import { StatusBadge } from '../design-system/feedback/StatusBadge.js';
 import { env } from '../config/env.config.js';
 import { authenticatedFetch } from '../utils/apiAuth.js';
@@ -47,22 +51,73 @@ const DEFAULT_STAFF: StaffMember[] = [
 ];
 
 export const WorkforcePage: React.FC = () => {
-  const [shifts] = useState<Shift[]>(DEFAULT_SHIFTS);
-  const [staff, setStaff] = useState<StaffMember[]>(DEFAULT_STAFF);
+  const [shifts, setShifts] = useState<Shift[]>(DEFAULT_SHIFTS);
+  const [staff] = useState<StaffMember[]>(DEFAULT_STAFF);
   const [isLoading, setIsLoading] = useState(false);
+  const [isClockInOpen, setIsClockInOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Form state
+  const [employeeId, setEmployeeId] = useState('usr_03');
+  const [shiftCode, setShiftCode] = useState('SHIFT-MORNING-A');
+  const [clockInNotes, setClockInNotes] = useState('Normal shift roster intake');
 
   const fetchWorkforceData = async () => {
     setIsLoading(true);
     try {
-      const res = await authenticatedFetch(`${env.API_BASE_URL}/attendance/status`);
-      if (res.ok) {
-        const json = await res.json();
-        if (json.data && json.data.presentStaff) setStaff(json.data.presentStaff);
+      const shiftsRes = await authenticatedFetch(`${env.API_BASE_URL}/attendance/shifts`);
+      if (shiftsRes.ok) {
+        const json = await shiftsRes.json();
+        if (json.data && Array.isArray(json.data) && json.data.length > 0) {
+          setShifts(
+            json.data.map((s: any) => ({
+              shiftCode: s.shiftCode || 'SHIFT-A',
+              name: s.name || 'Plant Shift',
+              startTime: s.startTime || '06:00',
+              endTime: s.endTime || '14:00',
+              scheduledHeadcount: s.scheduledHeadcount || 5,
+              activeHeadcount: s.activeHeadcount || 5,
+              supervisorName: s.supervisorName || 'Plant Supervisor'
+            }))
+          );
+        }
       }
     } catch {
       // Keep defaults
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleClockInSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    setFeedback(null);
+
+    try {
+      const res = await authenticatedFetch(`${env.API_BASE_URL}/attendance/clock-in`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          employeeId,
+          shiftId: shiftCode,
+          notes: clockInNotes
+        })
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.message || `Clock-in failed with status ${res.status}`);
+      }
+
+      setFeedback({ type: 'success', message: `Attendance recorded for operator ${employeeId} on ${shiftCode}` });
+      setIsClockInOpen(false);
+      fetchWorkforceData();
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Failed to submit clock-in record' });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -80,12 +135,20 @@ export const WorkforcePage: React.FC = () => {
             <AppButton variant="secondary" onClick={fetchWorkforceData} leftIcon={<RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />}>
               Refresh
             </AppButton>
-            <AppButton variant="primary" leftIcon={<UserCheck size={14} />}>
+            <AppButton variant="primary" leftIcon={<UserCheck size={14} />} onClick={() => setIsClockInOpen(true)}>
               Clock In / Log Attendance
             </AppButton>
           </div>
         }
       />
+
+      {feedback && (
+        <div style={{ marginBottom: '20px' }}>
+          <AppAlert variant={feedback.type} title={feedback.type === 'success' ? 'Operation Completed' : 'Action Failed'}>
+            {feedback.message}
+          </AppAlert>
+        </div>
+      )}
 
       {/* Shifts Overview Cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '16px', marginBottom: '24px' }}>
@@ -149,6 +212,53 @@ export const WorkforcePage: React.FC = () => {
           </table>
         </div>
       </AppCard>
+
+      {/* Clock In / Attendance Dialog */}
+      <AppDialog
+        isOpen={isClockInOpen}
+        onClose={() => setIsClockInOpen(false)}
+        title="Record Operator Shift Attendance"
+        description="Clock in authorized furnace technician or pyrometry surveyor for active thermal processing shift."
+        footer={
+          <>
+            <AppButton variant="secondary" onClick={() => setIsClockInOpen(false)}>
+              Cancel
+            </AppButton>
+            <AppButton
+              variant="primary"
+              type="submit"
+              form="clock-in-form"
+              isLoading={isSubmitting}
+              leftIcon={<UserCheck size={16} />}
+            >
+              Confirm Clock In
+            </AppButton>
+          </>
+        }
+      >
+        <form id="clock-in-form" onSubmit={handleClockInSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <AppSelect
+            label="Operator / Technician"
+            value={employeeId}
+            onChange={(e) => setEmployeeId(e.target.value)}
+            options={staff.map((s) => ({ value: s.id, label: `${s.name} (${s.role})` }))}
+          />
+
+          <AppSelect
+            label="Target Plant Shift"
+            value={shiftCode}
+            onChange={(e) => setShiftCode(e.target.value)}
+            options={shifts.map((s) => ({ value: s.shiftCode, label: `${s.name} (${s.startTime} - ${s.endTime})` }))}
+          />
+
+          <AppInput
+            label="Duty Station / Handover Notes"
+            value={clockInNotes}
+            onChange={(e) => setClockInNotes(e.target.value)}
+            placeholder="e.g. Furnace 01 pit carburizer soak monitoring"
+          />
+        </form>
+      </AppDialog>
     </PageContainer>
   );
 };
