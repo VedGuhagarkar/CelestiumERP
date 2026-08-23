@@ -15,8 +15,13 @@ import { WarehousePage } from './pages/WarehousePage.js';
 import { WorkforcePage } from './pages/WorkforcePage.js';
 import { DispatchPage } from './pages/DispatchPage.js';
 import { FinancePage } from './pages/FinancePage.js';
+import { ReportsPage } from './pages/ReportsPage.js';
+import { SettingsPage } from './pages/SettingsPage.js';
+import { NotFoundPage } from './pages/NotFoundPage.js';
+import { UnauthorizedPage } from './pages/UnauthorizedPage.js';
 import { Header } from './layouts/Header.js';
 import { Sidebar } from './layouts/Sidebar.js';
+import { CommandPalette } from './components/navigation/CommandPalette.js';
 
 // Helper to render with Provider & Router
 const renderWithProviders = (ui: React.ReactElement, initialEntries = ['/']) => {
@@ -496,6 +501,58 @@ describe('End-to-End Manufacturing ERP Interaction Suite', () => {
 
       const todayBtn = screen.getByRole('button', { name: /today/i });
       fireEvent.click(todayBtn);
+    });
+  });
+
+  describe('12. Executive Analytics, Reports & Settings Workflows', () => {
+    it('renders ReportsPage, changes time periods, and triggers report export', () => {
+      renderWithProviders(<ReportsPage />);
+
+      const quarterBtn = screen.getByRole('button', { name: /this quarter/i });
+      fireEvent.click(quarterBtn);
+
+      const exportBtn = screen.getByRole('button', { name: /export report/i });
+      fireEvent.click(exportBtn);
+
+      expect(screen.getByText(/executive manufacturing report \(quarter\) generated/i)).toBeDefined();
+    });
+
+    it('renders SettingsPage and switches between plant config and regulatory audit logs', () => {
+      renderWithProviders(<SettingsPage />);
+
+      expect(screen.getByText('Organization & Tenant Context')).toBeDefined();
+
+      const auditTab = screen.getByRole('button', { name: /regulatory audit logs/i });
+      fireEvent.click(auditTab);
+
+      expect(screen.getByText('PRODUCTION_JOB_SOAK_STAGE_STARTED')).toBeDefined();
+    });
+
+    it('renders NotFoundPage and handles return to dashboard navigation', () => {
+      renderWithProviders(<NotFoundPage />);
+
+      expect(screen.getByText('404')).toBeDefined();
+      const returnBtn = screen.getByRole('button', { name: /return to command center/i });
+      fireEvent.click(returnBtn);
+    });
+
+    it('renders UnauthorizedPage and handles safety navigation', () => {
+      renderWithProviders(<UnauthorizedPage />);
+
+      expect(screen.getByText('Access Restricted')).toBeDefined();
+      const backBtn = screen.getByRole('button', { name: /back to safety/i });
+      fireEvent.click(backBtn);
+    });
+
+    it('renders CommandPalette when open and filters manufacturing search results', () => {
+      const handleClose = vi.fn();
+      renderWithProviders(<CommandPalette isOpen={true} onClose={handleClose} />);
+
+      const searchInput = screen.getByPlaceholderText(/search jobs, furnaces/i);
+      expect(searchInput).toBeDefined();
+
+      fireEvent.change(searchInput, { target: { value: 'Jobs' } });
+      expect(screen.getByText('All Domains')).toBeDefined();
     });
   });
 });
