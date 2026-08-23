@@ -14,6 +14,7 @@ import { AppCard } from '../design-system/surfaces/AppCard.js';
 import { AppButton } from '../design-system/buttons/AppButton.js';
 import { StatusBadge } from '../design-system/feedback/StatusBadge.js';
 import { env } from '../config/env.config.js';
+import { getAuthHeaders } from '../utils/apiAuth.js';
 
 interface Invoice {
   _id?: string;
@@ -119,10 +120,9 @@ export const FinancePage: React.FC = () => {
   const fetchFinanceData = async () => {
     setIsLoading(true);
     try {
-      const token = localStorage.getItem('token');
       const [resI, resC] = await Promise.all([
-        fetch(`${env.API_BASE_URL}/billing/invoices`, { headers: { Authorization: token ? `Bearer ${token}` : '' } }),
-        fetch(`${env.API_BASE_URL}/costing/jobs`, { headers: { Authorization: token ? `Bearer ${token}` : '' } })
+        fetch(`${env.API_BASE_URL}/billing/invoices`, { headers: getAuthHeaders() }),
+        fetch(`${env.API_BASE_URL}/costing/jobs`, { headers: getAuthHeaders() })
       ]);
 
       if (resI.ok) {

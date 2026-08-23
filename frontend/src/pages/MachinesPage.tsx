@@ -16,6 +16,7 @@ import { AppCard } from '../design-system/surfaces/AppCard.js';
 import { AppButton } from '../design-system/buttons/AppButton.js';
 import { StatusBadge } from '../design-system/feedback/StatusBadge.js';
 import { env } from '../config/env.config.js';
+import { getAuthHeaders } from '../utils/apiAuth.js';
 
 interface Machine {
   _id?: string;
@@ -172,10 +173,9 @@ export const MachinesPage: React.FC = () => {
   const fetchMachines = async () => {
     setIsLoading(true);
     try {
-      const token = localStorage.getItem('token');
       const [resM, resW] = await Promise.all([
-        fetch(`${env.API_BASE_URL}/machines`, { headers: { Authorization: token ? `Bearer ${token}` : '' } }),
-        fetch(`${env.API_BASE_URL}/maintenance/work-orders`, { headers: { Authorization: token ? `Bearer ${token}` : '' } })
+        fetch(`${env.API_BASE_URL}/machines`, { headers: getAuthHeaders() }),
+        fetch(`${env.API_BASE_URL}/maintenance/work-orders`, { headers: getAuthHeaders() })
       ]);
 
       if (resM.ok) {

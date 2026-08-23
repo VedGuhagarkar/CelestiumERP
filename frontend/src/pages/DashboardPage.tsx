@@ -20,6 +20,7 @@ import { AppButton } from '../design-system/buttons/AppButton.js';
 import { StatusBadge } from '../design-system/feedback/StatusBadge.js';
 import { useAuth } from '../hooks/useAuth.js';
 import { env } from '../config/env.config.js';
+import { getAuthHeaders } from '../utils/apiAuth.js';
 
 interface CommandCenterState {
   viewMode: 'OWNER' | 'SUPERVISOR' | 'OPERATOR';
@@ -380,13 +381,9 @@ export const DashboardPage: React.FC = () => {
   const fetchCommandCenterData = async () => {
     setIsLoading(true);
     try {
-      const token = localStorage.getItem('token');
       const queryParam = timeFilter === 'TODAY' ? '' : `?periodCode=${timeFilter}`;
       const response = await fetch(`${env.API_BASE_URL}/reporting/command-center${queryParam}`, {
-        headers: {
-          Authorization: token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json'
-        }
+        headers: getAuthHeaders()
       });
       if (response.ok) {
         const json = await response.json();

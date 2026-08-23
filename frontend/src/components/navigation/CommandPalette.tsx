@@ -16,6 +16,7 @@ import {
   X
 } from 'lucide-react';
 import { env } from '../../config/env.config.js';
+import { getAuthHeaders } from '../../utils/apiAuth.js';
 import { StatusBadge } from '../../design-system/feedback/StatusBadge.js';
 
 interface SearchResultItem {
@@ -93,9 +94,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
 
   const fetchQuickActions = async () => {
     try {
-      const token = localStorage.getItem('token');
       const res = await fetch(`${env.API_BASE_URL}/search/quick-actions`, {
-        headers: { Authorization: token ? `Bearer ${token}` : '' }
+        headers: getAuthHeaders()
       });
       if (res.ok) {
         const json = await res.json();
@@ -124,12 +124,11 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
     const timer = setTimeout(async () => {
       setIsLoading(true);
       try {
-        const token = localStorage.getItem('token');
         const catParam = activeCategory !== 'ALL' ? `&category=${activeCategory}` : '';
         const res = await fetch(
           `${env.API_BASE_URL}/search?q=${encodeURIComponent(query)}${catParam}`,
           {
-            headers: { Authorization: token ? `Bearer ${token}` : '' }
+            headers: getAuthHeaders()
           }
         );
         if (res.ok) {

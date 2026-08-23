@@ -15,6 +15,7 @@ import { AppCard } from '../design-system/surfaces/AppCard.js';
 import { AppButton } from '../design-system/buttons/AppButton.js';
 import { StatusBadge } from '../design-system/feedback/StatusBadge.js';
 import { env } from '../config/env.config.js';
+import { getAuthHeaders } from '../utils/apiAuth.js';
 
 interface Item {
   _id?: string;
@@ -113,10 +114,9 @@ export const InventoryPage: React.FC = () => {
   const fetchInventoryData = async () => {
     setIsLoading(true);
     try {
-      const token = localStorage.getItem('token');
       const [resI, resH] = await Promise.all([
-        fetch(`${env.API_BASE_URL}/items`, { headers: { Authorization: token ? `Bearer ${token}` : '' } }),
-        fetch(`${env.API_BASE_URL}/heat-lots`, { headers: { Authorization: token ? `Bearer ${token}` : '' } })
+        fetch(`${env.API_BASE_URL}/items`, { headers: getAuthHeaders() }),
+        fetch(`${env.API_BASE_URL}/heat-lots`, { headers: getAuthHeaders() })
       ]);
 
       if (resI.ok) {

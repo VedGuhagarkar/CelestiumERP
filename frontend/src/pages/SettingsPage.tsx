@@ -12,6 +12,7 @@ import { AppCard } from '../design-system/surfaces/AppCard.js';
 import { AppButton } from '../design-system/buttons/AppButton.js';
 import { StatusBadge } from '../design-system/feedback/StatusBadge.js';
 import { env } from '../config/env.config.js';
+import { getAuthHeaders } from '../utils/apiAuth.js';
 
 interface AuditLog {
   id?: string;
@@ -79,9 +80,8 @@ export const SettingsPage: React.FC = () => {
   const fetchAuditLogs = async () => {
     setIsLoading(true);
     try {
-      const token = localStorage.getItem('token');
       const res = await fetch(`${env.API_BASE_URL}/audit/logs`, {
-        headers: { Authorization: token ? `Bearer ${token}` : '' }
+        headers: getAuthHeaders()
       });
       if (res.ok) {
         const json = await res.json();

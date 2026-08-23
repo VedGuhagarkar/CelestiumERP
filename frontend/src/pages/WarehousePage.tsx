@@ -9,6 +9,7 @@ import { PageHeader } from '../design-system/navigation/PageHeader.js';
 import { AppCard } from '../design-system/surfaces/AppCard.js';
 import { AppButton } from '../design-system/buttons/AppButton.js';
 import { env } from '../config/env.config.js';
+import { getAuthHeaders } from '../utils/apiAuth.js';
 
 interface WarehouseEntity {
   _id?: string;
@@ -63,9 +64,8 @@ export const WarehousePage: React.FC = () => {
   const fetchWarehouses = async () => {
     setIsLoading(true);
     try {
-      const token = localStorage.getItem('token');
       const res = await fetch(`${env.API_BASE_URL}/warehouses`, {
-        headers: { Authorization: token ? `Bearer ${token}` : '' }
+        headers: getAuthHeaders()
       });
       if (res.ok) {
         const json = await res.json();
