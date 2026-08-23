@@ -26,8 +26,9 @@ import { MaintenanceWorkOrderModel } from '../modules/maintenance/maintenance.mo
 import { Notification } from '../modules/notification/notification.model.js';
 import { AuditLogModel } from '../modules/audit/audit-log.model.js';
 import { ShiftModel } from '../modules/attendance/attendance.model.js';
+import { config } from '../config/app.config.js';
 
-const TENANT_ID = process.env.DEFAULT_TENANT_ID || 'tenant_default_001';
+const TENANT_ID = config.tenant.defaultTenantId || 'tenant_default_001';
 
 export async function seedSampleDatabase() {
   console.log(`\n======================================================`);
