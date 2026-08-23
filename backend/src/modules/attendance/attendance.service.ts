@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { BaseService } from '../../core/services/base.service.js';
 import { IAttendanceRepository, attendanceRepository } from './attendance.repository.js';
 import { WorkforceMemberModel } from '../workforce-capacity/workforce-member.model.js';
@@ -300,9 +301,17 @@ export class AttendanceService extends BaseService {
     dto: ClockInDto
   ): Promise<AttendanceRecordDocument> {
     const employee = await WorkforceMemberModel.findOne({
-      _id: dto.employeeId,
       tenantId,
-      isDeleted: false
+      isDeleted: false,
+      ...(mongoose.isValidObjectId(dto.employeeId)
+        ? { _id: dto.employeeId }
+        : {
+            $or: [
+              { employeeCode: dto.employeeId },
+              { email: dto.employeeId.toLowerCase() },
+              { firstName: new RegExp(`^${dto.employeeId}$`, 'i') }
+            ]
+          })
     });
     if (!employee) {
       throw new NotFoundError(`Employee with ID '${dto.employeeId}' not found`);
@@ -395,9 +404,17 @@ export class AttendanceService extends BaseService {
     dto: ClockOutDto
   ): Promise<AttendanceRecordDocument> {
     const employee = await WorkforceMemberModel.findOne({
-      _id: dto.employeeId,
       tenantId,
-      isDeleted: false
+      isDeleted: false,
+      ...(mongoose.isValidObjectId(dto.employeeId)
+        ? { _id: dto.employeeId }
+        : {
+            $or: [
+              { employeeCode: dto.employeeId },
+              { email: dto.employeeId.toLowerCase() },
+              { firstName: new RegExp(`^${dto.employeeId}$`, 'i') }
+            ]
+          })
     });
     if (!employee) {
       throw new NotFoundError(`Employee with ID '${dto.employeeId}' not found`);

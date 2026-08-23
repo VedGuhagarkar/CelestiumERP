@@ -166,15 +166,48 @@ export const JobsPage: React.FC = () => {
   const [targetQuantity, setTargetQuantity] = useState(150);
   const [priority, setPriority] = useState<'LOW' | 'NORMAL' | 'HIGH' | 'URGENT'>('HIGH');
 
+  // Available entities
+  const [availableCustomers, setAvailableCustomers] = useState<any[]>([]);
+  const [availableItems, setAvailableItems] = useState<any[]>([]);
+  const [availableRecipes, setAvailableRecipes] = useState<any[]>([]);
+  const [availableSpecs, setAvailableSpecs] = useState<any[]>([]);
+
   const fetchJobs = async () => {
     setIsLoading(true);
     try {
-      const res = await authenticatedFetch(`${env.API_BASE_URL}/production-jobs`);
-      if (res.ok) {
-        const json = await res.json();
+      const [jobsRes, custRes, itemRes, recRes, specRes] = await Promise.all([
+        authenticatedFetch(`${env.API_BASE_URL}/production-jobs`),
+        authenticatedFetch(`${env.API_BASE_URL}/customers`).catch(() => null),
+        authenticatedFetch(`${env.API_BASE_URL}/items`).catch(() => null),
+        authenticatedFetch(`${env.API_BASE_URL}/recipes`).catch(() => null),
+        authenticatedFetch(`${env.API_BASE_URL}/specifications`).catch(() => null)
+      ]);
+
+      if (jobsRes.ok) {
+        const json = await jobsRes.json();
         if (json.data && Array.isArray(json.data) && json.data.length > 0) {
           setJobs(json.data);
         }
+      }
+      if (custRes && custRes.ok) {
+        const cJson = await custRes.json();
+        if (cJson.data?.items) setAvailableCustomers(cJson.data.items);
+        else if (Array.isArray(cJson.data)) setAvailableCustomers(cJson.data);
+      }
+      if (itemRes && itemRes.ok) {
+        const iJson = await itemRes.json();
+        if (iJson.data?.items) setAvailableItems(iJson.data.items);
+        else if (Array.isArray(iJson.data)) setAvailableItems(iJson.data);
+      }
+      if (recRes && recRes.ok) {
+        const rJson = await recRes.json();
+        if (rJson.data?.items) setAvailableRecipes(rJson.data.items);
+        else if (Array.isArray(rJson.data)) setAvailableRecipes(rJson.data);
+      }
+      if (specRes && specRes.ok) {
+        const sJson = await specRes.json();
+        if (sJson.data?.items) setAvailableSpecs(sJson.data.items);
+        else if (Array.isArray(sJson.data)) setAvailableSpecs(sJson.data);
       }
     } catch {
       // Keep defaults
@@ -189,11 +222,16 @@ export const JobsPage: React.FC = () => {
     setFeedback(null);
 
     try {
+      const targetCustomer = availableCustomers.find((c) => c.companyName === customerName || c.customerCode === customerName) || availableCustomers[0];
+      const targetItem = availableItems.find((i) => i.itemCode === itemCode || i.itemName === itemCode) || availableItems[0];
+      const targetRecipe = availableRecipes.find((r) => r.recipeCode === recipeCode || r.name === recipeCode) || availableRecipes[0];
+      const targetSpec = availableSpecs.find((s) => s.specCode === 'SPEC-AMS2759' || s.title?.includes('AMS')) || availableSpecs[0];
+
       const payload = {
-        customerId: 'cust_aerodynamics_001',
-        itemId: 'item_turbine_shaft_4340',
-        recipeId: 'rec_vacuum_aust_001',
-        specificationId: 'spec_ams2759_001',
+        customerId: targetCustomer?.id || targetCustomer?._id || 'CUST-AERO-01',
+        itemId: targetItem?.id || targetItem?._id || 'PART-SHAFT-4340',
+        recipeId: targetRecipe?.id || targetRecipe?._id || 'REC-VAC-4340',
+        specificationId: targetSpec?.id || targetSpec?._id || 'SPEC-AMS2759',
         targetQuantity: Number(targetQuantity),
         priority,
         plannedStartDate: new Date().toISOString(),

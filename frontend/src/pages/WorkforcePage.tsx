@@ -59,14 +59,19 @@ export const WorkforcePage: React.FC = () => {
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Form state
-  const [employeeId, setEmployeeId] = useState('usr_03');
+  const [employeeId, setEmployeeId] = useState('EMP-001');
   const [shiftCode, setShiftCode] = useState('SHIFT-MORNING-A');
   const [clockInNotes, setClockInNotes] = useState('Normal shift roster intake');
+  const [availableStaff, setAvailableStaff] = useState<any[]>([]);
 
   const fetchWorkforceData = async () => {
     setIsLoading(true);
     try {
-      const shiftsRes = await authenticatedFetch(`${env.API_BASE_URL}/attendance/shifts`);
+      const [shiftsRes, staffRes] = await Promise.all([
+        authenticatedFetch(`${env.API_BASE_URL}/attendance/shifts`),
+        authenticatedFetch(`${env.API_BASE_URL}/workforce-capacity/members`).catch(() => null)
+      ]);
+
       if (shiftsRes.ok) {
         const json = await shiftsRes.json();
         if (json.data && Array.isArray(json.data) && json.data.length > 0) {
@@ -83,6 +88,12 @@ export const WorkforcePage: React.FC = () => {
           );
         }
       }
+
+      if (staffRes && staffRes.ok) {
+        const sJson = await staffRes.json();
+        if (sJson.data?.items) setAvailableStaff(sJson.data.items);
+        else if (Array.isArray(sJson.data)) setAvailableStaff(sJson.data);
+      }
     } catch {
       // Keep defaults
     } finally {
@@ -96,11 +107,14 @@ export const WorkforcePage: React.FC = () => {
     setFeedback(null);
 
     try {
+      const targetEmp = availableStaff.find((s) => s.id === employeeId || s.employeeCode === employeeId || s.email === employeeId) || availableStaff[0];
+      const empIdToSend = targetEmp?.id || targetEmp?._id || employeeId;
+
       const res = await authenticatedFetch(`${env.API_BASE_URL}/attendance/clock-in`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          employeeId,
+          employeeId: empIdToSend,
           shiftId: shiftCode,
           notes: clockInNotes
         })

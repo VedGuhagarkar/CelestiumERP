@@ -157,9 +157,12 @@ export const InventoryPage: React.FC = () => {
     setFeedback(null);
 
     try {
+      const selectedItem = items.find((i) => i.materialGrade === materialGrade || i.itemCode.includes('4340')) || items[0];
+      const targetItemId = selectedItem?._id || selectedItem?.id || selectedItem?.itemCode || 'BAR-4340-50MM';
+
       const payload = {
         heatLotNumber,
-        itemId: 'item_raw_bar_4340',
+        itemId: targetItemId,
         materialGrade,
         supplierHeatNumber,
         supplierName,

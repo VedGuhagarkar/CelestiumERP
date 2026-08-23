@@ -1,4 +1,4 @@
-import { Model, Document, FilterQuery, UpdateQuery, QueryOptions, ProjectionType } from 'mongoose';
+import mongoose, { Model, Document, FilterQuery, UpdateQuery, QueryOptions, ProjectionType } from 'mongoose';
 import { NotFoundError } from '../errors/app-error.js';
 import { PaginationOptions, PaginatedResult } from '../types/pagination.js';
 
@@ -22,6 +22,8 @@ export interface IBaseRepository<T extends Document> {
 
 export abstract class BaseRepository<T extends Document> implements IBaseRepository<T> {
   protected constructor(protected readonly model: Model<T>) {}
+
+
 
   /**
    * Helper to merge tenant filter with provided filter query

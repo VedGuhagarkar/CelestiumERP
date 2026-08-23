@@ -25,7 +25,15 @@ heatLotRouter.get(
   asyncHandler(heatLotController.searchHeatLots)
 );
 
-// Inward New Heat Lot
+// Inward New Heat Lot (supports both POST / and POST /inward)
+heatLotRouter.post(
+  '/',
+  authenticateJwt,
+  requirePermission(PERMISSIONS.INVENTORY_HEAT_LOT_INWARD),
+  validateRequest(inwardHeatLotSchema),
+  asyncHandler(heatLotController.inwardHeatLot)
+);
+
 heatLotRouter.post(
   '/inward',
   authenticateJwt,

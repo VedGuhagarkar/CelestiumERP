@@ -124,13 +124,32 @@ export const DispatchPage: React.FC = () => {
   const [transportMode, setTransportMode] = useState('ROAD');
   const [quantity, setQuantity] = useState(250);
 
+  // Available lookups
+  const [availableCustomers, setAvailableCustomers] = useState<any[]>([]);
+  const [availableFg, setAvailableFg] = useState<any[]>([]);
+
   const fetchDispatches = async () => {
     setIsLoading(true);
     try {
-      const res = await authenticatedFetch(`${env.API_BASE_URL}/dispatches`);
-      if (res.ok) {
-        const json = await res.json();
+      const [dispRes, custRes, fgRes] = await Promise.all([
+        authenticatedFetch(`${env.API_BASE_URL}/dispatches`),
+        authenticatedFetch(`${env.API_BASE_URL}/customers`).catch(() => null),
+        authenticatedFetch(`${env.API_BASE_URL}/finished-goods`).catch(() => null)
+      ]);
+
+      if (dispRes.ok) {
+        const json = await dispRes.json();
         if (json.data && Array.isArray(json.data) && json.data.length > 0) setDispatches(json.data);
+      }
+      if (custRes && custRes.ok) {
+        const cJson = await custRes.json();
+        if (cJson.data?.items) setAvailableCustomers(cJson.data.items);
+        else if (Array.isArray(cJson.data)) setAvailableCustomers(cJson.data);
+      }
+      if (fgRes && fgRes.ok) {
+        const fJson = await fgRes.json();
+        if (fJson.data?.items) setAvailableFg(fJson.data.items);
+        else if (Array.isArray(fJson.data)) setAvailableFg(fJson.data);
       }
     } catch {
       // Keep defaults
@@ -145,15 +164,18 @@ export const DispatchPage: React.FC = () => {
     setFeedback(null);
 
     try {
+      const targetCust = availableCustomers.find((c) => c.companyName === customerName || c.customerCode === customerName) || availableCustomers[0];
+      const targetFg = availableFg[0];
+
       const payload = {
-        customerId: 'cust_titan_002',
+        customerId: targetCust?.id || targetCust?._id || 'CUST-TITAN-02',
         purchaseOrderNumber: 'PO-TITAN-8891',
         destinationAddress,
         carrierName,
         transportMode,
         lines: [
           {
-            finishedGoodsId: 'fg_pinion_8620_01',
+            finishedGoodsId: targetFg?.id || targetFg?._id || 'fg_pinion_8620_01',
             dispatchedQuantity: Number(quantity),
             packageDetails: {
               packagingType: 'PALLET',
