@@ -17,6 +17,7 @@ export const authRouter = Router();
 authRouter.post('/register', validateRequest(registerSchema), asyncHandler(authController.register));
 authRouter.post('/login', validateRequest(loginSchema), asyncHandler(authController.login));
 authRouter.post('/refresh-token', validateRequest(refreshTokenSchema), asyncHandler(authController.refreshToken));
+authRouter.post('/refresh', validateRequest(refreshTokenSchema), asyncHandler(authController.refreshToken));
 authRouter.post('/forgot-password', validateRequest(forgotPasswordSchema), asyncHandler(authController.forgotPassword));
 authRouter.post('/reset-password', validateRequest(resetPasswordSchema), asyncHandler(authController.resetPassword));
 

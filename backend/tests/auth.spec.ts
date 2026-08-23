@@ -6,9 +6,10 @@ import { config } from '../src/config/app.config.js';
 import { userRepository } from '../src/modules/auth/user.repository.js';
 import { refreshTokenRepository } from '../src/modules/auth/refresh-token.repository.js';
 
-describe('Auth & Identity Subsystem (End-to-End API Integration)', () => {
+describe('Auth & Identity Subsystem (End-to-End API Integration & Token Lifecycle)', () => {
   const app = createApp();
   const testTenant = 'tenant_heat_treat_001';
+  const otherTenant = 'tenant_heat_treat_999';
 
   const mockUser: any = {
     id: 'usr_mock_123',
@@ -88,7 +89,7 @@ describe('Auth & Identity Subsystem (End-to-End API Integration)', () => {
         .send({
           email: 'test@factory.com',
           username: 'testuser',
-          password: 'weak', // too short, no uppercase/numbers
+          password: 'weak',
           firstName: 'A',
           lastName: 'B'
         });
@@ -153,70 +154,12 @@ describe('Auth & Identity Subsystem (End-to-End API Integration)', () => {
     });
   });
 
-  describe('POST /api/v1/auth/refresh-token', () => {
-    it('should rotate refresh token and issue new token pair', async () => {
-      const familyId = 'fam_001';
-      const signedRefreshToken = jwt.sign(
-        { userId: mockUser.id, tenantId: testTenant, familyId },
-        config.auth.jwtRefreshSecret
-      );
-
-      jest.spyOn(refreshTokenRepository, 'findByTokenHash').mockResolvedValue({
-        id: 'tok_001',
-        tenantId: testTenant,
-        userId: mockUser.id,
-        familyId,
-        expiresAt: new Date(Date.now() + 100000),
-        isRevoked: false
-      } as any);
-
-      jest.spyOn(userRepository, 'findById').mockResolvedValue(mockUser);
-      jest.spyOn(refreshTokenRepository, 'create').mockResolvedValue({} as any);
-      jest.spyOn(refreshTokenRepository, 'revokeToken').mockResolvedValue({} as any);
-
-      const res = await request(app)
-        .post('/api/v1/auth/refresh-token')
-        .send({ refreshToken: signedRefreshToken });
-
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(res.body.data).toHaveProperty('accessToken');
-      expect(res.body.data).toHaveProperty('refreshToken');
-    });
-
-    it('should detect reuse of a revoked refresh token and invalidate the entire token family', async () => {
-      const familyId = 'fam_compromised';
-      const signedRefreshToken = jwt.sign(
-        { userId: mockUser.id, tenantId: testTenant, familyId },
-        config.auth.jwtRefreshSecret
-      );
-
-      jest.spyOn(refreshTokenRepository, 'findByTokenHash').mockResolvedValue({
-        id: 'tok_revoked_001',
-        tenantId: testTenant,
-        userId: mockUser.id,
-        familyId,
-        expiresAt: new Date(Date.now() + 100000),
-        isRevoked: true // ALREADY REVOKED!
-      } as any);
-
-      const revokeFamilySpy = jest.spyOn(refreshTokenRepository, 'revokeFamily').mockResolvedValue();
-
-      const res = await request(app)
-        .post('/api/v1/auth/refresh-token')
-        .send({ refreshToken: signedRefreshToken });
-
-      expect(res.status).toBe(401);
-      expect(res.body.message).toContain('Refresh token reuse detected');
-      expect(revokeFamilySpy).toHaveBeenCalledWith(testTenant, familyId);
-    });
-  });
-
-  describe('GET /api/v1/auth/me (Protected Route)', () => {
-    it('should return authenticated user profile when valid Bearer token is provided', async () => {
+  describe('Access Token Validation (authenticateJwt Middleware)', () => {
+    it('1. should accept a valid access token and populate user profile', async () => {
       const validAccessToken = jwt.sign(
-        { userId: mockUser.id, tenantId: testTenant, email: mockUser.email, roles: mockUser.roles },
-        config.auth.jwtSecret
+        { userId: mockUser.id, tenantId: testTenant, email: mockUser.email, roles: mockUser.roles, type: 'access' },
+        config.auth.jwtSecret,
+        { expiresIn: '15m' }
       );
 
       jest.spyOn(userRepository, 'findById').mockResolvedValue(mockUser);
@@ -230,24 +173,257 @@ describe('Auth & Identity Subsystem (End-to-End API Integration)', () => {
       expect(res.body.data.email).toBe(mockUser.email);
     });
 
-    it('should reject request when Authorization header is missing', async () => {
+    it('2. should reject an expired access token with explicit session expired message', async () => {
+      const expiredAccessToken = jwt.sign(
+        { userId: mockUser.id, tenantId: testTenant, email: mockUser.email, roles: mockUser.roles, type: 'access' },
+        config.auth.jwtSecret,
+        { expiresIn: '-1s' }
+      );
+
+      const res = await request(app)
+        .get('/api/v1/auth/me')
+        .set('Authorization', `Bearer ${expiredAccessToken}`);
+
+      expect(res.status).toBe(401);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toBe('Session expired: Access token has expired');
+    });
+
+    it('3. should reject an invalid signature (tampered access token)', async () => {
+      const tamperedToken = jwt.sign(
+        { userId: mockUser.id, tenantId: testTenant, email: mockUser.email, roles: mockUser.roles, type: 'access' },
+        'wrong_tampered_secret_key_12345678901234567890'
+      );
+
+      const res = await request(app)
+        .get('/api/v1/auth/me')
+        .set('Authorization', `Bearer ${tamperedToken}`);
+
+      expect(res.status).toBe(401);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toBe('Invalid access token');
+    });
+
+    it('4. should reject request when Authorization header is missing', async () => {
       const res = await request(app).get('/api/v1/auth/me');
 
       expect(res.status).toBe(401);
       expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('Missing Bearer token');
     });
 
-    it('should reject request when token is expired or invalid', async () => {
+    it('5. should reject request when wrong token type is used (e.g. Refresh Token sent as Bearer)', async () => {
+      const signedRefreshTokenAsBearer = jwt.sign(
+        { userId: mockUser.id, tenantId: testTenant, familyId: 'fam_001', type: 'refresh' },
+        config.auth.jwtSecret
+      );
+
       const res = await request(app)
         .get('/api/v1/auth/me')
-        .set('Authorization', 'Bearer invalid_signature_token');
+        .set('Authorization', `Bearer ${signedRefreshTokenAsBearer}`);
 
       expect(res.status).toBe(401);
       expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('Invalid token type: Access token required');
     });
   });
 
-  describe('Password Reset Lifecycle', () => {
+  describe('Refresh Token Lifecycle & Rotation (POST /api/v1/auth/refresh-token)', () => {
+    it('6. should rotate valid refresh token, persist new token pair, and revoke old token', async () => {
+      const familyId = 'fam_001';
+      const signedRefreshToken = jwt.sign(
+        { userId: mockUser.id, tenantId: testTenant, familyId, type: 'refresh' },
+        config.auth.jwtRefreshSecret,
+        { expiresIn: '7d' }
+      );
+
+      jest.spyOn(refreshTokenRepository, 'findByTokenHash').mockResolvedValue({
+        id: 'tok_001',
+        tenantId: testTenant,
+        userId: mockUser.id,
+        familyId,
+        expiresAt: new Date(Date.now() + 1000000),
+        isRevoked: false
+      } as any);
+
+      jest.spyOn(userRepository, 'findById').mockResolvedValue(mockUser);
+      const createTokenSpy = jest.spyOn(refreshTokenRepository, 'create').mockResolvedValue({} as any);
+      const revokeTokenSpy = jest.spyOn(refreshTokenRepository, 'revokeToken').mockResolvedValue({} as any);
+
+      const res = await request(app)
+        .post('/api/v1/auth/refresh-token')
+        .send({ refreshToken: signedRefreshToken });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data).toHaveProperty('accessToken');
+      expect(res.body.data).toHaveProperty('refreshToken');
+      expect(createTokenSpy).toHaveBeenCalled();
+      expect(revokeTokenSpy).toHaveBeenCalledWith(testTenant, 'tok_001', expect.any(String));
+    });
+
+    it('7. should also support alias route POST /api/v1/auth/refresh', async () => {
+      const familyId = 'fam_alias_001';
+      const signedRefreshToken = jwt.sign(
+        { userId: mockUser.id, tenantId: testTenant, familyId, type: 'refresh' },
+        config.auth.jwtRefreshSecret,
+        { expiresIn: '7d' }
+      );
+
+      jest.spyOn(refreshTokenRepository, 'findByTokenHash').mockResolvedValue({
+        id: 'tok_alias_001',
+        tenantId: testTenant,
+        userId: mockUser.id,
+        familyId,
+        expiresAt: new Date(Date.now() + 1000000),
+        isRevoked: false
+      } as any);
+
+      jest.spyOn(userRepository, 'findById').mockResolvedValue(mockUser);
+      jest.spyOn(refreshTokenRepository, 'create').mockResolvedValue({} as any);
+      jest.spyOn(refreshTokenRepository, 'revokeToken').mockResolvedValue({} as any);
+
+      const res = await request(app)
+        .post('/api/v1/auth/refresh')
+        .send({ refreshToken: signedRefreshToken });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+    });
+
+    it('8. should reject an expired refresh token', async () => {
+      const familyId = 'fam_expired';
+      const expiredRefreshToken = jwt.sign(
+        { userId: mockUser.id, tenantId: testTenant, familyId, type: 'refresh' },
+        config.auth.jwtRefreshSecret,
+        { expiresIn: '-1s' }
+      );
+
+      const res = await request(app)
+        .post('/api/v1/auth/refresh-token')
+        .send({ refreshToken: expiredRefreshToken });
+
+      expect(res.status).toBe(401);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('Refresh token has expired');
+    });
+
+    it('9. should detect reuse of a revoked refresh token and invalidate the entire token family', async () => {
+      const familyId = 'fam_compromised';
+      const signedRefreshToken = jwt.sign(
+        { userId: mockUser.id, tenantId: testTenant, familyId, type: 'refresh' },
+        config.auth.jwtRefreshSecret
+      );
+
+      jest.spyOn(refreshTokenRepository, 'findByTokenHash').mockResolvedValue({
+        id: 'tok_revoked_001',
+        tenantId: testTenant,
+        userId: mockUser.id,
+        familyId,
+        expiresAt: new Date(Date.now() + 100000),
+        isRevoked: true
+      } as any);
+
+      const revokeFamilySpy = jest.spyOn(refreshTokenRepository, 'revokeFamily').mockResolvedValue();
+
+      const res = await request(app)
+        .post('/api/v1/auth/refresh-token')
+        .send({ refreshToken: signedRefreshToken });
+
+      expect(res.status).toBe(401);
+      expect(res.body.message).toContain('Refresh token reuse detected');
+      expect(revokeFamilySpy).toHaveBeenCalledWith(testTenant, familyId);
+    });
+
+    it('10. should reject refresh when wrong token type is supplied (e.g. Access Token passed to refresh endpoint)', async () => {
+      const signedAccessToken = jwt.sign(
+        { userId: mockUser.id, tenantId: testTenant, email: mockUser.email, roles: mockUser.roles, type: 'access' },
+        config.auth.jwtRefreshSecret
+      );
+
+      const res = await request(app)
+        .post('/api/v1/auth/refresh-token')
+        .send({ refreshToken: signedAccessToken });
+
+      expect(res.status).toBe(401);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('Invalid token type: Refresh token required');
+    });
+
+    it('11. should reject refresh when user account is inactive or missing', async () => {
+      const familyId = 'fam_inactive';
+      const signedRefreshToken = jwt.sign(
+        { userId: 'usr_inactive_001', tenantId: testTenant, familyId, type: 'refresh' },
+        config.auth.jwtRefreshSecret
+      );
+
+      jest.spyOn(refreshTokenRepository, 'findByTokenHash').mockResolvedValue({
+        id: 'tok_002',
+        tenantId: testTenant,
+        userId: 'usr_inactive_001',
+        familyId,
+        expiresAt: new Date(Date.now() + 100000),
+        isRevoked: false
+      } as any);
+
+      jest.spyOn(userRepository, 'findById').mockResolvedValue({
+        ...mockUser,
+        status: 'inactive'
+      });
+
+      const res = await request(app)
+        .post('/api/v1/auth/refresh-token')
+        .send({ refreshToken: signedRefreshToken });
+
+      expect(res.status).toBe(401);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('User account is inactive');
+    });
+
+    it('12. should reject cross-tenant spoofing when tenant header does not match token claim', async () => {
+      const familyId = 'fam_tenant_mismatch';
+      const signedRefreshToken = jwt.sign(
+        { userId: mockUser.id, tenantId: testTenant, familyId, type: 'refresh' },
+        config.auth.jwtRefreshSecret
+      );
+
+      const res = await request(app)
+        .post('/api/v1/auth/refresh-token')
+        .set('x-tenant-id', otherTenant)
+        .send({ refreshToken: signedRefreshToken });
+
+      expect(res.status).toBe(401);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('Tenant header does not match');
+    });
+  });
+
+  describe('Session Termination & Logout (POST /api/v1/auth/logout)', () => {
+    it('should revoke specific refresh token on logout', async () => {
+      const validAccessToken = jwt.sign(
+        { userId: mockUser.id, tenantId: testTenant, email: mockUser.email, roles: mockUser.roles, type: 'access' },
+        config.auth.jwtSecret
+      );
+
+      const rawRefreshToken = 'tok_refresh_to_logout';
+      jest.spyOn(refreshTokenRepository, 'findByTokenHash').mockResolvedValue({
+        id: 'tok_db_123',
+        tenantId: testTenant
+      } as any);
+      const revokeTokenSpy = jest.spyOn(refreshTokenRepository, 'revokeToken').mockResolvedValue({} as any);
+
+      const res = await request(app)
+        .post('/api/v1/auth/logout')
+        .set('Authorization', `Bearer ${validAccessToken}`)
+        .send({ refreshToken: rawRefreshToken });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(revokeTokenSpy).toHaveBeenCalledWith(testTenant, 'tok_db_123');
+    });
+  });
+
+  describe('Password Reset Lifecycle & Security Model', () => {
     it('should generate password reset token via forgot-password endpoint', async () => {
       jest.spyOn(userRepository, 'findByEmail').mockResolvedValue(mockUser);
       jest.spyOn(userRepository, 'setResetToken').mockResolvedValue();
@@ -262,7 +438,7 @@ describe('Auth & Identity Subsystem (End-to-End API Integration)', () => {
       expect(res.body.message).toContain('password reset link has been dispatched');
     });
 
-    it('should reset password and revoke active sessions when valid reset token is provided', async () => {
+    it('should reset password and revoke ALL active user sessions for security', async () => {
       jest.spyOn(userRepository, 'findByResetToken').mockResolvedValue(mockUser);
       jest.spyOn(userRepository, 'updatePassword').mockResolvedValue(mockUser);
       const revokeAllSpy = jest.spyOn(refreshTokenRepository, 'revokeAllForUser').mockResolvedValue();

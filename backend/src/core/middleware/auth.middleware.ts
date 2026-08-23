@@ -19,7 +19,10 @@ export function authenticateJwt(req: Request, _res: Response, next: NextFunction
   const token = authHeader.split(' ')[1];
 
   try {
-    const decoded = jwt.verify(token, config.auth.jwtSecret) as AuthenticatedUserPayload;
+    const decoded = jwt.verify(token, config.auth.jwtSecret) as AuthenticatedUserPayload & { type?: string };
+    if (decoded.type && decoded.type !== 'access') {
+      return next(new UnauthorizedError('Invalid token type: Access token required'));
+    }
     req.user = decoded;
     if (decoded.tenantId) {
       req.tenantId = decoded.tenantId;

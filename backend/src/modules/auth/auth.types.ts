@@ -46,6 +46,14 @@ export interface JwtUserPayload {
   tenantId: string;
   email: string;
   roles: string[];
+  type?: 'access';
+}
+
+export interface JwtRefreshPayload {
+  userId: string;
+  tenantId: string;
+  familyId: string;
+  type: 'refresh';
 }
 
 export interface AuthTokens {

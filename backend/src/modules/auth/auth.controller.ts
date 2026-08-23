@@ -25,18 +25,20 @@ export class AuthController extends BaseController {
 
   public refreshToken = async (req: Request, res: Response): Promise<Response> => {
     const { refreshToken } = req.body;
+    const headerTenantId = req.headers['x-tenant-id'] as string | undefined;
     const meta = {
       userAgent: req.headers['user-agent'],
       ipAddress: req.ip
     };
-    const result = await this.service.refreshToken(refreshToken, meta);
+    const result = await this.service.refreshToken(refreshToken, meta, headerTenantId);
     return this.sendSuccess(res, result, 'Tokens refreshed successfully');
   };
 
   public logout = async (req: Request, res: Response): Promise<Response> => {
     const tenantId = this.getTenantId(req);
-    const { refreshToken } = req.body;
-    await this.service.logout(tenantId, refreshToken);
+    const { refreshToken } = req.body || {};
+    const userId = req.user?.userId;
+    await this.service.logout(tenantId, refreshToken, userId);
     return this.sendSuccess(res, null, 'Logged out successfully');
   };
 

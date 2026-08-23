@@ -45,7 +45,8 @@ export class AuthService extends BaseService {
       userId: user.id,
       tenantId,
       email: user.email,
-      roles: user.roles
+      roles: user.roles,
+      type: 'access'
     };
 
     // 1. Generate short-lived Access Token
@@ -60,7 +61,8 @@ export class AuthService extends BaseService {
       {
         userId: user.id,
         tenantId,
-        familyId: resolvedFamilyId
+        familyId: resolvedFamilyId,
+        type: 'refresh'
       },
       config.auth.jwtRefreshSecret,
       { expiresIn: config.auth.jwtRefreshExpiresIn as any }
@@ -208,7 +210,8 @@ export class AuthService extends BaseService {
    */
   public async refreshToken(
     rawRefreshToken: string,
-    meta?: { userAgent?: string; ipAddress?: string }
+    meta?: { userAgent?: string; ipAddress?: string },
+    headerTenantId?: string
   ): Promise<AuthTokens> {
     if (!rawRefreshToken) {
       throw new UnauthorizedError('Refresh token is required');
@@ -217,17 +220,35 @@ export class AuthService extends BaseService {
     let decoded: any;
     try {
       decoded = jwt.verify(rawRefreshToken, config.auth.jwtRefreshSecret);
-    } catch {
+    } catch (err: any) {
+      if (err.name === 'TokenExpiredError') {
+        throw new UnauthorizedError('Refresh token has expired. Please log in again.');
+      }
       throw new UnauthorizedError('Invalid or expired refresh token');
     }
 
-    const tenantId = decoded.tenantId;
-    const tokenHash = this.hashToken(rawRefreshToken);
+    // Gating: Ensure token is of type 'refresh'
+    if (decoded.type && decoded.type !== 'refresh') {
+      throw new UnauthorizedError('Invalid token type: Refresh token required');
+    }
 
+    const tenantId = decoded.tenantId;
+
+    // Cross-tenant verification: If header x-tenant-id was supplied, it must strictly match token tenant
+    if (headerTenantId && headerTenantId !== tenantId) {
+      throw new UnauthorizedError('Security violation: Tenant header does not match authenticated token tenant claim');
+    }
+
+    const tokenHash = this.hashToken(rawRefreshToken);
     const tokenRecord = await this.tokenRepo.findByTokenHash(tenantId, tokenHash);
 
     if (!tokenRecord) {
       throw new UnauthorizedError('Invalid or expired refresh token');
+    }
+
+    // Verify session user and tenant alignment
+    if (tokenRecord.userId !== decoded.userId || tokenRecord.tenantId !== tenantId) {
+      throw new UnauthorizedError('Security violation: Token session does not match user context');
     }
 
     // Check expiration
@@ -245,7 +266,7 @@ export class AuthService extends BaseService {
     }
 
     const user = await this.userRepo.findById(tenantId, tokenRecord.userId);
-    if (!user || user.status !== 'active') {
+    if (!user || user.status !== 'active' || user.tenantId !== tenantId) {
       throw new UnauthorizedError('User account is inactive or no longer exists');
     }
 
@@ -257,15 +278,17 @@ export class AuthService extends BaseService {
   }
 
   /**
-   * Logout user by revoking active refresh token
+   * Logout user by revoking active refresh token or user sessions
    */
-  public async logout(tenantId: string, rawRefreshToken?: string): Promise<void> {
+  public async logout(tenantId: string, rawRefreshToken?: string, userId?: string): Promise<void> {
     if (rawRefreshToken) {
       const tokenHash = this.hashToken(rawRefreshToken);
       const tokenRecord = await this.tokenRepo.findByTokenHash(tenantId, tokenHash);
       if (tokenRecord) {
         await this.tokenRepo.revokeToken(tenantId, tokenRecord.id);
       }
+    } else if (userId) {
+      await this.tokenRepo.revokeAllForUser(tenantId, userId);
     }
   }
 
