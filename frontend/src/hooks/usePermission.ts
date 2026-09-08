@@ -5,20 +5,55 @@ export function usePermission() {
 
   const hasPermission = (permission: string): boolean => {
     if (!user) return false;
-    if (user.permissions?.includes('SYSTEM_ADMIN')) return true;
-    return user.permissions?.includes(permission) || false;
+    const hasAdminRole = (user.roles || []).some(
+      (r) => r.toUpperCase() === 'ADMIN' || r.toUpperCase() === 'SUPERADMIN'
+    );
+    if (hasAdminRole) return true;
+    if (
+      user.permissions?.includes('SYSTEM_ADMIN') ||
+      user.permissions?.includes('ALL') ||
+      user.permissions?.includes('*')
+    ) {
+      return true;
+    }
+    return (
+      user.permissions?.includes(permission) ||
+      (permission === 'purchase_order:order:create' && user.permissions?.includes('PURCHASE_ORDER_CREATE')) ||
+      (permission === 'PURCHASE_ORDER_CREATE' && user.permissions?.includes('purchase_order:order:create')) ||
+      false
+    );
   };
 
   const hasAnyPermission = (permissions: string[]): boolean => {
     if (!user) return false;
-    if (user.permissions?.includes('SYSTEM_ADMIN')) return true;
-    return permissions.some((p) => user.permissions?.includes(p));
+    const hasAdminRole = (user.roles || []).some(
+      (r) => r.toUpperCase() === 'ADMIN' || r.toUpperCase() === 'SUPERADMIN'
+    );
+    if (hasAdminRole) return true;
+    if (
+      user.permissions?.includes('SYSTEM_ADMIN') ||
+      user.permissions?.includes('ALL') ||
+      user.permissions?.includes('*')
+    ) {
+      return true;
+    }
+    return permissions.some((p) => hasPermission(p));
   };
 
   const hasAllPermissions = (permissions: string[]): boolean => {
     if (!user) return false;
-    if (user.permissions?.includes('SYSTEM_ADMIN')) return true;
-    return permissions.every((p) => user.permissions?.includes(p));
+    const hasAdminRole = (user.roles || []).some(
+      (r) => r.toUpperCase() === 'ADMIN' || r.toUpperCase() === 'SUPERADMIN'
+    );
+    if (hasAdminRole) return true;
+    if (
+      user.permissions?.includes('SYSTEM_ADMIN') ||
+      user.permissions?.includes('ALL') ||
+      user.permissions?.includes('*')
+    ) {
+      return true;
+    }
+    return permissions.every((p) => hasPermission(p));
   };
 
   return {

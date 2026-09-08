@@ -52,6 +52,16 @@ export const DomainEvents = {
   INVENTORY_HEAT_LOT_CREATED: 'Inventory.HeatLotCreated',
   INVENTORY_LOW_STOCK_ALERT: 'Inventory.LowStockAlert',
 
+  // Creation Phase Domain Events
+  PO_CREATED: 'PurchaseOrder.Created',
+  PO_UPDATED: 'PurchaseOrder.Updated',
+  PO_CANCELLED: 'PurchaseOrder.Cancelled',
+  MATERIAL_RECEIVED: 'MaterialReceipt.Recorded',
+  MATERIAL_STORED: 'MaterialReceipt.Stored',
+  GRN_CREATED: 'GRN.Created',
+  GRN_PRINTED: 'GRN.Printed',
+  GRN_UNITS_RELEASED: 'GRN.UnitsReleasedForPlanning',
+
   // Warehouse Events
   WAREHOUSE_PUTAWAY_COMPLETED: 'Warehouse.PutawayCompleted',
   WAREHOUSE_MATERIAL_QUARANTINED: 'Warehouse.MaterialQuarantined',

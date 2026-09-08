@@ -1,1070 +1,2067 @@
-# 🚀 Astralis ERP — Complete Features & Capabilities Catalog
+# 🚀 Astralis ERP — Complete Features & Architecture Catalog
 
 > **Platform:** Astralis ERP (Advanced Thermal Processing, Precision Machining & Metallurgical Manufacturing)  
-> **Tech Stack:** Node.js, Express, MongoDB, JavaScript, React.js, CSS
-> **Architecture:** Multi-Tenant Clean Layered Domain Architecture (`Route -> Controller -> Service -> Repository -> Model`) + Decoupled Event Bus  
+> **Tech Stack:** Node.js, Express, MongoDB (Mongoose 8), TypeScript, React 19, Redux Toolkit, React Router 7, Lucide Icons, Vanilla CSS (Apple HIG Design Tokens)  
+> **Architecture:** Multi-Tenant Clean Layered Domain Architecture (`Route -> Controller -> Service -> Repository -> Model`) + Decoupled Domain Event Bus + Architecture Boundary Governance (`check:arch`)  
+> **Authoritative Codebase Scope:** Entire ERP Repository (`c:\Users\Admin\Desktop\CelestiumERP`)
 
 ---
 
 ## 📑 Table of Contents
 
 1. [Core Platform & Architecture Foundation](#1-core-platform--architecture-foundation)
-2. [Authentication & Session Management](#2-authentication--session-management)
-3. [RBAC, Users, Roles & Governance](#3-rbac-users-roles--governance)
-4. [Tenant, System Settings & Feature Flags](#4-tenant-system-settings--feature-flags)
-5. [Customer & Client Registry](#5-customer--client-registry)
-6. [Production & Heat Treatment Job Management](#6-production--heat-treatment-job-management)
-7. [Metallurgical Quality Control & Lab Subsystem (ISO 17025 / AMS 2750G)](#7-metallurgical-quality-control--lab-subsystem-iso-17025--ams-2750g)
-8. [Equipment, Machines, Maintenance & Pyrometry](#8-equipment-machines-maintenance--pyrometry)
-9. [Inventory, Raw Materials & Traceability](#9-inventory-raw-materials--traceability)
-10. [Workforce, Attendance, Shifts & Labor Operations](#10-workforce-attendance-shifts--labor-operations)
-11. [Employee Directory & Personnel Management](#11-employee-directory--personnel-management)
-12. [Configurable State Machine & Workflow Engine](#12-configurable-state-machine--workflow-engine)
-13. [Outbound Dispatch & Shipping Logistics](#13-outbound-dispatch--shipping-logistics)
-14. [Executive Analytics & Domain Reporting](#14-executive-analytics--domain-reporting)
-15. [Global Search & Command Palette](#15-global-search--command-palette)
-16. [Notification Center & Alert Delivery](#16-notification-center--alert-delivery)
-17. [Manufacturing Command Center Dashboard](#17-manufacturing-command-center-dashboard)
-18. [Frontend Application Shell & Navigation](#18-frontend-application-shell--navigation)
-19. [Frontend Charts & Data Visualization](#19-frontend-charts--data-visualization)
-20. [Frontend Apple Design System & Component Library](#20-frontend-apple-design-system--component-library)
-21. [Frontend RTK Query API Layer](#21-frontend-rtk-query-api-layer)
-22. [Security Audit Trail Explorer](#22-security-audit-trail-explorer)
-23. [Finance & Manufacturing Cost Control](#23-finance--manufacturing-cost-control)
-24. [Heat-Treatment Product & Process Master Data](#24-heat-treatment-product--process-master-data)
-25. [Material Requirements & Production Planning](#25-material-requirements--production-planning)
-26. [Job Costing & Manufacturing Cost Accounting](#26-job-costing--manufacturing-cost-accounting)
-27. [Warehouse & Finished-Goods Management](#27-warehouse--finished-goods-management)
+   - 1.1 Multi-Tenant Isolation Engine
+   - 1.2 Decoupled Domain Event Bus
+   - 1.3 Immutable Audit Logging Subsystem
+   - 1.4 Monotonic Sequential ID Generation
+   - 1.5 Transparent Soft Delete Protocol
+   - 1.6 Centralized Exception Hierarchy & Unified Response Envelope
+   - 1.7 Enterprise Idempotency Middleware
+   - 1.8 Async Background Task Queue & Resilience
+   - 1.9 System Maintenance Lock Subsystem
+   - 1.10 Database Connection & Resilience Subsystem
+   - 1.11 Indexing Standards & Registry
+   - 1.12 ACID Multi-Document Transactions
+   - 1.13 Architecture Governance & Layer Boundary Enforcement (14 Rules)
+   - 1.14 Security Stack, Middleware & Logging Infrastructure
+   - 1.15 SRE Health, Liveness & Readiness Probes
+2. [Core Platform Infrastructure Catalog](#2-core-platform-infrastructure-catalog)
+3. [Domain Event Bus Registry (66 Typed Events)](#3-domain-event-bus-registry-66-typed-events)
+4. [RBAC & Governance Permission Catalog (44 Granular Permissions)](#4-rbac--governance-permission-catalog-44-granular-permissions)
+5. [Complete Backend Domain Modules Catalog (All 36 Modules)](#5-complete-backend-domain-modules-catalog-all-36-modules)
+   - 5.1 Authentication (`auth`)
+   - 5.2 Role-Based Access Control (`rbac`)
+   - 5.3 Multi-Tenant Lifecycle (`tenant`)
+   - 5.4 Customer Registry (`customer`)
+   - 5.5 Item & Material Master (`item`)
+   - 5.6 Recipe Master & Versioning (`recipe`)
+   - 5.7 Specification Master (`specification`)
+   - 5.8 Traceability & Heat Lots (`traceability`)
+   - 5.9 Inventory & Stock Ledger (`inventory`)
+   - 5.10 Warehouse & Storage Locations (`warehouse`)
+   - 5.11 Quality Quarantine (`quarantine`)
+   - 5.12 Finished Goods (`finished-goods`)
+   - 5.13 Production Planning (`production-planning`)
+   - 5.14 Material Requirements Planning (`material-requirements`)
+   - 5.15 Furnace Capacity (`furnace-capacity`)
+   - 5.16 Workforce Capacity (`workforce-capacity`)
+   - 5.17 Constraint Analysis (`constraint-analysis`)
+   - 5.18 Production Jobs (`production-job`)
+   - 5.19 Production Scheduling (`production-schedule`)
+   - 5.20 Quality Inspection (`quality-inspection`)
+   - 5.21 Metallurgical Lab (`metallurgical-lab`)
+   - 5.22 Quality Planning (`quality-planning`)
+   - 5.23 Non-Conformance & CAPA (`ncr-capa`)
+   - 5.24 Quality Documentation & CoC (`quality-documentation`)
+   - 5.25 Machinery Fleet (`machine`)
+   - 5.26 Maintenance Management (`maintenance`)
+   - 5.27 AMS 2750G Pyrometry (`pyrometry`)
+   - 5.28 Workforce Attendance & Shifts (`attendance`)
+   - 5.29 Dispatch Logistics (`dispatch`)
+   - 5.30 Finance & General Ledger (`finance`)
+   - 5.31 Manufacturing Job Costing (`costing`)
+   - 5.32 Customer Billing & Invoicing (`billing`)
+   - 5.33 Executive Reporting & Analytics (`reporting`)
+   - 5.34 Notification Center (`notification`)
+   - 5.35 Universal Global Search (`search`)
+   - 5.36 Security Audit Trail (`audit`)
+6. [Frontend Architecture, Pages & Component Library](#6-frontend-architecture-pages--component-library)
+   - 6.1 Application Shell & Navigation Layouts
+   - 6.2 Frontend Route Matrix (14 Active Routes)
+   - 6.3 Complete Page Workbenches (All 14 Pages)
+   - 6.4 Apple HIG Design System Primitive Library (18 Components)
+   - 6.5 Frontend State Management, RTK Base API & HTTP Client
+   - 6.6 Apple HIG Design System Tokens & Aesthetics
+7. [End-to-End Operational Domain Workflows](#7-end-to-end-operational-domain-workflows)
+   - 7.1 12-Stage Heat Treatment Lifecycle Workflow
+   - 7.2 Plan-to-Job Conversion & Constraint Feasibility Workflow
+   - 7.3 Metallurgical Quality Inspection & CoC Generation Workflow
+   - 7.4 Non-Conformance (NCR) & CAPA Verification Workflow
+   - 7.5 Furnace Pyrometry (SAT/TUS) & Breakdown Maintenance Workflow
+   - 7.6 Raw Material Heat-Lot Inwarding & Bi-Directional Genealogy Workflow
+   - 7.7 Warehouse Storage, Quarantine Holding & Finished Goods Allocation Workflow
+   - 7.8 Workforce Shift Roster, Punch Clock-In & Leave Workflow
+   - 7.9 Outbound Dispatch & Gate Clearance Workflow
+   - 7.10 Manufacturing Job Costing & Variance Analysis Workflow
+   - 7.11 Customer Invoicing & Payment Reconciliation Workflow
+   - 7.12 General Ledger Accounting & Financial Period Close Workflow
+   - 7.13 Executive KPI & Shop-Floor Operational Reporting Workflow
+   - 7.14 Universal Global Search & Quick Actions Workflow
+8. [Operational Runbooks, SRE Documentation & Testing Infrastructure](#8-operational-runbooks-sre-documentation--testing-infrastructure)
+   - 8.1 Database Seeding Engine (`backend/src/scripts/seed.ts`)
+   - 8.2 Centralized Configuration Subsystem (`backend/src/config/`)
+   - 8.3 Operational Runbooks & Technical Specifications (`docs/`)
+   - 8.4 Automated Test Suite Matrix (47 Backend Specs + Frontend Suites)
 
 ---
 
 ## 1. Core Platform & Architecture Foundation
 
 ### 1.1 Multi-Tenant Isolation Engine
+- **Strict Collection Partitioning:** Every tenant-owned MongoDB collection is indexed by a mandatory `tenantId` field.
+- **Tenant Context Middleware (`tenantMiddleware`):** Extracts tenant identity from HTTP header (`x-tenant-id`) and asserts equality against validated JWT claims (`req.user.tenantId`). Mismatches immediately throw a `403 Forbidden` (`CROSS_TENANT_ACCESS_DENIED`).
+- **AsyncLocalStorage Context (`TenantContextHolder`):** Wraps incoming requests in an isolated Node.js `AsyncLocalStorage` context, providing ambient tenant context across asynchronous call chains without parameter leaking.
+- **Base Repository Isolation (`BaseRepository<T>`):** Automatically injects `{ tenantId }` scope into all queries (`findById`, `findOne`, `findMany`, `count`), mutations (`create`, `updateById`, `updateMany`), and soft-deletes, guaranteeing zero cross-tenant query contamination.
 
-- **Strict Collection Partitioning:** Enforces database-level isolation by indexing a mandatory `tenantId` on every document to prevent cross-tenant data leakage.
-- **Tenant Context Middleware (`tenantMiddleware`):** Extracts tenant identity from incoming HTTP headers (`x-tenant-id`) or validated JWT claims and attaches `req.tenantId` to the request context.
-- **Base Repository Isolation (`BaseRepository<T>`):** Automatically injects the active `{ tenantId }` scope into all queries, updates, counts, and soft-delete routines, guaranteeing zero cross-tenant query contamination.
+### 1.2 Decoupled Domain Event Bus
+- **In-Memory Type-Safe Event Bus (`DomainEventBus`):** Implements an asynchronous publish-subscribe event bus that decouples domain modules without external broker dependencies.
+- **66 Strongly Typed Domain Events:** Covers all lifecycle transitions across Jobs, Quality, Pyrometry, Machines, Inventory, Warehouses, Workforce, Dispatch, Master Data, Costing, and Finance.
+- **Side-Effect Handlers (`registerCoreSubscribers`):** Offloads non-critical side effects (e.g. audit logging, cross-module notifications, finished-goods receipt triggers upon job completion) to keep primary HTTP responses fast and responsive.
 
-### 1.2 Decoupled Domain Event Bus (`DomainEventBus`)
+### 1.3 Immutable Audit Logging Subsystem
+- **Non-Blocking Silent Logger (`logSilently`):** Captures actor identity, action type, tenant context, timestamp, client IP, and entity details without impeding transactional execution.
+- **Granular Change Diff Engine (`diff.engine.ts`):** Computes deep before-and-after property diffs (`calculateDiff`) for sensitive records to support aerospace (AMS 2750G) and automotive (CQI-9) compliance audits.
+- **AuditLog Collection:** Permanently stores tamper-evident logs within tenant-partitioned MongoDB collections indexed by tenant, entity type, entity ID, and timestamp.
 
-- **In-Memory Type-Safe Event Bus:** Provides asynchronous publish-subscribe messaging between decoupled domain modules without introducing external broker dependencies.
-- **48+ Domain Event Subscriptions:** Listens for critical lifecycle events (such as `Job.Completed`, `QualityInspection.Approved`, and `Machine.BreakdownReported`) across 11 active domains.
-- **Asynchronous Side-Effect Handlers:** Offloads secondary tasks like audit logging, notification dispatch, and telemetry updates to keep primary HTTP response cycles fast.
+### 1.4 Monotonic Sequential ID Generation
+- **Atomic Counter Engine (`CounterModel`, `getNextSequence`):** Utilizes MongoDB atomic `$inc` with upsert operations on a dedicated counters collection to generate monotonic, sequential numbers without race conditions under high concurrency.
+- **Standardized Domain Prefixes:**
+  - Production Job: `JOB-YYYYMM-XXXX` (e.g., `JOB-202609-0001`)
+  - Heat Lot: `HEAT-YYYY-XXXX` (e.g., `HEAT-2026-0001`)
+  - Furnace Asset: `FURN-XX` (e.g., `FURN-01`)
+  - Quality Inspection: `QC-YYYYMM-XXXX`
+  - CoC Certificate: `COC-YYYYMM-XXXX`
+  - Non-Conformance Report: `NCR-YYYYMM-XXXX`
+  - Corrective Action: `CAPA-YYYYMM-XXXX`
+  - Dispatch Consignment: `DISP-YYYYMM-XXXX`
+  - Customer Invoice: `INV-YYYYMM-XXXX`
+  - Production Plan: `PLAN-YYYYMM-XXXX`
 
-### 1.3 Immutable Audit Logging (`AuditLogService`)
+### 1.5 Transparent Soft Delete Protocol
+- **Mongoose Soft-Delete Plugin (`softDeletePlugin`):** Transparently injects `{ isDeleted: false }` into all Mongoose `find`, `findOne`, `findOneAndUpdate`, `countDocuments`, and `aggregate` operations.
+- **Audit Preservation:** Stores `deletedAt: Date` and `deletedBy: string` instead of physically deleting documents.
+- **Entity Restoration:** Provides dedicated repository and controller restore methods (`restoreById`) to recover accidentally archived records.
 
-- **Non-Blocking Audit Logger (`logSilently`):** Captures actor identity, action type, tenant context, timestamp, IP address, and payload diffs without slowing down business operations.
-- **Granular Change Diff Engine:** Calculates before-and-after field differences for sensitive records to support stringent aerospace and automotive compliance audits.
-- **AuditLog Collection:** Permanently records tamper-evident audit logs within tenant-partitioned MongoDB collections.
+### 1.6 Centralized Exception Hierarchy & Unified Response Envelope
+- **Structured Error Hierarchy (`AppError`):**
+  - `BadRequestError` (400)
+  - `UnauthorizedError` (401)
+  - `ForbiddenError` (403)
+  - `NotFoundError` (404)
+  - `ConflictError` (409)
+  - `ValidationError` (422)
+  - `TenantIsolationError` (403)
+  - `IdempotencyConflictError` (409)
+  - `InternalServerError` (500)
+- **Unified API Response Standard (`ApiResponse`):** Standardizes all JSON HTTP responses across the platform:
+  - `ApiResponse.success(res, data, message, statusCode)`
+  - `ApiResponse.created(res, data, message)`
+  - `ApiResponse.paginated(res, items, page, limit, total, message)`
+  - `ApiResponse.noContent(res)`
+  - `ApiResponse.error(res, message, statusCode, errors, code)`
 
-### 1.4 Atomic Sequential ID Generation (`CounterModel`)
+### 1.7 Enterprise Idempotency Middleware
+- **Duplicate Mutation Filter (`idempotencyMiddleware`):** Inspects `Idempotency-Key` headers on mutating requests (`POST`, `PUT`, `PATCH`).
+- **In-Memory Mutex & Cache:** Stores request hashes and response envelopes. Duplicate requests with identical keys return the cached response immediately, preventing double work order creation, double billing, or accidental duplicate inventory deductions.
 
-- **Collision-Free Counter Engine:** Utilizes MongoDB atomic `$inc` operations with upserts to generate monotonic sequential codes even under high concurrency.
-- **Domain-Specific Prefixes:** Produces standardized human-readable business identifiers such as `JOB-00001`, `EMP-00001`, `QC-00001`, `DISP-00001`, `NCR-00001`, `CUST-00001`, and `MACH-00001`.
+### 1.8 Async Background Task Queue & Resilience
+- **In-Memory Job Queue (`AsyncQueueService`):** Executes intensive background operations such as report compilation, batch evaluations, and broadcast notifications.
+- **Exponential Backoff & Dead-Letter Queue (DLQ):** Retries transient task failures with configurable backoff before moving failed jobs to an inspectable DLQ.
 
-### 1.5 Soft Delete Protocol (Mongoose Plugin)
+### 1.9 System Maintenance Lock Subsystem
+- **Runtime Maintenance Lock (`MaintenanceLockManager`):** Allows administrators to engage maintenance mode during controlled migrations or upgrades, gracefully blocking incoming non-admin mutations with informative `503 Service Unavailable` responses.
 
-- **Automatic Query Interceptor (`softDeletePlugin`):** Transparently injects `{ isDeleted: false }` into all Mongoose `find`, `count`, and aggregation pipelines.
-- **Audit-Preserving Metadata:** Retains deletion timestamps (`deletedAt`) and user identities (`deletedBy`) rather than physically removing records from the database.
-- **Entity Restore Handlers:** Provides dedicated controller actions to undelete and restore erroneously archived records.
+### 1.10 Database Connection & Resilience Subsystem
+- **Connection Lifecycle Manager (`DatabaseConnectionManager`):**
+  - Pool Sizing: Configured between 5 and 20 connections per instance.
+  - Timeout Protection: `serverSelectionTimeoutMS: 5000ms`.
+  - Auto-Indexing: Automatically enabled in development/test (`autoIndex: true`) and disabled in production (`autoIndex: false`) to avoid collection locks on startup.
+  - Driver Auto-Recovery: Handles network interruptions and gracefully reconnects.
+  - Graceful Shutdown: Listens for `SIGINT` and `SIGTERM` to cleanly close MongoDB connection pools.
 
-### 1.6 Centralized Error Handling & API Response Standard
+### 1.11 Indexing Standards & Registry
+- **ESR Rule (Equality, Sort, Range):** All compound indexes strictly follow the ESR standard.
+- **Index Registry (`IndexRegistry`):** Centralized utility that applies standard indexes:
+  - Tenant Unique Index: `{ tenantId: 1, [field]: 1 }` with `{ unique: true }`
+  - Status Filter Index: `{ tenantId: 1, status: 1, createdAt: -1 }`
+  - Genealogy Index: `{ tenantId: 1, heatNumber: 1, lotNumber: 1 }`
+  - Schedule Index: `{ tenantId: 1, furnaceId: 1, scheduledStartTime: 1, scheduledEndTime: 1 }`
+  - Ephemeral TTL Index: `{ createdAt: 1 }` with expiration seconds.
 
-- **AppError Exception Hierarchy:** Normalizes domain exceptions into structured HTTP errors including `BadRequestError` (400), `UnauthorizedError` (401), `ForbiddenError` (403), `NotFoundError` (404), `ConflictError` (409), and `InternalServerError` (500).
-- **Standardized API Envelope (`ApiResponse`):** Enforces uniform JSON response envelopes across all endpoints via `ApiResponse.success()`, `created()`, `paginated()`, `noContent()`, and `error()`.
+### 1.12 ACID Multi-Document Transactions
+- **Atomic Transaction Runner (`withTransaction`):** Coordinates complex operations across multiple collections inside atomic MongoDB sessions (e.g. Job completion + inventory finished goods receipt + CoC generation).
 
-### 1.7 Async Task Queue & Resilience Engine (`AsyncQueueService`)
+### 1.13 Architecture Governance & Layer Boundary Enforcement (14 Rules)
+The platform enforces strict Layered Clean Architecture (`Route -> Controller -> Service -> Repository -> Model`) via `ArchitectureGuard` and automated tests (`npm run check:arch`):
+1. **Rule 1: `DIRECT_PROCESS_ENV_PROHIBITED`** — Direct access to `process.env` is prohibited outside `src/config/` and `src/governance/`.
+2. **Rule 2: `CONTROLLER_DIRECT_REPOSITORY_PROHIBITED`** — Controllers must never import Repositories directly.
+3. **Rule 3: `CONTROLLER_DIRECT_MODEL_PROHIBITED`** — Controllers must never import Models or Mongoose directly.
+4. **Rule 4: `ROUTE_DIRECT_SERVICE_PROHIBITED`** — Routes must never import Services directly; routes delegate strictly to Controllers.
+5. **Rule 5: `ROUTE_DIRECT_REPOSITORY_PROHIBITED`** — Routes must never import Repositories directly.
+6. **Rule 6: `ROUTE_DIRECT_MODEL_PROHIBITED`** — Routes must never import Models directly.
+7. **Rule 7: `REPOSITORY_CALL_SERVICE_PROHIBITED`** — Repositories must never import Services (prohibits circular upward dependencies).
+8. **Rule 8: `REPOSITORY_CALL_CONTROLLER_PROHIBITED`** — Repositories must never import Controllers.
+9. **Rule 9: `REPOSITORY_EMIT_EVENTS_PROHIBITED`** — Repositories must never emit Domain Events directly; only Services emit events.
+10. **Rule 10: `MODEL_IMPORT_SERVICE_PROHIBITED`** — Models must never import Services.
+11. **Rule 11: `MODEL_IMPORT_REPOSITORY_PROHIBITED`** — Models must never import Repositories.
+12. **Rule 12: `SERVICE_CALL_CONTROLLER_PROHIBITED`** — Services must never import Controllers.
+13. **Rule 13: `SERVICE_EXPRESS_LEAKAGE_PROHIBITED`** — Services must never import or receive Express `Request`, `Response`, or `NextFunction` objects.
+14. **Rule 14: `CROSS_DOMAIN_DIRECT_DATA_ACCESS_PROHIBITED`** — Domain A must never import Domain B's repository or model directly; cross-domain coordination must use Domain B's Service or Domain Event Bus.
 
-- **Background Worker Engine:** Executes resource-intensive background operations like batch report exports, telemetry rollups, and bulk email notifications.
-- **Exponential Backoff & Dead-Letter Queue (DLQ):** Retries transient background job failures with increasing delays before moving permanently failing tasks to an administrative DLQ.
+### 1.14 Security Stack, Middleware & Logging Infrastructure
+- **Helmet:** Sets secure HTTP response headers.
+- **CORS Whitelist:** Validates origin headers against configured domains.
+- **Compression:** Gzip compresses JSON payloads.
+- **Rate Limiters:** `apiRateLimiter` (1000 req/15min) and `authRateLimiter` (20 req/15min).
+- **Winston JSON Logger (`logger.ts`):** Emits structured JSON logs with automatic masking of sensitive keys (`password`, `token`, `secret`, `authorization`).
+- **Zod Environment Validator (`env.config.ts`, `env.validator.ts`):** Validates all environment variables at startup, failing fast if required configuration keys are missing.
+- **Async Handler HOC (`asyncHandler`):** Wraps express controller methods, capturing rejected promises and forwarding errors to the global error middleware.
 
-### 1.8 Enterprise Idempotency Middleware
-
-- **Duplicate Mutation Filter:** Inspects `Idempotency-Key` headers on mutating requests (`POST`, `PUT`, `PATCH`) to prevent double-charging or duplicate work-order generation on network retries.
-
-### 1.9 Architectural Governance (`check:arch`)
-
-- **Automated Onion Architecture Validator:** Scans import graphs across backend modules to guarantee strict layer compliance (`Route -> Controller -> Service -> Repository`).
-- **Jest Architecture Boundary Test (`architecture-boundaries.spec.ts`):** Fails CI builds if circular dependencies or upward layer imports are detected in domain code.
-
-### 1.10 Infrastructure & Middleware Stack
-
-- **Express Security Stack:** Hardens API endpoints with Helmet security headers, CORS origin whitelisting, HTTP gzip compression, and rate limiting.
-- **Winston Structured Logger:** Formats logs in structured JSON with automated masking of sensitive keys (passwords, tokens) and per-module log levels.
-- **Zod Environment Validator (`src/config/env.config.ts`):** Validates all environment variables on boot, preventing startup when critical configuration keys are missing.
-- **Async Handler HOC (`asyncHandler`):** Eliminates repetitive `try/catch` boilerplate across controllers by capturing and forwarding promise rejections to the global error middleware.
-
----
-
-## 2. Authentication & Session Management
-
-### 2.1 Core Authentication Endpoints
-
-- `POST /api/v1/auth/register` — Registers a new user account under the active tenant and hashes credentials using bcrypt.
-- `POST /api/v1/auth/login` — Authenticates credentials and returns a short-lived JWT access token along with a secure refresh token.
-- `POST /api/v1/auth/refresh-token` — Rotates and exchanges an active refresh token for a newly signed JWT access token.
-- `POST /api/v1/auth/logout` — Invalidates the current user session and revokes the active refresh token in the database.
-- `POST /api/v1/auth/forgot-password` — Generates a time-limited, cryptographically secure password reset token and dispatches a recovery email.
-- `POST /api/v1/auth/reset-password` — Verifies the recovery token and safely updates the user's password.
-- `GET /api/v1/auth/me` — Fetches the currently authenticated user profile, active roles, and granular permissions for client-side authorization.
-
-### 2.2 Session & User Identity
-
-- **JWT Authentication Middleware (`authenticateJwt`):** Validates Bearer token signatures on incoming requests and attaches user claims to `req.user`.
-- **Role Assignment Endpoint (`PATCH /api/v1/auth/users/:userId/roles`):** Assigns or revokes administrative and operational roles for a user.
-- **RBAC Catalog Endpoint (`GET /api/v1/auth/rbac/catalog`):** Exposes the complete platform permission catalog, role definitions, and sensitivity classifications.
-- **Centralized Session Revocation:** Allows administrators to terminate single active sessions or force-logout all active devices for a user.
-
-### 2.3 Frontend Auth Pages
-
-- **Login Page (`/login`):** Provides a high-contrast authentication form with input validation, password visibility toggles, and tenant routing.
-- **Forgot Password Page (`/forgot-password`):** Allows users to request password recovery links via verified email addresses.
-- **Reset Password Page (`/reset-password`):** Validates password strength rules and sets new account credentials using reset tokens.
-- **Session Expired Page (`/session-expired`):** Displays a non-blocking timeout notice and directs users to safely re-authenticate.
-- **Unauthorized Page (`/unauthorized`):** Informs users when their active role lacks permission for a requested view and provides a navigation fallback.
-
----
-
-## 3. RBAC, Users, Roles & Governance
-
-### 3.1 Permission Registry (44 Granular Permissions, 3 Sensitivity Tiers)
-
-| Domain            | Permission Keys                                                                                                                                                     | Sensitivity          | Purpose                                                                                                      |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------ |
-| **Jobs**          | `JOB_VIEW`, `JOB_CREATE`, `JOB_UPDATE`, `JOB_DELETE`, `JOB_DISPATCH`                                                                                                | Standard / Sensitive | Controls access to work-order creation, recipe updates, status changes, and dispatch authorizations.         |
-| **Quality**       | `QC_INSPECT`, `QC_ASSIGN`, `QC_APPROVE`, `QC_REJECT`                                                                                                                | Standard / Sensitive | Governs metallurgical lab inspections, hardness surveys, NCR dispositioning, and CoC sign-offs.              |
-| **Machines**      | `MACHINE_VIEW`, `MACHINE_CREATE`, `MACHINE_UPDATE`, `MACHINE_DELETE`, `MACHINE_MAINTAIN`                                                                            | Standard             | Protects furnace registrations, calibration logs, capability parameters, and breakdown reporting.            |
-| **Inventory**     | `INVENTORY_VIEW`, `INVENTORY_UPDATE`, `INVENTORY_MANAGE`                                                                                                            | Standard             | Restricts stock ledger adjustments, heat lot creations, goods receipts, and warehouse bin transfers.         |
-| **Employees**     | `EMPLOYEE_VIEW`, `EMPLOYEE_CREATE`, `EMPLOYEE_UPDATE`, `EMPLOYEE_DELETE`, `EMPLOYEE_DEACTIVATE`, `EMPLOYEE_REACTIVATE`, `EMPLOYEE_ASSIGN`, `EMPLOYEE_MANAGE_SKILLS` | Standard / Sensitive | Controls personnel directory access, skill certifications, operator assignments, and deactivations.          |
-| **Attendance**    | `ATTENDANCE_VIEW`, `ATTENDANCE_MARK`, `WORKFORCE_MANAGE`                                                                                                            | Standard             | Manages shift creation, clock-in records, supervisor corrections, leave approvals, and overtime logs.        |
-| **Dispatch**      | `DISPATCH_VIEW`, `DISPATCH_CREATE`, `DISPATCH_SCHEDULE`, `DISPATCH_APPROVE`, `DISPATCH_MARK`, `DISPATCH_CANCEL`                                                     | Standard / Sensitive | Protects outbound shipping orders, document compliance gates, carrier schedules, and delivery confirmations. |
-| **Reports**       | `REPORTS_VIEW`, `REPORTS_MANAGE`                                                                                                                                    | Standard             | Authorizes access to executive OEE dashboards, quality analytics, and automated report scheduling.           |
-| **Customers**     | `CUSTOMER_VIEW`, `CUSTOMER_CREATE`, `CUSTOMER_UPDATE`, `CUSTOMER_DELETE`                                                                                            | Standard             | Manages client profile creation, credit limit adjustments, and customer directory access.                    |
-| **Notifications** | `NOTIFICATIONS_VIEW`, `NOTIFICATIONS_MANAGE`                                                                                                                        | Standard             | Governs broadcast alert creation, system template editing, and user notification preference management.      |
-| **Admin**         | `SYSTEM_ADMIN`, `TENANT_MANAGE`, `AUDIT_VIEW`                                                                                                                       | Critical             | Authorizes system settings updates, tenant provisioning, feature flag overrides, and audit log inspection.   |
-| **Workflow**      | `WORKFLOW_VIEW`, `WORKFLOW_EXECUTE`, `WORKFLOW_MANAGE`                                                                                                              | Standard / Sensitive | Protects state-machine definition creation, workflow versioning, instance execution, and rollbacks.          |
-
-### 3.2 Users Management Console (`/settings/users`)
-
-- **Personnel Directory Table:** Renders active users, roles, email addresses, and status badges with responsive layout support.
-- **Search & Filtering Bar:** Filters the user list by name, email, department, assigned role, and status.
-- **User Creation & Edit Modal (`UserModal.tsx`):** Provides a modal form to create accounts, set temporary credentials, and assign roles.
-- **Bulk Status Controls:** Enables administrators to activate or suspend multiple user accounts in a single batch operation.
-- **RTK Query Hook Integration:** Connects the user console directly to cached backend mutations via `settingsApi.ts`.
-
-### 3.3 Roles Management Console (`/settings/roles`)
-
-- **Role Summary Cards:** Displays all defined organizational roles alongside real-time user count badges.
-- **Role Configuration Dialog:** Allows administrators to rename roles and update role descriptions.
-
-### 3.4 Permissions Matrix Console (`/settings/permissions`)
-
-- **Interactive Permission Grid (`RolePermissionGrid.tsx`):** Provides an interactive matrix to toggle granular permissions across roles in real time.
-- **Sensitivity Level Badging:** Visually highlights permissions with Standard, Sensitive, or Critical color-coded tags.
-- **Permissions Explorer (`PermissionsPage.tsx`):** Displays detailed descriptions and risk classifications for all 44 platform permissions.
+### 1.15 SRE Health, Liveness & Readiness Probes
+- `GET /api/v1/health` — Comprehensive service diagnostics: database connection state, round-trip ping latency, process uptime, and memory usage (RSS, Heap).
+- `GET /api/v1/health/liveness` — Kubernetes liveness probe verifying process responsiveness.
+- `GET /api/v1/health/readiness` — Kubernetes readiness probe verifying database readiness to receive traffic.
 
 ---
 
-## 4. Tenant, System Settings & Feature Flags
+## 2. Core Platform Infrastructure Catalog
 
-### 4.1 System Settings Console (`/settings/system`)
+The core framework in `backend/src/core` provides foundational utilities and base classes across 18 subdirectories (33 files):
 
-- **System Telemetry Dashboard:** Monitors live MongoDB connection health, active tenant counts, and CPU/memory utilization.
-- **Maintenance Mode Switch:** Enables administrators to temporarily lock the platform for controlled database migrations.
-- `GET /api/v1/admin/system-settings` — Fetches global system configuration parameters and infrastructure flags.
-- `PUT /api/v1/admin/system-settings` — Updates global system configuration parameters and infrastructure flags.
-
-### 4.2 Tenant Settings Console (`/settings/tenants`)
-
-- **Facility Profile Manager:** Configures plant physical address, operating legal name, tax identifiers, and industrial sector.
-- **Rate Limit & Retention Configurator:** Customizes telemetry sampling frequencies and audit log retention periods per tenant.
-- `GET /api/v1/admin/tenant-settings` — Retrieves the active tenant's operating parameters, timezone, and telemetry limits.
-- `PUT /api/v1/admin/tenant-settings` — Updates the active tenant's operating parameters, timezone, and telemetry limits.
-
-### 4.3 Feature Flags Console (`/settings/feature-flags`)
-
-- **Runtime Flag Switches (`FeatureFlagToggleCards.tsx`):** Toggles platform-wide operational feature gates without requiring redeployment:
-  - `ENABLE_AMS_2750G_PYROMETRY` — Enforces strict pyrometry sensor calibration workflows for aerospace heat treatment.
-  - `ENABLE_REALTIME_PLC_TELEMETRY` — Connects live furnace PLC sensor streaming to dashboard widgets.
-  - `ENABLE_MULTI_TENANT_ISOLATION` — Activates strict tenant partitioning verification on all queries.
-  - `ENABLE_AUTO_COC_GENERATION` — Automatically drafts Certificates of Conformance upon QA approval.
-- `GET /api/v1/admin/feature-flags/:flagKey` — Checks the runtime enabled status of a specific feature flag.
-- `POST /api/v1/admin/feature-flags` — Sets or updates the global state of a platform feature flag.
-- `POST /api/v1/admin/feature-flags/override` — Applies a tenant-specific override for a feature flag.
-
-### 4.4 Backup Management
-
-- `POST /api/v1/admin/backups` — Triggers an on-demand point-in-time database backup snapshot for disaster recovery.
-- `GET /api/v1/admin/backups` — Lists previous backup archives, timestamps, file sizes, and storage locations.
-
-### 4.5 License Management
-
-- `GET /api/v1/admin/license` — Inspects enterprise license validity, authorized module entitlements, and user seat limits.
-
-### 4.6 Session Administration
-
-- `GET /api/v1/admin/sessions/:userId` — Lists all active login sessions, device user agents, and IP addresses for a user.
-- `DELETE /api/v1/admin/sessions/:sessionId` — Revokes a specific compromised or stale user session token.
-- `DELETE /api/v1/admin/sessions/user/:userId` — Forces termination of all active sessions for a given user account.
-
----
-
-## 5. Customer & Client Registry
-
-### 5.1 Backend API Endpoints
-
-- `POST /api/v1/customers` — Creates a new customer profile with credit limits, billing addresses, and tax identifiers.
-- `GET /api/v1/customers` — Retrieves a paginated list of client companies with search and industry filtering.
-- `GET /api/v1/customers/:id` — Fetches full details for a specific customer including job history and credit status.
-- `PUT /api/v1/customers/:id` — Updates existing customer contact information, billing terms, and address records.
-- `DELETE /api/v1/customers/:id` — Soft-deletes a customer record while preserving historical job and financial associations.
-
-### 5.2 Frontend Customer Console (`/settings/customers`)
-
-- **Customer Directory Table:** Lists client organizations with credit limits, contact emails, phone numbers, and active status indicators.
-- **Customer Search & Filters:** Filters the customer directory by corporate name, email, phone, and account status.
-- **Customer Management Drawer:** Provides a slide-over form for creating and updating customer master records.
-- **Customer Soft-Delete & Restore Action:** Allows archiving and restoring client records without permanent data loss.
+| Directory | File | Primary Exports | Functionality & Purpose |
+|---|---|---|---|
+| `constants` | `events.ts` | `DomainEvents`, `DomainEventName` | Central registry of 66 strongly typed domain event names across 10 categories. |
+| `constants` | `permissions.ts` | `Permissions`, `PermissionKey`, `PERMISSION_CATALOG` | 44 granular permissions categorized by domain with Standard, Sensitive, and Critical tiers. |
+| `constants` | `status.ts` | `JobStatus`, `QualityStatus`, `MachineStatus`, etc. | Authoritative enum definitions for all domain entity lifecycles. |
+| `context` | `tenant-context.ts` | `TenantContext`, `TenantContextHolder` | `AsyncLocalStorage` context holder providing ambient tenant and user data. |
+| `controllers` | `base.controller.ts` | `BaseController` | Base class for controllers with tenant extraction, user claims, pagination, and response helpers. |
+| `database` | `connection.ts` | `DatabaseConnectionManager` | Mongoose connection lifecycle manager with retry loops, pooling, and graceful shutdown. |
+| `database` | `health.ts` | `getDatabaseHealth`, `DatabaseHealth` | Evaluates live MongoDB connection health and ping latency. |
+| `database` | `index-registry.ts` | `IndexRegistry` | Declarative index helper enforcing tenant-unique and ESR query optimization patterns. |
+| `database` | `transaction.ts` | `withTransaction` | Executes multi-document operations inside managed MongoDB ACID sessions. |
+| `errors` | `app-error.ts` | `AppError`, `BadRequestError`, `NotFoundError`, etc. | Complete structured HTTP exception hierarchy with error codes and status codes. |
+| `events` | `domain-event-bus.ts` | `DomainEventBus` | In-memory pub/sub broker with typed event dispatching and listener management. |
+| `events` | `subscribers.ts` | `registerCoreSubscribers` | Registers system-wide listeners for cross-domain side effects. |
+| `governance` | `architecture-guard.ts` | `ArchitectureGuard`, `ArchitectureViolation` | AST and regex scanner enforcing 14 clean architecture layer rules in CI builds. |
+| `maintenance` | `maintenance-lock.ts` | `MaintenanceLockManager` | Manages platform-wide maintenance locks to block non-administrative mutations. |
+| `middleware` | `auth.middleware.ts` | `authenticateJwt`, `optionalAuth` | Validates Bearer JWT tokens and populates `req.user` claims. |
+| `middleware` | `error.middleware.ts` | `errorMiddleware` | Centralized Express error handler normalizing exceptions into `ApiResponse.error`. |
+| `middleware` | `idempotency.middleware.ts` | `idempotencyMiddleware` | Intercepts `Idempotency-Key` headers on mutations to prevent duplicate execution. |
+| `middleware` | `rate-limiter.middleware.ts` | `apiRateLimiter`, `authRateLimiter` | Express rate-limiting middleware protecting against brute-force attacks and abuse. |
+| `middleware` | `rbac.middleware.ts` | `requirePermission`, `requireRole` | Enforces RBAC permission and role authorizations on protected routes. |
+| `middleware` | `tenant.middleware.ts` | `tenantMiddleware` | Asserts tenant boundaries by verifying `x-tenant-id` header against JWT claims. |
+| `models` | `base.schema.ts` | `createBaseSchema` | Mongoose schema factory injecting `tenantId`, timestamps, soft delete, and ID transforms. |
+| `models` | `counter.model.ts` | `CounterModel`, `getNextSequence` | Atomic monotonic sequential business identifier generator. |
+| `plugins` | `soft-delete.plugin.ts` | `softDeletePlugin` | Global Mongoose plugin transparently injecting `{ isDeleted: false }` into queries. |
+| `repository` | `base.repository.ts` | `BaseRepository<T>` | Abstract repository encapsulating tenant scoping for CRUD, pagination, and soft delete. |
+| `responses` | `api-response.ts` | `ApiResponse` | Standard JSON response formatter (`success`, `created`, `paginated`, `error`). |
+| `routes` | `base.router.ts` | `createBaseRouter` | Factory helper for configuring Express domain routers. |
+| `services` | `audit-log.service.ts` | `AuditLogService` | Service managing tamper-evident audit logging and entity audit trail queries. |
+| `services` | `base.service.ts` | `BaseService` | Base service class providing common logging and event emission capabilities. |
+| `services` | `queue.service.ts` | `AsyncQueueService` | Background task queue with exponential backoff and dead-letter queue. |
+| `types` | `common.types.ts` | `PaginatedResult`, `PaginationQuery`, `UserContext` | Core TypeScript interfaces and shared data types. |
+| `utils` | `async-handler.ts` | `asyncHandler` | High-order controller wrapper forwarding rejected promises to error middleware. |
+| `utils` | `crypto.utils.ts` | `hashPassword`, `comparePassword`, `generateToken` | Cryptographic helpers for bcrypt hashing and JWT token signing/verification. |
+| `utils` | `diff.engine.ts` | `calculateDiff`, `DiffItem` | Deep property difference engine calculating before/after changes for audit logs. |
+| `utils` | `logger.ts` | `logger` | Winston JSON logger with automated masking of sensitive attributes. |
+| `validators` | `base.validator.ts` | `validateBody`, `validateQuery`, `validateParams` | Zod validation middleware for Express route inputs. |
+| `validators` | `env.validator.ts` | `validateEnv`, `envSchema` | Zod schema validating environment variables at application bootstrap. |
+| `validators` | `pagination.validator.ts` | `paginationQuerySchema` | Zod schema validating standard pagination and sorting parameters. |
 
 ---
 
-## 6. Production & Heat Treatment Job Management
+## 3. Domain Event Bus Registry (66 Typed Events)
 
-### 6.1 12-Stage Heat Treatment Lifecycle State Machine
+The in-memory `DomainEventBus` manages 66 strongly typed domain events across 10 business domains:
 
-`DRAFT` ➔ `PENDING_REVIEW` ➔ `APPROVED` ➔ `SCHEDULED` ➔ `IN_PROGRESS` ➔ `PAUSED` ➔ `QUALITY_CHECK` ➔ `STORAGE` ➔ `READY_FOR_DISPATCH` ➔ `DISPATCHED` ➔ `COMPLETED` / `CANCELLED`
-
-### 6.2 Backend API Endpoints
-
-- `POST /api/v1/jobs` — Creates a new production work order with metallurgical recipe parameters and customer references.
-- `GET /api/v1/jobs` — Retrieves work orders with multi-parameter filtering (status, process type, machine ID, date range).
-- `GET /api/v1/jobs/:id` — Returns complete job details including recipe parameters, stage progress, and assigned resources.
-- `PUT /api/v1/jobs/:id` — Updates job specifications, target properties, or delivery dates before processing begins.
-- `DELETE /api/v1/jobs/:id` — Soft-deletes a draft or cancelled job record from active production views.
-- `PATCH /api/v1/jobs/:id/status` — Transitions a job through the 12-stage lifecycle state machine with validation.
-- `GET /api/v1/jobs/queue` — Returns the prioritized shop-floor production queue for active furnaces.
-- `GET /api/v1/jobs/:id/timeline` — Retrieves the timestamped state-transition history for a job.
-- `GET /api/v1/jobs/:id/history` — Fetches the complete immutable audit trail of modifications for a work order.
-
-### 6.3 Job Operations & Worker/Machine Assignments
-
-- `PATCH /api/v1/jobs/:id/assign-worker` — Assigns a qualified shop-floor operator to a production job.
-- `PATCH /api/v1/jobs/:id/reallocate-worker` — Reallocates an assigned operator from one job to another to balance floor workload.
-- `PATCH /api/v1/jobs/:id/remove-worker` — Unassigns an operator from a work order.
-- `PATCH /api/v1/jobs/:id/assign-machine` — Binds a furnace or CNC machine to a work order based on capability matching.
-- `PATCH /api/v1/jobs/:id/reallocate-machine` — Reassigns a job to an alternate capable machine in case of bottlenecks or maintenance.
-- `PATCH /api/v1/jobs/:id/remove-machine` — Clears the machine allocation for an unscheduled job.
-- `POST /api/v1/jobs/check-conflicts` — Analyzes scheduling time slots to detect machine or operator booking conflicts.
-
-### 6.4 Scheduling Operations
-
-- `PATCH /api/v1/jobs/:id/schedule` — Assigns planned start and end time windows for a job on a specific machine.
-- `PATCH /api/v1/jobs/:id/reschedule` — Moves a scheduled job to a new time window or alternative machine.
-- `PATCH /api/v1/jobs/:id/cancel-schedule` — Cancels a planned schedule slot and returns the job to approved backlog status.
-
-### 6.5 Production Operations
-
-- `PATCH /api/v1/jobs/:id/start` — Records furnace charge entry, verifies initial temperature conditions, and begins cycle timer.
-- `PATCH /api/v1/jobs/:id/pause` — Halts active cycle processing and logs operator downtime reasons (e.g., gas supply check).
-- `PATCH /api/v1/jobs/:id/resume` — Resumes an in-progress cycle after resolving a temporary stoppage.
-- `PATCH /api/v1/jobs/:id/progress` — Records completion percentages and milestones across thermal cycle stages (Preheat, Soak, Quench, Temper).
-- `POST /api/v1/jobs/:id/downtime` — Logs an unplanned downtime event against an active job for OEE tracking.
-- `PATCH /api/v1/jobs/:id/complete` — Concludes the thermal cycle, archives furnace logs, and automatically triggers a QC inspection record.
-- `PATCH /api/v1/jobs/:id/storage` — Moves heat-treated parts into post-process warehouse storage awaiting QA clearance.
-- `PATCH /api/v1/jobs/:id/dispatch` — Marks finished goods as transferred to the shipping bay for outbound dispatch.
-- `POST /api/v1/jobs/:id/notes` — Appends shift handover notes, metallurgical observations, or operator remarks to the job log.
-
-### 6.6 Recipe & Pyrometry Parameter Engine
-
-- **Target Temperature Regulation:** Sets exact Celsius heating targets (°C) and controlled ramp rates (°C/min) to prevent thermal shock.
-- **Soak & Dwell Timing:** Controls thermal dwell durations in minutes to ensure uniform austenitic transformation.
-- **Atmospheric Carbon Potential Control:** Regulates percentage carbon (%C) potential for precision gas and vacuum carburizing cycles.
-- **Quench Medium & Agitation:** Manages quench medium selection (Oil, Polymer, Water, N₂ gas) and variable agitator RPM for controlled cooling curves.
-
-### 6.7 Metallurgical Heat Lot Tracking
-
-- **Alloy Grade & Charge Specifications:** Tracks raw material grades (4140, 8620, 300M, Inconel 718), base hardness, and furnace charge weights (kg).
-- **Target Hardness & Case Depth Specs:** Enforces customer specifications for surface hardness (HRC), core hardness, and Effective Case Depth (ECD in mm).
-
-### 6.8 Frontend Job Pages & Components
-
-- **Job List Page (`/jobs`):** Displays paginated work orders with status tabs, priority badges, furnace allocations, and quick filters.
-- **Job Details Workbench (`/jobs/:id`):** Provides an 8-tab production console covering Recipe, Progress, Assignments, Downtime, Notes, QC, and History.
-- **Create Job Page (`/jobs/new`):** Guides users through work-order drafting with customer lookups, recipe validation, and material verification.
-- **Edit Job Page (`/jobs/:id/edit`):** Allows updating work-order parameters before thermal processing begins.
-- **Create Job Modal (`CreateJobModal.tsx`):** Offers a rapid work-order creation popup accessible from anywhere in the application.
-- **Job Inspector Drawer (`JobInspectorDrawer.tsx`):** Renders a slide-out preview of job recipes, status timelines, and operator notes.
-- **Status Timeline (`StatusTimeline.tsx`):** Visualizes sequential state-machine transitions and timestamps for a job.
-
----
-
-## 7. Metallurgical Quality Control & Lab Subsystem (ISO 17025 / AMS 2750G)
-
-### 7.1 5-Tier Inspection Status Hierarchy
-
-`PENDING` ➔ `IN_REVIEW` ➔ `APPROVED` ➔ `REJECTED` ➔ `REINSPECTION`
-
-### 7.2 Backend API Endpoints
-
-- `POST /api/v1/quality` — Creates a quality inspection record linked to a completed production job or received raw material batch.
-- `GET /api/v1/quality` — Retrieves inspection records with multi-criteria filtering (status, job ID, inspector ID, date range).
-- `GET /api/v1/quality/:id` — Returns complete inspection records including hardness surveys, defect findings, and test reports.
-- `PUT /api/v1/quality/:id` — Updates inspection notes, sample IDs, or test standards prior to sign-off.
-- `DELETE /api/v1/quality/:id` — Soft-deletes a draft or rejected inspection record.
-- `GET /api/v1/quality/:id/history` — Fetches the complete state-transition audit log for an inspection.
-
-### 7.3 Inspection Lifecycle Endpoints
-
-- `POST /api/v1/quality/:id/assign` — Assigns a certified QC inspector or metallurgist to an inspection record.
-- `POST /api/v1/quality/:id/execute` — Commences the physical laboratory inspection process and locks initial test samples.
-- `POST /api/v1/quality/:id/measurements` — Records multi-point hardness and microhardness readings across sample cross-sections.
-- `POST /api/v1/quality/:id/defects` — Logs observed non-conformances including crack indications, excessive decarburization, or porosity.
-- `POST /api/v1/quality/:id/pass` — Signs off an inspection as compliant with engineering drawings and customer specifications.
-- `POST /api/v1/quality/:id/fail` — Marks an inspection as failed and automatically generates a Non-Conformance Report (NCR).
-- `POST /api/v1/quality/:id/request-reinspection` — Requests a secondary test run or sample repolish when readings are inconclusive.
-- `POST /api/v1/quality/:id/approve` — Provides final QA Manager authorization to release parts for shipping.
-- `POST /api/v1/quality/:id/reject` — Issues a formal QA Manager rejection preventing shipment of non-conforming lots.
-
-### 7.4 Hardness & Microhardness Testing
-
-- **Multi-Scale Hardness Support:** Records hardness on Rockwell C (HRC), Rockwell B (HRB), Rockwell A (HRA), Vickers (HV), and Brinell (HBW) scales.
-- **Traverse Survey Curves (ECD):** Maps depth-versus-hardness profiles to verify Effective Case Depth at standard hardness cutoffs (e.g., 50 HRC).
-
-### 7.5 Microstructure & Metallographic Analysis
-
-- **Microstructural Evaluation:** Evaluates Retained Austenite percentage (%), ASTM E112 Grain Size Numbers, total decarburization depth, and carbide morphology.
-
-### 7.6 Checklists
-
-- `POST /api/v1/quality/checklists` — Creates reusable quality inspection checklists for specific customer specifications.
-- `GET /api/v1/quality/checklists` — Lists available inspection checklists with process type filtering.
-- `GET /api/v1/quality/checklists/:id` — Retrieves a specific checklist template and its inspection criteria.
-
-### 7.7 Test Reports & Quality Certificates
-
-- `POST /api/v1/quality/test-reports` — Compiles hardness surveys and microstructural findings into an ISO 17025 / AMS 2750G compliant test report.
-- `GET /api/v1/quality/test-reports` — Retrieves compiled test reports and Certificates of Conformance (CoC).
-- **Report Viewer (`ReportViewer.tsx`):** Renders a printable CoC with target-vs-actual tables, digital QA signatures, and QR verification codes.
-
-### 7.8 NCR & CAPA Management
-
-- `GET /api/v1/quality/ncrs` — Lists all open Non-Conformance Reports with severity classifications and root-cause summaries.
-- `PATCH /api/v1/quality/ncrs/:ncrId/capa` — Records Corrective and Preventive Action (CAPA) plans to address defect root causes.
-
-### 7.9 Frontend Quality Pages & Components
-
-- **Inspection Queue Page (`/quality`):** Renders active inspection workloads, pass/fail ratios, and inspector assignment dialogs.
-- **Inspection Details Workbench (`/quality/:id`):** Provides a 6-tab lab workbench covering Measurements, Defects, NCR/CAPA, Sign-Off, CoC, and History.
-- **Quality Analytics Dashboard (`/quality/dashboard`):** Visualizes First Pass Yield (FPY %) trends, defect Pareto charts, and open NCR metrics.
+| Domain | Event Identifier | Emitted When | Typical Subscribed Side Effects |
+|---|---|---|---|
+| **Jobs** | `Job.Created` | New production job work order is drafted. | Audit logging, notification dispatch. |
+| **Jobs** | `Job.Scheduled` | Job assigned to furnace time slot. | Machine calendar update, operator notification. |
+| **Jobs** | `Job.Started` | Furnace charge entry, heating cycle timer started. | Machine status `RUNNING`, live telemetry streaming. |
+| **Jobs** | `Job.Paused` | Thermal cycle temporarily paused. | Machine status `IDLE`, downtime timer started. |
+| **Jobs** | `Job.Resumed` | Processing resumed after hold. | Machine status `RUNNING`, downtime timer ended. |
+| **Jobs** | `Job.DowntimeLogged` | Operator logs stoppage reason. | OEE metrics calculation, supervisor notification. |
+| **Jobs** | `Job.Completed` | Thermal process completed, unloaded. | Quality inspection record auto-created, machine `IDLE`. |
+| **Jobs** | `Job.Cancelled` | Job cancelled prior to completion. | Schedule released, inventory reservations released. |
+| **Jobs** | `Job.DispatchStaged` | Job transferred to dispatch holding area. | Finished goods status updated to dispatchable. |
+| **Quality** | `QualityInspection.Created` | Inspection record created for job or raw material. | Inspector assignment queue updated. |
+| **Quality** | `QualityInspection.Started` | Inspector commences physical test execution. | Inspection status set to `IN_PROGRESS`. |
+| **Quality** | `QualityInspection.MeasurementsRecorded` | Hardness survey or lab reading captured. | Traverse curve updated, target-vs-actual checked. |
+| **Quality** | `QualityInspection.DefectLogged` | Discrepancy observed. | Defect Pareto updated. |
+| **Quality** | `QualityInspection.Approved` | QA Manager signs off inspection. | CoC generated, job transitioned to `STORAGE`. |
+| **Quality** | `QualityInspection.Rejected` | Quality inspection failed. | Automatic NCR generated, material quarantined. |
+| **Quality** | `QualityInspection.ReinspectionRequested` | Inconclusive readings require repolish/retest. | Secondary inspection task queued. |
+| **Quality** | `QualityInspection.NcrRaised` | Formal NCR created. | Containment alert dispatched, MRB review scheduled. |
+| **Quality** | `QualityInspection.CapaUpdated` | Corrective/Preventive Action logged. | CAPA verification deadline tracked. |
+| **Quality** | `QualityPlan.Approved` | Quality inspection plan revision approved. | Activated for new production runs. |
+| **Quality** | `Quality.TestReportGenerated` | Lab test findings compiled. | Test report attached to job audit trail. |
+| **Quality** | `Quality.CocIssued` | Certificate of Conformance approved and signed. | Finished goods released for dispatch. |
+| **Quality** | `Quality.CocRevoked` | Certificate of Conformance voided. | Dispatches blocked, alert triggered. |
+| **Machines** | `Machine.Registered` | New furnace, CNC, or quench tank commissioned. | Asset database updated. |
+| **Machines** | `Machine.StatusChanged` | Operational state transitions (Idle, Running, Maint). | Command center status cards updated. |
+| **Machines** | `Machine.BreakdownReported` | Unplanned equipment stoppage logged. | Machine status set to `BREAKDOWN`, maintenance alerted. |
+| **Machines** | `Machine.BreakdownResolved` | Emergency repair completed. | Machine transitioned to `MAINTENANCE` for testing. |
+| **Machines** | `Machine.CalibrationLogged` | Sensor calibration, TUS, or SAT recorded. | Pyrometry compliance window refreshed. |
+| **Machines** | `Machine.MaintenanceTriggered` | PM schedule interval elapsed. | Maintenance work order spawned. |
+| **Machines** | `Machine.MaintenanceCompleted` | Service completed, parts logged. | PM schedule timer reset, machine restored to `IDLE`. |
+| **Machines** | `Maintenance.WorkOrderCreated` | Work order opened for repair or service. | Assigned technician notified. |
+| **Machines** | `Maintenance.WorkOrderCompleted` | Maintenance technician signs off work order. | Asset downtime hours rolled into OEE. |
+| **Machines** | `Maintenance.PreventivePlanCreated`| New PM schedule defined. | Calendar reminders configured. |
+| **Inventory** | `Inventory.ItemCreated` | New item or SKU master record created. | Item catalog updated. |
+| **Inventory** | `Inventory.GoodsReceived` | Inward delivery from supplier recorded. | Stock balance incremented, heat lot created. |
+| **Inventory** | `Inventory.GoodsIssued` | Material issued to production job. | Stock balance decremented, WIP charged. |
+| **Inventory** | `Inventory.StockAdjusted` | Supervisor manual stock adjustment logged. | Inventory ledger updated with variance. |
+| **Inventory** | `Inventory.StockReserved` | Raw material reserved for planned job. | Available stock decremented, reserved incremented. |
+| **Inventory** | `Inventory.StockReleased` | Reservation cancelled. | Available stock restored. |
+| **Inventory** | `Inventory.HeatLotCreated` | New heat lot batch registered with MTR. | Inward QC inspection triggered. |
+| **Inventory** | `Inventory.LowStockAlert` | Balance falls below safety reorder threshold. | Reorder notification sent to procurement. |
+| **Warehouse** | `Warehouse.PutawayCompleted` | Material placed in specific warehouse bin. | Location occupancy updated. |
+| **Warehouse** | `Warehouse.MaterialQuarantined` | Material moved to quarantine storage bay. | Bin flagged as quarantine hold. |
+| **Warehouse** | `Warehouse.MaterialReleased` | Material cleared by QA. | Transferred from quarantine to usable bin. |
+| **Warehouse** | `Warehouse.FinishedGoodsReceived`| Completed job parts received in FG store. | Finished goods ledger incremented. |
+| **Warehouse** | `Warehouse.FinishedGoodsReserved`| Parts reserved for scheduled customer dispatch. | FG reservation locked against shipping order. |
+| **Workforce** | `Workforce.EmployeeCreated` | New operator or staff profile added. | Personnel directory updated. |
+| **Workforce** | `Workforce.EmployeeDeactivated` | Employee offboarded or suspended. | System access revoked, schedules cleared. |
+| **Workforce** | `Workforce.ShiftScheduled` | Operator assigned to shift roster. | Shift calendar updated. |
+| **Workforce** | `Workforce.PunchRecorded` | Operator clocks in or out. | Attendance status computed (Present/Late). |
+| **Workforce** | `Workforce.LeaveRequested` | Leave application submitted. | Supervisor approval queue updated. |
+| **Workforce** | `Workforce.LeaveApproved` | Supervisor approves time off. | Shift roster updated, leave balance decremented. |
+| **Workforce** | `Workforce.LeaveRejected` | Supervisor denies leave request. | Employee notified with reason. |
+| **Workforce** | `Workforce.OvertimeRequested` | Overtime hours submitted. | Supervisor authorization queue updated. |
+| **Workforce** | `Workforce.OvertimeApproved` | Overtime approved at multiplier rate. | Payroll cost accumulator updated. |
+| **Workforce** | `Workforce.ShiftSwapped` | Peer shift swap approved. | Both operators' rosters swapped atomically. |
+| **Workforce** | `Workforce.AttendanceCorrected`| Supervisor corrects missed punch. | Attendance record updated with audit justification. |
+| **Dispatch** | `Dispatch.Created` | Outbound consignment order drafted. | Staging queue updated. |
+| **Dispatch** | `Dispatch.QualityVerified` | Verification that all jobs have approved CoCs. | Gate clearance milestone 1 achieved. |
+| **Dispatch** | `Dispatch.Scheduled` | Carrier, vehicle, and driver assigned. | Logistics schedule locked. |
+| **Dispatch** | `Dispatch.Approved` | Plant manager authorizes departure. | Gate pass issued. |
+| **Dispatch** | `Dispatch.Shipped` | Consignment departs factory premises. | Shipment status set to `IN_TRANSIT`. |
+| **Dispatch** | `Dispatch.Delivered` | Customer receives goods, PoD uploaded. | Consignment `DELIVERED`, billing notified. |
+| **Dispatch** | `Dispatch.Cancelled` | Consignment cancelled before departure. | Finished goods reservations released. |
+| **Master Data**| `MasterData.RecipeApproved` | Thermal recipe revision approved. | Locked for production scheduling. |
+| **Master Data**| `MasterData.SpecificationApproved`| Quality specification approved. | Linked to inspection criteria. |
+| **Planning** | `Planning.ProductionPlanCreated` | Master production plan established. | MRP shortage calculation triggered. |
+| **Planning** | `Planning.MrpRunCompleted` | Material requirement calculations completed. | Shortage report generated. |
+| **Costing** | `Costing.JobCostCalculated` | Material, labor, machine, energy calculated. | Job cost ledger populated. |
+| **Costing** | `Costing.JobCostRecalculated` | Updated with final actuals upon completion. | Cost variance recorded. |
+| **Costing** | `Costing.JobCostFrozen` | Job cost locked for historical archiving. | Sealed against future rate card changes. |
+| **Costing** | `Costing.RateCardUpdated` | Machine-hour or labor rate revised. | Applied to future costing calculations. |
+| **Finance** | `Finance.JournalPosted` | Balanced journal entry posted to GL. | Account balances updated. |
+| **Finance** | `Finance.JournalReversed` | Journal entry reversed with offsetting entries.| Historical audit trail preserved. |
+| **Finance** | `Finance.PeriodClosed` | Financial accounting period sealed. | Prior period postings blocked. |
+| **Finance** | `Finance.PeriodReopened` | Period unsealed under supervisor approval. | Audit alert generated. |
+| **Finance** | `Finance.InvoiceIssued` | Customer billing invoice generated. | Accounts receivable ledger incremented. |
+| **Finance** | `Finance.InvoiceVoided` | Invoice cancelled. | Reversing journal posted. |
+| **Finance** | `Finance.PaymentReceived` | Customer remittance recorded. | Receivables decremented, bank account credited. |
+| **System** | `System.AuditLogged` | Audit entry recorded for compliance. | Real-time audit stream notified. |
+| **System** | `System.AlertTriggered` | Critical operational anomaly detected. | Command center and push alerts triggered. |
 
 ---
 
-## 8. Equipment, Machines, Maintenance & Pyrometry
+## 4. RBAC & Governance Permission Catalog (44 Granular Permissions)
 
-### 8.1 Machine State Engine & Registry
+The platform enforces 44 granular permissions categorized across 12 functional domains with three sensitivity tiers:
+- **Standard (30):** Routine shop-floor, engineering, and administrative actions.
+- **Sensitive (11):** High-impact actions (deletions, quality sign-offs, gate releases, personnel deactivations).
+- **Critical (3):** System-level administration, tenant management, and audit log access.
 
-- **Machine Operational States:** Tracks real-time machine states across `IDLE`, `RUNNING`, `MAINTENANCE`, `BREAKDOWN`, `OFFLINE`, and `CALIBRATING`.
-- **Process Capability Matching:** Compares furnace thermal ratings and dimensions against job recipe requirements before scheduling.
-
-### 8.2 Machine Backend API Endpoints
-
-- `POST /api/v1/machines` — Registers a new furnace, CNC machine, or quench tank into the plant asset database.
-- `GET /api/v1/machines` — Lists registered machinery with status, bay location, and capability filters.
-- `GET /api/v1/machines/:id` — Retrieves full machine specifications, telemetry history, and maintenance records.
-- `PUT /api/v1/machines/:id` — Updates machine technical parameters, working volume, or maximum operating temperatures.
-- `DELETE /api/v1/machines/:id` — Soft-deletes a retired machine record from active shop-floor views.
-- `PATCH /api/v1/machines/:id/status` — Updates a machine's live operational status (e.g., transitions to Maintenance).
-- `PATCH /api/v1/machines/:id/calibration` — Records calibration certificates, sensor offsets, and pyrometry verification dates.
-- `PATCH /api/v1/machines/:id/capabilities` — Updates the list of certified thermal processes a machine is capable of running.
-- `POST /api/v1/machines/:id/notes` — Appends maintenance notes or inspection observations to the machine log.
-- `GET /api/v1/machines/:id/status-history` — Returns the historical log of machine state transitions and durations.
-- `GET /api/v1/machines/capable` — Finds machines meeting specific temperature, atmosphere, and charge weight criteria for a job.
-- `GET /api/v1/machines/status-summary` — Computes fleet-wide counts of machines in each operational status.
-
-### 8.3 Breakdown History & MTTR / MTBF Analytics
-
-- `POST /api/v1/machines/breakdowns` — Logs an equipment breakdown event and automatically switches machine status to `BREAKDOWN`.
-- `GET /api/v1/machines/breakdowns` — Lists historical and active breakdown logs with severity filters.
-- `GET /api/v1/machines/breakdowns/analytics` — Calculates Mean Time To Repair (MTTR), Mean Time Between Failures (MTBF), and total downtime hours.
-- `PATCH /api/v1/machines/breakdowns/:id/resolve` — Concludes breakdown repairs, logs root cause, and transitions machine to `MAINTENANCE` for testing.
-
-### 8.4 Utilization Telemetry
-
-- `POST /api/v1/machines/utilization` — Records shift-level runtime, idle, and setup hours for equipment efficiency tracking.
-- `GET /api/v1/machines/utilization` — Retrieves historical utilization logs by machine and date range.
-- `GET /api/v1/machines/utilization/analytics` — Computes Overall Equipment Effectiveness (OEE), availability, and performance rates.
-
-### 8.5 Maintenance Schedules & Logs
-
-- `POST /api/v1/maintenance/schedules` — Creates a recurring Preventive Maintenance (PM) schedule based on calendar intervals or runtime hours.
-- `GET /api/v1/maintenance/schedules` — Lists active maintenance schedules and upcoming service dates.
-- `GET /api/v1/maintenance/schedules/overdue` — Filters for overdue maintenance schedules requiring immediate attention.
-- `GET /api/v1/maintenance/schedules/:id` — Retrieves full details and task checklists for a maintenance schedule.
-- `PUT /api/v1/maintenance/schedules/:id` — Updates service intervals or task checklists for a maintenance schedule.
-- `POST /api/v1/maintenance/schedules/:id/trigger` — Manually spawns an immediate maintenance work order from a schedule.
-- `DELETE /api/v1/maintenance/schedules/:id` — Deactivates a recurring maintenance schedule.
-- `POST /api/v1/maintenance` — Logs a completed maintenance work order with parts replaced and labor hours.
-- `GET /api/v1/maintenance` — Lists completed and in-progress maintenance service logs.
-- `GET /api/v1/maintenance/:id` — Retrieves full service history and replaced component details for a maintenance log.
-- `PUT /api/v1/maintenance/:id` — Updates maintenance log notes or work-order completion details.
-- `DELETE /api/v1/maintenance/:id` — Soft-deletes an erroneous maintenance log record.
-
-### 8.6 Real-Time Pyrometry & AMS 2750G / CQI-9 Enforcement
-
-- **Multi-Zone Thermocouple Telemetry:** Streams temperature data from Control, Overtemperature, and Load thermocouples (1–6).
-- **Pyrometry Compliance Tracker:** Tracks Temperature Uniformity Survey (TUS) and System Accuracy Test (SAT) validity windows and alerts on upcoming expirations.
-
-### 8.7 Frontend Machine Pages & Components
-
-- **Machine Fleet List (`/machines`):** Displays machine cards with live status pills, current job links, and capability tags.
-- **Machine Details Page (`/machines/:id`):** Provides a comprehensive machine console covering Specifications, Status History, Utilization, and Maintenance.
-- **Machine Dashboard Page (`/machines/dashboard`):** Visualizes fleet-wide OEE, uptime percentages, and status distribution charts.
-- **Machine Status Cards (`MachineStatusCards.tsx`):** Displays visual KPI cards with live operational state indicators for each furnace.
-- **Machine Action Menu (`MachineActionMenu.tsx`):** Offers a quick-action dropdown to initiate maintenance, report breakdowns, or calibrate sensors.
-- **Downtime Timeline (`DowntimeTimeline.tsx`):** Renders a visual timeline of historical downtime events and maintenance durations.
-- **Utilization Charts (`UtilizationCharts.tsx`):** Displays OEE and uptime trend charts by equipment asset.
-- **Maintenance History (`MaintenanceHistory.tsx`):** Renders chronological PM service cards with technician notes and due dates.
-- **Machine Specifications (`MachineSpecifications.tsx`):** Lists working zone dimensions, temperature limits, atmospheric controls, and certifications.
+| Domain | Permission Key | Sensitivity | Purpose & Access Control Scope |
+|---|---|---|---|
+| **Jobs** | `JOB_VIEW` | Standard | View production jobs, recipes, schedules, and work order timelines. |
+| **Jobs** | `JOB_CREATE` | Standard | Draft new production work orders and batches from approved plans. |
+| **Jobs** | `JOB_UPDATE` | Standard | Update recipe targets, furnace allocations, and progress milestones. |
+| **Jobs** | `JOB_DELETE` | Sensitive | Soft-delete or cancel draft work orders. |
+| **Jobs** | `JOB_DISPATCH` | Sensitive | Authorize completed job transfer to dispatch holding. |
+| **Quality** | `QC_INSPECT` | Standard | Record hardness surveys, microhardness traverse, and microstructures. |
+| **Quality** | `QC_ASSIGN` | Standard | Assign certified inspection personnel to inspection work orders. |
+| **Quality** | `QC_APPROVE` | Sensitive | Authorize Certificates of Conformance (CoC) and release lots. |
+| **Quality** | `QC_REJECT` | Sensitive | Reject non-conforming batches and trigger Non-Conformance Reports. |
+| **Machines** | `MACHINE_VIEW` | Standard | Inspect machinery fleet status, working zones, and pyrometry telemetry. |
+| **Machines** | `MACHINE_CREATE` | Standard | Register new furnaces, CNC equipment, and quench tanks. |
+| **Machines** | `MACHINE_UPDATE` | Standard | Update machine technical parameters, zone dimensions, and capabilities. |
+| **Machines** | `MACHINE_DELETE` | Standard | Decommission or archive obsolete factory machinery. |
+| **Machines** | `MACHINE_MAINTAIN` | Standard | Log preventive maintenance, breakdown repairs, and sensor calibrations. |
+| **Inventory** | `INVENTORY_VIEW` | Standard | View stock balances, heat lots, MTRs, and warehouse storage bins. |
+| **Inventory** | `INVENTORY_UPDATE` | Standard | Record goods receipts, material issues, and bin transfers. |
+| **Inventory** | `INVENTORY_MANAGE` | Standard | Perform supervisor manual stock adjustments and manage SKU master data. |
+| **Employees** | `EMPLOYEE_VIEW` | Standard | View operator profiles, department allocations, and certified skills. |
+| **Employees** | `EMPLOYEE_CREATE` | Standard | Register new employee profiles and operator accounts. |
+| **Employees** | `EMPLOYEE_UPDATE` | Standard | Update contact information, department assignments, and work shifts. |
+| **Employees** | `EMPLOYEE_DELETE` | Sensitive | Offboard and soft-delete an employee profile. |
+| **Employees** | `EMPLOYEE_DEACTIVATE`| Sensitive | Temporarily suspend operator system access while preserving history. |
+| **Employees** | `EMPLOYEE_REACTIVATE`| Sensitive | Re-enable system access for returning personnel. |
+| **Employees** | `EMPLOYEE_ASSIGN` | Standard | Allocate operators to specific production cells and furnace bays. |
+| **Employees** | `EMPLOYEE_MANAGE_SKILLS`| Sensitive | Certify specialized technical skills (e.g., Pyrometry, Vacuum Furnace). |
+| **Attendance**| `ATTENDANCE_VIEW` | Standard | View shift rosters, clock-in/out records, leaves, and attendance calendars. |
+| **Attendance**| `ATTENDANCE_MARK` | Standard | Record clock-in and clock-out timestamps for work shifts. |
+| **Attendance**| `WORKFORCE_MANAGE` | Standard | Define plant shifts, approve leave applications, and authorize overtime. |
+| **Dispatch** | `DISPATCH_VIEW` | Standard | View outbound consignments, shipping manifests, and delivery tracking. |
+| **Dispatch** | `DISPATCH_CREATE` | Standard | Draft outbound shipment orders grouping finished jobs. |
+| **Dispatch** | `DISPATCH_SCHEDULE` | Standard | Assign carrier details, vehicles, drivers, and delivery dates. |
+| **Dispatch** | `DISPATCH_APPROVE` | Sensitive | Plant manager authorization for shipment gate departure. |
+| **Dispatch** | `DISPATCH_MARK` | Standard | Update shipment milestones (Departed, In-Transit, Delivered with PoD). |
+| **Dispatch** | `DISPATCH_CANCEL` | Sensitive | Cancel outbound dispatch and release finished goods back to storage. |
+| **Reports** | `REPORTS_VIEW` | Standard | Access executive OEE dashboards, quality analytics, and throughput reports. |
+| **Reports** | `REPORTS_MANAGE` | Standard | Configure automated recurring report generation and data exports. |
+| **Customers** | `CUSTOMER_VIEW` | Standard | View customer directory, commercial terms, and contact profiles. |
+| **Customers** | `CUSTOMER_CREATE` | Standard | Register new client companies and billing profiles. |
+| **Customers** | `CUSTOMER_UPDATE` | Standard | Update customer billing terms, credit limits, and addresses. |
+| **Customers** | `CUSTOMER_DELETE` | Standard | Archive or soft-delete customer profiles. |
+| **Notifications**| `NOTIFICATIONS_VIEW`| Standard | View in-app notification center alerts and history. |
+| **Notifications**| `NOTIFICATIONS_MANAGE`| Standard | Broadcast system alerts and manage notification preferences. |
+| **Admin** | `SYSTEM_ADMIN` | Critical | Configure system infrastructure parameters and maintenance mode locks. |
+| **Admin** | `TENANT_MANAGE` | Critical | Provision new tenant organizations and manage organizational lifecycles. |
+| **Admin** | `AUDIT_VIEW` | Critical | Access and export immutable security audit logs with field diffs. |
+| **Workflow** | `WORKFLOW_VIEW` | Standard | Inspect domain state-machine transition histories. |
+| **Workflow** | `WORKFLOW_EXECUTE` | Standard | Trigger state transitions on jobs, quality inspections, and dispatches. |
+| **Workflow** | `WORKFLOW_MANAGE` | Sensitive | Override or force state transitions under supervisor authorization. |
 
 ---
 
-## 9. Inventory, Raw Materials & Traceability
+## 5. Complete Backend Domain Modules Catalog (All 36 Modules)
 
-### 9.1 Stock Classification & Ledger
+### 5.1 Authentication & Session Security (`modules/auth`)
 
-- **Material Categories:** Manages Raw Material Bar Stock, Quench Media (Oils, Polymers), Atmosphere Gases (N₂, NH₃, Acetylene), and Lab Consumables.
+> **Business Purpose:** Provides secure multi-tenant identity verification, bcrypt password hashing, dual JWT token rotation (access + refresh tokens), session revocation, and password recovery workflows.
 
-### 9.2 Backend API Endpoints
+#### Models & Schemas
+- **`refresh-token.model.ts`** — Mongoose model: `RefreshToken`. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+- **`user.model.ts`** — Mongoose model: `User`. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
 
-- `POST /api/v1/inventory` — Creates a new inventory item record (SKU) with reorder points and unit costs.
-- `GET /api/v1/inventory` — Lists inventory items with category, stock level, and location filtering.
-- `GET /api/v1/inventory/:id` — Retrieves item details including current balance, allocated stock, and storage locations.
-- `PUT /api/v1/inventory/:id` — Updates item specifications, reorder levels, or unit pricing.
-- `DELETE /api/v1/inventory/:id` — Soft-deletes a discontinued inventory item SKU.
-- `POST /api/v1/inventory/:id/adjust` — Performs a manual stock adjustment with required supervisor reason codes.
-- `GET /api/v1/inventory/alerts/low-stock` — Returns all inventory items currently below their designated safety reorder thresholds.
+#### Repositories
+- **`RefreshTokenRepository`** (`refresh-token.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `findByTokenHash()`, `revokeToken()`, `revokeFamily()`, `revokeAllForUser()`.
+- **`UserRepository`** (`user.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `findByEmail()`, `findByUsername()`, `findByIdentifier()`, `findByResetToken()`, `updatePassword()`, `recordLoginSuccess()`, `recordFailedAttempt()`, `setResetToken()`, `clearResetToken()`.
 
-### 9.3 Goods Receipt, Issue & Transfers
+#### Services
+- **`AuthService`** (`auth.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `register()`, `login()`, `refreshToken()`, `logout()`, `forgotPassword()`, `resetPassword()`, `getCurrentUser()`, `revokeAllSessions()`.
 
-- `POST /api/v1/inventory/goods-receipt` — Records incoming raw material deliveries, supplier heat numbers, and Mill Test Certificates (MTR).
-- `POST /api/v1/inventory/goods-issue` — Issues raw materials and consumables to a specific production work order.
-- `POST /api/v1/inventory/stock-movement` — Records internal inventory relocations between storage zones.
-- `POST /api/v1/inventory/transfer` — Transfers inventory between plant warehouse locations or physical storage bays.
+#### Controllers
+- **`AuthController`** (`auth.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
 
-### 9.4 Work Order Reservations
+#### Validators (Zod Schemas)
+- **`auth.validator.ts`**: Exported Zod validation schemas: .
 
-- `POST /api/v1/inventory/stock-reservation` — Reserves specific raw materials or batches for scheduled work orders to prevent stockouts.
-- `POST /api/v1/inventory/stock-reservation/release` — Releases unused stock reservations back to available inventory.
+#### API Endpoints & Routes
+- `POST /api/v1/auth/register` — Handled by `AuthController`.
+- `POST /api/v1/auth/login` — Handled by `AuthController`.
+- `POST /api/v1/auth/refresh-token` — Handled by `AuthController`.
+- `POST /api/v1/auth/refresh` — Handled by `AuthController`.
+- `POST /api/v1/auth/forgot-password` — Handled by `AuthController`.
+- `POST /api/v1/auth/reset-password` — Handled by `AuthController`.
+- `GET /api/v1/auth/me` — Handled by `AuthController`.
+- `POST /api/v1/auth/logout` — Handled by `AuthController`.
+- `POST /api/v1/auth/revoke-all-sessions` — Handled by `AuthController`.
 
-### 9.5 Batch & Heat Lot Traceability
+### 5.2 Role-Based Access Control (RBAC) & Governance (`modules/rbac`)
 
-- `POST /api/v1/inventory/batches` — Creates a unique heat lot batch record linked to supplier MTRs and chemistry certifications.
-- `GET /api/v1/inventory/batches/track/:batchNumber` — Traces complete lineage and job history for a specific raw material heat lot number.
-- `GET /api/v1/inventory/batches/:itemId` — Lists all active and consumed batches for an inventory item.
+> **Business Purpose:** Manages fine-grained permission catalogs, role definitions, tenant-scoped user role bindings, and permission matrix queries.
 
-### 9.6 Transaction History
+#### Models & Schemas
+- **`role.model.ts`** — Mongoose model: `Role`. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
 
-- `GET /api/v1/inventory/transactions` — Returns a paginated audit ledger of all inventory transactions across the plant.
-- `GET /api/v1/inventory/:itemId/transactions` — Retrieves the complete transaction history for a specific inventory SKU.
+#### Repositories
+- **`RoleRepository`** (`role.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `findByCode()`, `findRolesByCodes()`, `seedDefaultRolesForTenant()`.
 
-### 9.7 Frontend Inventory Pages & Components
+#### Services
+- **`RbacService`** (`rbac.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `getPermissionsCatalog()`, `getUserEffectivePermissions()`, `getRolesForTenant()`, `createRole()`, `updateRole()`, `assignRolesToUser()`.
 
-- **Inventory List Page (`/inventory`):** Displays stock tables with safety level indicators, category filters, and adjustment dialogs.
-- **Material Details Page (`/inventory/materials/:id`):** Shows chemical composition, batch allocations, movement logs, and reorder controls.
-- **Batch Details Page (`/inventory/batches/:id`):** Displays heat lot certificates, MTR documents, and linked job consumption records.
-- **Warehouse View Page (`/inventory/warehouses`):** Visualizes warehouse bin occupancy and shelf topologies across storage aisles.
-- **Inventory Summary Cards (`InventoryCards.tsx`):** Displays valuation totals, active SKU counts, and low-stock alert metrics.
-- **Inventory Ledger Table (`InventoryTable.tsx`):** Provides a sortable stock table with inline adjustment and transfer triggers.
-- **Batch Timeline (`BatchTimeline.tsx`):** Renders the lifecycle of a heat lot from supplier receipt through job processing.
-- **Warehouse Location Cards (`WarehouseLocationCards.tsx`):** Displays visual bin layout cards showing current storage capacity.
+#### Controllers
+- **`RbacController`** (`rbac.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`rbac.validator.ts`**: Exported Zod validation schemas: .
+
+#### API Endpoints & Routes
+- `GET /api/v1/rbac/permissions` — Handled by `RbacController`.
+- `GET /api/v1/rbac/me/permissions` — Handled by `RbacController`.
+- `GET /api/v1/rbac/roles` — Handled by `RbacController`.
+- `POST /api/v1/rbac/roles` — Handled by `RbacController`.
+- `PUT /api/v1/rbac/roles/:id` — Handled by `RbacController`.
+- `POST /api/v1/rbac/users/:userId/roles` — Handled by `RbacController`.
+
+### 5.3 Multi-Tenant Lifecycle & Organization Governance (`modules/tenant`)
+
+> **Business Purpose:** Encapsulates tenant organization master data, status transitions (provisioning, active, suspended, archived), and system-wide isolation guarantees.
+
+#### Models & Schemas
+- **`tenant.model.ts`** — Mongoose model: `Tenant`. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`TenantRepository`** (`tenant.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `findById()`, `findByCode()`, `create()`, `update()`, `updateStatus()`, `findAll()`.
+
+#### Services
+- **`TenantService`** (`tenant.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `provisionTenant()`, `getTenantByCode()`, `getTenantById()`, `suspendTenant()`, `activateTenant()`, `updateTenant()`, `getAllTenants()`.
+
+#### Controllers
+- _Internal domain service without direct HTTP controller endpoints._
+
+#### Validators (Zod Schemas)
+- _No dedicated request body validators required._
+
+#### API Endpoints & Routes
+_No direct HTTP routes mounted for this internal domain service._
+
+### 5.4 Customer & Client Registry (`modules/customer`)
+
+> **Business Purpose:** Maintains commercial customer profiles, credit limits, billing/shipping addresses, tax identifiers, and contact directories.
+
+#### Models & Schemas
+- **`customer.model.ts`** — Mongoose model: `Customer`. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`CustomerRepository`** (`customer.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `findByCode()`, `searchCustomers()`, `incrementJobCounters()`.
+
+#### Services
+- **`CustomerService`** (`customer.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `createCustomer()`, `getCustomerById()`, `getCustomerByCode()`, `updateCustomer()`, `updateCustomerStatus()`, `archiveCustomer()`, `searchCustomers()`.
+
+#### Controllers
+- **`CustomerController`** (`customer.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`customer.validator.ts`**: Exported Zod validation schemas: .
+
+#### API Endpoints & Routes
+- `GET /api/v1/customers` — Handled by `CustomerController`.
+- `POST /api/v1/customers` — Handled by `CustomerController`.
+- `GET /api/v1/customers/code/:code` — Handled by `CustomerController`.
+- `GET /api/v1/customers/:id` — Handled by `CustomerController`.
+- `PUT /api/v1/customers/:id` — Handled by `CustomerController`.
+- `PATCH /api/v1/customers/:id/status` — Handled by `CustomerController`.
+- `DELETE /api/v1/customers/:id` — Handled by `CustomerController`.
+
+### 5.5 Item & Material Master Data (`modules/item`)
+
+> **Business Purpose:** Defines master part records, customer drawing numbers, alloy grades, material classifications, and standard processing requirements.
+
+#### Models & Schemas
+- **`item.model.ts`** — Mongoose model: `Item`. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`ItemRepository`** (`item.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `findByCode()`, `searchItems()`, `updateStock()`, `incrementBatchCounters()`.
+
+#### Services
+- **`ItemService`** (`item.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `createItem()`, `getItemById()`, `getItemByCode()`, `updateItem()`, `updateItemStatus()`, `archiveItem()`, `searchItems()`.
+
+#### Controllers
+- **`ItemController`** (`item.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`item.validator.ts`**: Exported Zod validation schemas: .
+
+#### API Endpoints & Routes
+- `GET /api/v1/items` — Handled by `ItemController`.
+- `POST /api/v1/items` — Handled by `ItemController`.
+- `GET /api/v1/items/code/:code` — Handled by `ItemController`.
+- `GET /api/v1/items/:id` — Handled by `ItemController`.
+- `PUT /api/v1/items/:id` — Handled by `ItemController`.
+- `PATCH /api/v1/items/:id/status` — Handled by `ItemController`.
+- `DELETE /api/v1/items/:id` — Handled by `ItemController`.
+
+### 5.6 Thermal Process Recipe Master & Versioning (`modules/recipe`)
+
+> **Business Purpose:** Manages revision-controlled heat-treatment recipes including ramp rates, target temperatures, soak dwell times, carbon potential, quench media, and tempering stages.
+
+#### Models & Schemas
+- **`recipe.model.ts`** — Mongoose model: `Recipe`. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`RecipeRepository`** (`recipe.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `findByCodeAndRevision()`, `findLatestActiveRevision()`, `findHighestRevision()`, `searchRecipes()`, `supersedePreviousRevisions()`, `incrementJobCounters()`.
+
+#### Services
+- **`RecipeService`** (`recipe.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `createRecipe()`, `getRecipeById()`, `getRecipeByCodeAndRevision()`, `getLatestActiveRecipe()`, `updateRecipe()`, `submitForApproval()`, `approveRecipe()`, `rejectRecipe()`, `createNewRevision()`, `retireRecipe()`, `searchRecipes()`.
+
+#### Controllers
+- **`RecipeController`** (`recipe.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`recipe.validator.ts`**: Exported Zod validation schemas: .
+
+#### API Endpoints & Routes
+- `GET /api/v1/recipes` — Handled by `RecipeController`.
+- `POST /api/v1/recipes` — Handled by `RecipeController`.
+- `GET /api/v1/recipes/latest/:code` — Handled by `RecipeController`.
+- `GET /api/v1/recipes/code/:code/revision/:revision` — Handled by `RecipeController`.
+- `GET /api/v1/recipes/:id` — Handled by `RecipeController`.
+- `PUT /api/v1/recipes/:id` — Handled by `RecipeController`.
+- `POST /api/v1/recipes/:id/submit-approval` — Handled by `RecipeController`.
+- `POST /api/v1/recipes/:id/approve` — Handled by `RecipeController`.
+- `POST /api/v1/recipes/:id/reject` — Handled by `RecipeController`.
+- `POST /api/v1/recipes/:id/new-revision` — Handled by `RecipeController`.
+- `POST /api/v1/recipes/:id/retire` — Handled by `RecipeController`.
+
+### 5.7 Metallurgical Specification Master & Standards (`modules/specification`)
+
+> **Business Purpose:** Maintains revision-controlled customer and engineering specifications for surface hardness, core hardness, effective case depth (ECD), and microstructure limits.
+
+#### Models & Schemas
+- **`specification.model.ts`** — Mongoose model: `Specification`. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`SpecificationRepository`** (`specification.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `findByCodeAndRevision()`, `findLatestActiveRevision()`, `findHighestRevision()`, `searchSpecifications()`, `supersedePreviousRevisions()`, `incrementJobCounters()`.
+
+#### Services
+- **`SpecificationService`** (`specification.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `createSpecification()`, `getSpecificationById()`, `getSpecificationByCodeAndRevision()`, `getLatestActiveSpecification()`, `updateSpecification()`, `submitForApproval()`, `approveSpecification()`, `rejectSpecification()`, `createNewRevision()`, `retireSpecification()`, `searchSpecifications()`.
+
+#### Controllers
+- **`SpecificationController`** (`specification.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`specification.validator.ts`**: Exported Zod validation schemas: .
+
+#### API Endpoints & Routes
+- `GET /api/v1/specifications` — Handled by `SpecificationController`.
+- `POST /api/v1/specifications` — Handled by `SpecificationController`.
+- `GET /api/v1/specifications/latest/:code` — Handled by `SpecificationController`.
+- `GET /api/v1/specifications/code/:code/revision/:revision` — Handled by `SpecificationController`.
+- `GET /api/v1/specifications/:id` — Handled by `SpecificationController`.
+- `PUT /api/v1/specifications/:id` — Handled by `SpecificationController`.
+- `POST /api/v1/specifications/:id/submit-approval` — Handled by `SpecificationController`.
+- `POST /api/v1/specifications/:id/approve` — Handled by `SpecificationController`.
+- `POST /api/v1/specifications/:id/reject` — Handled by `SpecificationController`.
+- `POST /api/v1/specifications/:id/new-revision` — Handled by `SpecificationController`.
+- `POST /api/v1/specifications/:id/retire` — Handled by `SpecificationController`.
+
+### 5.8 Metallurgical Heat-Lot Traceability & Lineage (`modules/traceability`)
+
+> **Business Purpose:** Enforces complete bi-directional traceability linking raw material heat lots, Mill Test Certificates (MTR), chemistry records, inward inspection, job consumption, and customer shipments.
+
+#### Models & Schemas
+- **`heat-lot.model.ts`** — Mongoose model: `HeatLot`. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`HeatLotRepository`** (`heat-lot.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `findByHeatLotNumber()`, `findBySupplierHeatNumber()`, `findByJobCardNumber()`, `findChildLots()`, `searchHeatLots()`, `generateNextHeatLotNumber()`.
+
+#### Services
+- **`HeatLotService`** (`heat-lot.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `inwardHeatLot()`, `getHeatLotById()`, `getHeatLotByNumber()`, `quarantineHeatLot()`, `releaseHeatLot()`, `allocateHeatLot()`, `consumeHeatLot()`, `forwardTrace()`, `backwardTrace()`, `searchHeatLots()`.
+
+#### Controllers
+- **`HeatLotController`** (`heat-lot.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`heat-lot.validator.ts`**: Exported Zod validation schemas: .
+
+#### API Endpoints & Routes
+- `GET /api/v1/heat-lots` — Handled by `HeatLotController`.
+- `POST /api/v1/heat-lots` — Handled by `HeatLotController`.
+- `POST /api/v1/heat-lots/inward` — Handled by `HeatLotController`.
+- `GET /api/v1/heat-lots/backward-trace` — Handled by `HeatLotController`.
+- `GET /api/v1/heat-lots/forward-trace/:number` — Handled by `HeatLotController`.
+- `GET /api/v1/heat-lots/number/:number` — Handled by `HeatLotController`.
+- `GET /api/v1/heat-lots/:id` — Handled by `HeatLotController`.
+- `PATCH /api/v1/heat-lots/:id/quarantine` — Handled by `HeatLotController`.
+- `PATCH /api/v1/heat-lots/:id/release` — Handled by `HeatLotController`.
+- `POST /api/v1/heat-lots/:id/allocate` — Handled by `HeatLotController`.
+- `POST /api/v1/heat-lots/:id/consume` — Handled by `HeatLotController`.
+
+### 5.9 Raw Materials, Consumables & Stock Ledger (`modules/inventory`)
+
+> **Business Purpose:** Tracks stock balances, goods receipts, goods issues to production jobs, supervisor stock adjustments, inter-location transfers, and work-order reservations.
+
+#### Models & Schemas
+- **`inventory-balance.model.ts`** — Mongoose model: `InventoryBalance`. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+- **`inventory-transaction.model.ts`** — Mongoose model: ``. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`InventoryRepository`** (`inventory.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `getBalance()`, `findOrCreateBalance()`, `updateBalance()`, `searchBalances()`, `recordTransaction()`, `searchTransactions()`, `generateTransactionNumber()`.
+
+#### Services
+- **`InventoryService`** (`inventory.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `recordGoodsReceipt()`, `recordGoodsIssue()`, `recordStockAdjustment()`, `recordInternalTransfer()`, `reserveStock()`, `releaseReservation()`, `getBalance()`, `searchBalances()`, `searchTransactions()`.
+
+#### Controllers
+- **`InventoryController`** (`inventory.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`inventory.validator.ts`**: Exported Zod validation schemas: .
+
+#### API Endpoints & Routes
+- `GET /api/v1/inventory/balances` — Handled by `InventoryController`.
+- `GET /api/v1/inventory/transactions` — Handled by `InventoryController`.
+- `POST /api/v1/inventory/goods-receipt` — Handled by `InventoryController`.
+- `POST /api/v1/inventory/goods-issue` — Handled by `InventoryController`.
+- `POST /api/v1/inventory/adjustments` — Handled by `InventoryController`.
+- `POST /api/v1/inventory/transfers` — Handled by `InventoryController`.
+- `POST /api/v1/inventory/reservations` — Handled by `InventoryController`.
+- `POST /api/v1/inventory/reservations/release` — Handled by `InventoryController`.
+
+### 5.10 Warehouse Locations & Topology Management (`modules/warehouse`)
+
+> **Business Purpose:** Models physical factory storage topology including warehouse bays, aisles, racks, and bins with capacity and occupancy tracking.
+
+#### Models & Schemas
+- **`storage-location.model.ts`** — Mongoose model: ``. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+- **`warehouse.model.ts`** — Mongoose model: `Warehouse`. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`WarehouseRepository`** (`warehouse.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `createWarehouse()`, `findWarehouseById()`, `findWarehouseByCode()`, `updateWarehouse()`, `searchWarehouses()`, `createLocation()`, `findLocationById()`, `findLocationByCode()`, `updateLocation()`, `searchLocations()`, `findLocationsByWarehouse()`.
+
+#### Services
+- **`WarehouseService`** (`warehouse.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `createWarehouse()`, `getWarehouseById()`, `updateWarehouse()`, `searchWarehouses()`, `createStorageLocation()`, `getLocationById()`, `getLocationByCode()`, `validateLocationForStockMovement()`, `updateStorageLocation()`, `searchLocations()`, `getLocationsByWarehouse()`.
+
+#### Controllers
+- **`WarehouseController`** (`warehouse.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`warehouse.validator.ts`**: Exported Zod validation schemas: .
+
+#### API Endpoints & Routes
+- `GET /api/v1/warehouses` — Handled by `WarehouseController`.
+- `POST /api/v1/warehouses` — Handled by `WarehouseController`.
+- `GET /api/v1/warehouses/locations` — Handled by `WarehouseController`.
+- `POST /api/v1/warehouses/locations` — Handled by `WarehouseController`.
+- `GET /api/v1/warehouses/locations/code/:code` — Handled by `WarehouseController`.
+- `GET /api/v1/warehouses/locations/:id` — Handled by `WarehouseController`.
+- `PATCH /api/v1/warehouses/locations/:id` — Handled by `WarehouseController`.
+- `GET /api/v1/warehouses/:warehouseId/locations` — Handled by `WarehouseController`.
+- `GET /api/v1/warehouses/:id` — Handled by `WarehouseController`.
+- `PATCH /api/v1/warehouses/:id` — Handled by `WarehouseController`.
+
+### 5.11 Quality Quarantine & Material Isolation (`modules/quarantine`)
+
+> **Business Purpose:** Quarantines suspicious or non-conforming materials, tracking quarantine records, root causes, supervisor dispositions, and authorized release gates.
+
+#### Models & Schemas
+- **`quarantine.model.ts`** — Mongoose model: ``. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`QuarantineRepository`** (`quarantine.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `createQuarantine()`, `findQuarantineById()`, `findQuarantineByNumber()`, `findActiveQuarantineForTarget()`, `findActiveQuarantinesByItem()`, `updateQuarantine()`, `searchQuarantines()`, `generateQuarantineNumber()`.
+
+#### Services
+- **`QuarantineService`** (`quarantine.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `placeInQuarantine()`, `releaseFromQuarantine()`, `dispositionQuarantine()`, `isTargetQuarantined()`, `getQuarantineById()`, `getQuarantineByNumber()`, `searchQuarantines()`.
+
+#### Controllers
+- **`QuarantineController`** (`quarantine.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`quarantine.validator.ts`**: Exported Zod validation schemas: .
+
+#### API Endpoints & Routes
+- `GET /api/v1/quarantine` — Handled by `QuarantineController`.
+- `POST /api/v1/quarantine` — Handled by `QuarantineController`.
+- `GET /api/v1/quarantine/number/:number` — Handled by `QuarantineController`.
+- `GET /api/v1/quarantine/:id` — Handled by `QuarantineController`.
+- `POST /api/v1/quarantine/:id/release` — Handled by `QuarantineController`.
+- `POST /api/v1/quarantine/:id/disposition` — Handled by `QuarantineController`.
+
+### 5.12 Finished Goods Inventory & Dispatch Staging (`modules/finished-goods`)
+
+> **Business Purpose:** Tracks QA-cleared finished goods received from production jobs, warehouse bin locations, dispatch reservations, and physical shipment releases.
+
+#### Models & Schemas
+- **`finished-goods.model.ts`** — Mongoose model: `FinishedGoods`. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`FinishedGoodsRepository`** (`finished-goods.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `create()`, `findById()`, `findByLotNumber()`, `findByJobCardNumber()`, `update()`, `search()`, `generateFgLotNumber()`.
+
+#### Services
+- **`FinishedGoodsService`** (`finished-goods.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `inwardFinishedGoods()`, `releaseFinishedGoods()`, `reserveForDispatch()`, `releaseDispatchReservation()`, `moveLocation()`, `getById()`, `getByLotNumber()`, `search()`.
+
+#### Controllers
+- **`FinishedGoodsController`** (`finished-goods.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`finished-goods.validator.ts`**: Exported Zod validation schemas: .
+
+#### API Endpoints & Routes
+- `GET /api/v1/finished-goods` — Handled by `FinishedGoodsController`.
+- `POST /api/v1/finished-goods/inward` — Handled by `FinishedGoodsController`.
+- `GET /api/v1/finished-goods/lot/:lotNumber` — Handled by `FinishedGoodsController`.
+- `GET /api/v1/finished-goods/:id` — Handled by `FinishedGoodsController`.
+- `POST /api/v1/finished-goods/:id/release` — Handled by `FinishedGoodsController`.
+- `POST /api/v1/finished-goods/:id/reserve` — Handled by `FinishedGoodsController`.
+- `POST /api/v1/finished-goods/:id/reserve/release` — Handled by `FinishedGoodsController`.
+- `PATCH /api/v1/finished-goods/:id/location` — Handled by `FinishedGoodsController`.
+
+### 5.13 Master Production Planning & Scheduling (`modules/production-planning`)
+
+> **Business Purpose:** Creates and coordinates production plans, target quantities, planned dates, priority scheduling, and plan recalculation against factory constraints.
+
+#### Models & Schemas
+- **`production-plan.model.ts`** — Mongoose model: `ProductionPlan`. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`ProductionPlanRepository`** (`production-plan.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `generateNextPlanNumber()`, `findByPlanNumber()`, `findActivePlansByItem()`, `queryPlans()`.
+
+#### Services
+- **`ProductionPlanService`** (`production-plan.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `createPlan()`, `getPlanById()`, `getPlanByNumber()`, `queryPlans()`, `updatePlan()`, `updatePlanStatus()`, `recalculatePlan()`.
+
+#### Controllers
+- **`ProductionPlanController`** (`production-plan.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`production-plan.validator.ts`**: Exported Zod validation schemas: .
+
+#### API Endpoints & Routes
+- `GET /api/v1/production-plans` — Handled by `ProductionPlanController`.
+- `POST /api/v1/production-plans` — Handled by `ProductionPlanController`.
+- `GET /api/v1/production-plans/number/:planNumber` — Handled by `ProductionPlanController`.
+- `GET /api/v1/production-plans/:id` — Handled by `ProductionPlanController`.
+- `PUT /api/v1/production-plans/:id` — Handled by `ProductionPlanController`.
+- `PATCH /api/v1/production-plans/:id/status` — Handled by `ProductionPlanController`.
+- `POST /api/v1/production-plans/:id/recalculate` — Handled by `ProductionPlanController`.
+
+### 5.14 Material Requirements Planning (MRP) & Shortages (`modules/material-requirements`)
+
+> **Business Purpose:** Analyzes material demand against active production plans, detects raw material shortages, and manages material reservations against inventory.
+
+#### Models & Schemas
+- **`material-reservation.model.ts`** — Mongoose model: `MaterialReservation`. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`MaterialRequirementsRepository`** (`material-requirements.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `generateNextReservationNumber()`, `findReservationByNumber()`, `findActiveReservationsByPlan()`, `findActiveReservationsByTarget()`, `findReservationsByItem()`.
+
+#### Services
+- **`MaterialRequirementsService`** (`material-requirements.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `calculateRequirements()`, `getShortages()`, `reserveMaterial()`, `releaseReservation()`, `releaseAllReservationsForPlan()`, `getReservationsByPlan()`.
+
+#### Controllers
+- **`MaterialRequirementsController`** (`material-requirements.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`material-requirements.validator.ts`**: Exported Zod validation schemas: .
+
+#### API Endpoints & Routes
+- `POST /api/v1/material-requirements/calculate` — Handled by `MaterialRequirementsController`.
+- `GET /api/v1/material-requirements/shortages` — Handled by `MaterialRequirementsController`.
+- `POST /api/v1/material-requirements/reserve` — Handled by `MaterialRequirementsController`.
+- `POST /api/v1/material-requirements/reservations/:id/release` — Handled by `MaterialRequirementsController`.
+- `GET /api/v1/material-requirements/reservations/plan/:planId` — Handled by `MaterialRequirementsController`.
+
+### 5.15 Furnace Asset Registry & Capacity Allocation (`modules/furnace-capacity`)
+
+> **Business Purpose:** Manages furnace profiles, working zone dimensions, temperature limits, atmospheric controls, process capability matching, and time-slot capacity bookings.
+
+#### Models & Schemas
+- **`furnace-allocation.model.ts`** — Mongoose model: `FurnaceAllocation`. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+- **`furnace.model.ts`** — Mongoose model: `Furnace`. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`FurnaceAllocationRepository`** (`furnace-capacity.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `findFurnaceByCode()`, `findFurnaceById()`, `findFurnaces()`, `createFurnace()`, `updateFurnace()`, `generateNextAllocationNumber()`, `findOverlappingAllocations()`, `findAllocationsInPeriod()`, `createAllocation()`, `findAllocationById()`, `updateAllocation()`.
+
+#### Services
+- **`FurnaceCapacityService`** (`furnace-capacity.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `createFurnace()`, `getFurnaces()`, `getFurnaceById()`, `checkCompatibility()`, `bookCapacity()`, `releaseAllocation()`, `getUtilization()`.
+
+#### Controllers
+- **`FurnaceCapacityController`** (`furnace-capacity.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`furnace-capacity.validator.ts`**: Exported Zod validation schemas: .
+
+#### API Endpoints & Routes
+- `GET /api/v1/furnace-capacity` — Handled by `FurnaceCapacityController`.
+- `POST /api/v1/furnace-capacity` — Handled by `FurnaceCapacityController`.
+- `GET /api/v1/furnace-capacity/:id` — Handled by `FurnaceCapacityController`.
+- `POST /api/v1/furnace-capacity/check-compatibility` — Handled by `FurnaceCapacityController`.
+- `GET /api/v1/furnace-capacity/utilization` — Handled by `FurnaceCapacityController`.
+- `POST /api/v1/furnace-capacity/book` — Handled by `FurnaceCapacityController`.
+- `DELETE /api/v1/furnace-capacity/allocations/:id` — Handled by `FurnaceCapacityController`.
+
+### 5.16 Workforce Operator Skills & Shift Allocation (`modules/workforce-capacity`)
+
+> **Business Purpose:** Tracks operator skills (pyrometry, vacuum furnace operation, metallurgical testing), evaluates shift skill coverage, and books operator allocations.
+
+#### Models & Schemas
+- **`workforce-member.model.ts`** — Mongoose model: `WorkforceMember`. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+- **`workforce-shift-allocation.model.ts`** — Mongoose model: ``. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`WorkforceShiftAllocationRepository`** (`workforce-capacity.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `findEmployeeByCode()`, `findEmployeeById()`, `findEmployees()`, `createEmployee()`, `updateEmployee()`, `generateNextAllocationNumber()`, `findEmployeeAllocationsOnDate()`, `findAllocationsForShift()`, `createAllocation()`, `findAllocationById()`, `updateAllocation()`.
+
+#### Services
+- **`WorkforceCapacityService`** (`workforce-capacity.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `createEmployee()`, `addOrUpdateSkill()`, `getEmployees()`, `getEmployeeById()`, `evaluateCoverage()`, `assignOperator()`, `releaseAssignment()`, `getShiftCapacity()`.
+
+#### Controllers
+- **`WorkforceCapacityController`** (`workforce-capacity.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`workforce-capacity.validator.ts`**: Exported Zod validation schemas: .
+
+#### API Endpoints & Routes
+- `GET /api/v1/workforce-capacity` — Handled by `WorkforceCapacityController`.
+- `POST /api/v1/workforce-capacity` — Handled by `WorkforceCapacityController`.
+- `GET /api/v1/workforce-capacity/:id` — Handled by `WorkforceCapacityController`.
+- `POST /api/v1/workforce-capacity/:id/skills` — Handled by `WorkforceCapacityController`.
+- `POST /api/v1/workforce-capacity/evaluate-coverage` — Handled by `WorkforceCapacityController`.
+- `GET /api/v1/workforce-capacity/shift-capacity` — Handled by `WorkforceCapacityController`.
+- `POST /api/v1/workforce-capacity/assign` — Handled by `WorkforceCapacityController`.
+- `DELETE /api/v1/workforce-capacity/allocations/:id` — Handled by `WorkforceCapacityController`.
+
+### 5.17 Factory Constraint & Bottleneck Analysis (`modules/constraint-analysis`)
+
+> **Business Purpose:** Performs multidimensional feasibility audits across furnace capacity, operator skill availability, and material stock to identify production bottlenecks.
+
+#### Models & Schemas
+- _No dedicated Mongoose collection; acts as a pure calculation, aggregation, or analytical engine._
+
+#### Repositories
+- _No standalone repository; coordinates across related domain services._
+
+#### Services
+- **`ConstraintAnalysisService`** (`constraint-analysis.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `evaluatePlanConstraints()`, `factoryAudit()`.
+
+#### Controllers
+- **`ConstraintAnalysisController`** (`constraint-analysis.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`constraint-analysis.validator.ts`**: Exported Zod validation schemas: .
+
+#### API Endpoints & Routes
+- `POST /api/v1/constraint-analysis/evaluate-plan/:planId` — Handled by `ConstraintAnalysisController`.
+- `GET /api/v1/constraint-analysis/factory-audit` — Handled by `ConstraintAnalysisController`.
+- `GET /api/v1/constraint-analysis/bottlenecks` — Handled by `ConstraintAnalysisController`.
+
+### 5.18 Production Work Order Execution & Lifecycle (`modules/production-job`)
+
+> **Business Purpose:** Executes the core 12-stage heat treatment production lifecycle, furnace charges, operator assignments, stage progress tracking, pause/resume, and downtime logging.
+
+#### Models & Schemas
+- **`production-job.model.ts`** — Mongoose model: `ProductionJob`. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`ProductionJobRepository`** (`production-job.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `generateNextJobNumber()`, `findJobByNumber()`, `findByPlanId()`, `findJobsByPlanId()`, `findByIdempotencyKey()`, `queryJobs()`, `findActiveQueueJobs()`, `findConflictingJobs()`.
+
+#### Services
+- **`ProductionJobService`** (`production-job.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `createDirectJob()`, `updateJob()`, `assignOperator()`, `removeOperator()`, `assignFurnace()`, `removeFurnace()`, `startJobExecution()`, `recordStageProgress()`, `pauseJobExecution()`, `resumeJobExecution()`, `addProductionLog()`, `completeJobExecution()`, `transitionToStorage()`, `getMachineUtilizationAndDowntime()`, `transitionJob()`, `cancelJob()`, `getProductionQueue()`, `convertPlanToJob()`, `getJobs()`, `getJobById()`, `getJobsByPlanId()`.
+
+#### Controllers
+- **`ProductionJobController`** (`production-job.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`production-job.validator.ts`**: Exported Zod validation schemas: .
+
+#### API Endpoints & Routes
+- `POST /api/v1/production-jobs` — Handled by `ProductionJobController`.
+- `POST /api/v1/production-jobs/convert-plan/:planId` — Handled by `ProductionJobController`.
+- `GET /api/v1/production-jobs/queue` — Handled by `ProductionJobController`.
+- `GET /api/v1/production-jobs/analytics/utilization` — Handled by `ProductionJobController`.
+- `GET /api/v1/production-jobs` — Handled by `ProductionJobController`.
+- `GET /api/v1/production-jobs/by-plan/:planId` — Handled by `ProductionJobController`.
+- `GET /api/v1/production-jobs/:id` — Handled by `ProductionJobController`.
+- `PATCH /api/v1/production-jobs/:id` — Handled by `ProductionJobController`.
+- `POST /api/v1/production-jobs/:id/assign-operator` — Handled by `ProductionJobController`.
+- `POST /api/v1/production-jobs/:id/remove-operator` — Handled by `ProductionJobController`.
+- `POST /api/v1/production-jobs/:id/assign-furnace` — Handled by `ProductionJobController`.
+- `POST /api/v1/production-jobs/:id/remove-furnace` — Handled by `ProductionJobController`.
+- `POST /api/v1/production-jobs/:id/start` — Handled by `ProductionJobController`.
+- `POST /api/v1/production-jobs/:id/stage-progress` — Handled by `ProductionJobController`.
+- `POST /api/v1/production-jobs/:id/pause` — Handled by `ProductionJobController`.
+- `POST /api/v1/production-jobs/:id/resume` — Handled by `ProductionJobController`.
+- `POST /api/v1/production-jobs/:id/notes` — Handled by `ProductionJobController`.
+- `POST /api/v1/production-jobs/:id/complete` — Handled by `ProductionJobController`.
+- `POST /api/v1/production-jobs/:id/transition-storage` — Handled by `ProductionJobController`.
+- `POST /api/v1/production-jobs/:id/transition` — Handled by `ProductionJobController`.
+- `POST /api/v1/production-jobs/:id/cancel` — Handled by `ProductionJobController`.
+
+### 5.19 Production Scheduling & Shop-Floor Queue (`modules/production-schedule`)
+
+> **Business Purpose:** Schedules production jobs into machine time windows, manages priority sequencing, resolves booking conflicts, and surfaces active shop-floor furnace queues.
+
+#### Models & Schemas
+- **`production-schedule.model.ts`** — Mongoose model: `ProductionSchedule`. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`ProductionScheduleRepository`** (`production-schedule.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `generateNextScheduleNumber()`, `findActiveScheduleByJobId()`, `findActiveSchedulesByFurnaceAndTime()`, `findActiveSchedulesByOperatorAndTime()`, `querySchedules()`.
+
+#### Services
+- **`ProductionScheduleService`** (`production-schedule.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `scheduleJob()`, `rescheduleJob()`, `unscheduleJob()`, `getProductionQueue()`, `querySchedules()`, `getScheduleById()`.
+
+#### Controllers
+- **`ProductionScheduleController`** (`production-schedule.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`production-schedule.validator.ts`**: Exported Zod validation schemas: .
+
+#### API Endpoints & Routes
+- `POST /api/v1/production-schedules` — Handled by `ProductionScheduleController`.
+- `POST /api/v1/production-schedules/:id/reschedule` — Handled by `ProductionScheduleController`.
+- `POST /api/v1/production-schedules/:id/unschedule` — Handled by `ProductionScheduleController`.
+- `GET /api/v1/production-schedules/queue` — Handled by `ProductionScheduleController`.
+- `GET /api/v1/production-schedules` — Handled by `ProductionScheduleController`.
+- `GET /api/v1/production-schedules/:id` — Handled by `ProductionScheduleController`.
+
+### 5.20 Quality Inspection & In-Process Testing (`modules/quality-inspection`)
+
+> **Business Purpose:** Orchestrates the 5-tier quality inspection lifecycle, certified inspector assignments, test recording, pass/fail dispositioning, and reinspection requests.
+
+#### Models & Schemas
+- **`quality-inspection.model.ts`** — Mongoose model: ``. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`QualityInspectionRepository`** (`quality-inspection.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `create()`, `findById()`, `findByInspectionNumber()`, `findByJobId()`, `find()`, `queryInspections()`, `generateNextInspectionNumber()`.
+
+#### Services
+- **`QualityInspectionService`** (`quality-inspection.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `createInspection()`, `getInspections()`, `getInspectionById()`, `getInspectionByJobId()`, `assignInspector()`, `recordTestResults()`, `approveInspection()`, `rejectInspection()`, `requestReinspection()`.
+
+#### Controllers
+- **`QualityInspectionController`** (`quality-inspection.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`quality-inspection.validator.ts`**: Exported Zod validation schemas: `createQualityInspectionSchema`, `assignInspectorSchema`, `recordTestResultsSchema`, `approveInspectionSchema`, `rejectInspectionSchema`, `requestReinspectionSchema`, `queryQualityInspectionsSchema`.
+
+#### API Endpoints & Routes
+- `POST /api/v1/quality-inspections` — Handled by `QualityInspectionController`.
+- `GET /api/v1/quality-inspections` — Handled by `QualityInspectionController`.
+- `GET /api/v1/quality-inspections/by-job/:jobId` — Handled by `QualityInspectionController`.
+- `GET /api/v1/quality-inspections/:id` — Handled by `QualityInspectionController`.
+- `POST /api/v1/quality-inspections/:id/assign` — Handled by `QualityInspectionController`.
+- `POST /api/v1/quality-inspections/:id/test-results` — Handled by `QualityInspectionController`.
+- `POST /api/v1/quality-inspections/:id/approve` — Handled by `QualityInspectionController`.
+- `POST /api/v1/quality-inspections/:id/reject` — Handled by `QualityInspectionController`.
+- `POST /api/v1/quality-inspections/:id/reinspection` — Handled by `QualityInspectionController`.
+
+### 5.21 Metallurgical Lab Subsystem & Physical Testing (`modules/metallurgical-lab`)
+
+> **Business Purpose:** Captures physical lab data including multi-scale hardness surveys (Rockwell, Vickers, Brinell), traverse depth-hardness curves (ECD), and microstructural evaluations.
+
+#### Models & Schemas
+- **`metallurgical-lab.model.ts`** — Mongoose model: ``. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`MetallurgicalLabRepository`** (`metallurgical-lab.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `create()`, `findById()`, `findByRecordNumber()`, `findByInspectionId()`, `findByJobId()`, `queryRecords()`, `generateNextRecordNumber()`.
+
+#### Services
+- **`MetallurgicalLabService`** (`metallurgical-lab.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `createLabRecord()`, `getRecordById()`, `getRecordsByInspectionId()`, `getRecordsByJobId()`, `queryRecords()`, `addHardnessMeasurement()`, `addHardnessTraverse()`, `addMicrostructureObservation()`, `lockLabRecord()`, `calculateEffectiveCaseDepth()`.
+
+#### Controllers
+- **`MetallurgicalLabController`** (`metallurgical-lab.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`metallurgical-lab.validator.ts`**: Exported Zod validation schemas: `createLabTestRecordSchema`, `addHardnessMeasurementSchema`, `hardnessTraversePointSchema`, `addHardnessTraverseSchema`, `addMicrostructureObservationSchema`, `lockLabTestRecordSchema`, `queryLabTestRecordsSchema`.
+
+#### API Endpoints & Routes
+- `POST /api/v1/metallurgical-lab` — Handled by `MetallurgicalLabController`.
+- `GET /api/v1/metallurgical-lab` — Handled by `MetallurgicalLabController`.
+- `GET /api/v1/metallurgical-lab/:id` — Handled by `MetallurgicalLabController`.
+- `GET /api/v1/metallurgical-lab/by-inspection/:inspectionId` — Handled by `MetallurgicalLabController`.
+- `GET /api/v1/metallurgical-lab/by-job/:jobId` — Handled by `MetallurgicalLabController`.
+- `POST /api/v1/metallurgical-lab/:id/hardness` — Handled by `MetallurgicalLabController`.
+- `POST /api/v1/metallurgical-lab/:id/traverse` — Handled by `MetallurgicalLabController`.
+- `POST /api/v1/metallurgical-lab/:id/microstructure` — Handled by `MetallurgicalLabController`.
+- `POST /api/v1/metallurgical-lab/:id/lock` — Handled by `MetallurgicalLabController`.
+
+### 5.22 Quality Inspection Planning & Inspection Criteria (`modules/quality-planning`)
+
+> **Business Purpose:** Maintains reusable inspection plans, sampling frequencies, mandatory test criteria, and acceptance thresholds tied to customer specifications.
+
+#### Models & Schemas
+- **`quality-planning.model.ts`** — Mongoose model: `QualityPlan`. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`QualityPlanningRepository`** (`quality-planning.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `create()`, `findById()`, `findByPlanCodeAndRevision()`, `findActiveApprovedRevision()`, `findApplicablePlan()`, `queryPlans()`, `markPreviousRevisionsObsolete()`, `generateNextPlanCode()`.
+
+#### Services
+- **`QualityPlanningService`** (`quality-planning.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `createPlan()`, `updateDraftPlan()`, `approvePlan()`, `createRevision()`, `getPlanById()`, `getActiveApprovedPlan()`, `findApplicablePlan()`, `queryPlans()`, `createSnapshot()`, `evaluateInspectionCompliance()`.
+
+#### Controllers
+- **`QualityPlanningController`** (`quality-planning.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`quality-planning.validator.ts`**: Exported Zod validation schemas: `acceptanceCriteriaSchema`, `inspectionCharacteristicSchema`, `createQualityPlanSchema`, `updateQualityPlanSchema`, `approveQualityPlanSchema`, `createQualityPlanRevisionSchema`, `queryQualityPlansSchema`.
+
+#### API Endpoints & Routes
+- `POST /api/v1/quality-plans` — Handled by `QualityPlanningController`.
+- `GET /api/v1/quality-plans` — Handled by `QualityPlanningController`.
+- `GET /api/v1/quality-plans/applicable` — Handled by `QualityPlanningController`.
+- `GET /api/v1/quality-plans/active/:planCode` — Handled by `QualityPlanningController`.
+- `GET /api/v1/quality-plans/:id` — Handled by `QualityPlanningController`.
+- `PUT /api/v1/quality-plans/:id` — Handled by `QualityPlanningController`.
+- `POST /api/v1/quality-plans/:id/approve` — Handled by `QualityPlanningController`.
+- `POST /api/v1/quality-plans/:id/revise` — Handled by `QualityPlanningController`.
+
+### 5.23 Non-Conformance Reports (NCR) & CAPA Tracking (`modules/ncr-capa`)
+
+> **Business Purpose:** Manages defect non-conformance reports, containment actions, root-cause investigations (5-Why, Fishbone), dispositions, and Corrective/Preventive Action (CAPA) verification.
+
+#### Models & Schemas
+- **`ncr-capa.model.ts`** — Mongoose model: ``. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`NcrCapaRepository`** (`ncr-capa.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `createNcr()`, `findNcrById()`, `findNcrByNumber()`, `findNcrsByInspectionId()`, `findNcrsByJobId()`, `queryNcrs()`, `generateNextNcrNumber()`, `createCapa()`, `findCapaById()`, `findCapaByNumber()`, `findCapasByNcrId()`, `queryCapas()`, `generateNextCapaNumber()`.
+
+#### Services
+- **`NcrCapaService`** (`ncr-capa.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `createNcr()`, `recordRootCause()`, `recordDisposition()`, `closeNcr()`, `getNcrById()`, `getNcrByNumber()`, `queryNcrs()`, `createCapa()`, `updateActionItem()`, `verifyEffectiveness()`, `closeCapa()`, `getCapaById()`, `queryCapas()`.
+
+#### Controllers
+- **`NcrCapaController`** (`ncr-capa.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`ncr-capa.validator.ts`**: Exported Zod validation schemas: `createNcrSchema`, `recordNcrRootCauseSchema`, `recordNcrDispositionSchema`, `closeNcrSchema`, `createCapaSchema`, `updateCapaActionItemSchema`, `verifyCapaEffectivenessSchema`, `closeCapaSchema`, `queryNcrsSchema`, `queryCapasSchema`.
+
+#### API Endpoints & Routes
+- `POST /api/v1/ncrs` — Handled by `NcrCapaController`.
+- `GET /api/v1/ncrs` — Handled by `NcrCapaController`.
+- `GET /api/v1/ncrs/:id` — Handled by `NcrCapaController`.
+- `PUT /api/v1/ncrs/:id/root-cause` — Handled by `NcrCapaController`.
+- `POST /api/v1/ncrs/:id/disposition` — Handled by `NcrCapaController`.
+- `POST /api/v1/ncrs/:id/close` — Handled by `NcrCapaController`.
+- `POST /api/v1/ncrs/:ncrId/capas` — Handled by `NcrCapaController`.
+- `GET /api/v1/ncrs` — Handled by `NcrCapaController`.
+- `GET /api/v1/ncrs/:id` — Handled by `NcrCapaController`.
+- `PUT /api/v1/ncrs/:id/action-items` — Handled by `NcrCapaController`.
+- `POST /api/v1/ncrs/:id/verify` — Handled by `NcrCapaController`.
+- `POST /api/v1/ncrs/:id/close` — Handled by `NcrCapaController`.
+
+### 5.24 Quality Certificates & CoC Verification (`modules/quality-documentation`)
+
+> **Business Purpose:** Generates ISO 17025 / AMS 2750G compliant Certificates of Conformance (CoC), test reports, digital signatures, QR verification codes, and revocation tracking.
+
+#### Models & Schemas
+- **`quality-documentation.model.ts`** — Mongoose model: ``. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`QualityDocumentationRepository`** (`quality-documentation.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `create()`, `findById()`, `findByDocumentNumber()`, `findByVerificationCode()`, `findLatestByInspectionId()`, `findByJobId()`, `query()`, `generateNextDocumentNumber()`.
+
+#### Services
+- **`QualityDocumentationService`** (`quality-documentation.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `generateDocument()`, `revokeDocument()`, `verifyDocument()`, `getDocumentById()`, `getDocumentByNumber()`, `queryDocuments()`.
+
+#### Controllers
+- **`QualityDocumentationController`** (`quality-documentation.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`quality-documentation.validator.ts`**: Exported Zod validation schemas: `generateQualityDocumentSchema`, `revokeQualityDocumentSchema`, `reissueQualityDocumentSchema`, `queryQualityDocumentsSchema`.
+
+#### API Endpoints & Routes
+- `GET /api/v1/quality-documents/verify/:code` — Handled by `QualityDocumentationController`.
+- `POST /api/v1/quality-documents` — Handled by `QualityDocumentationController`.
+- `GET /api/v1/quality-documents` — Handled by `QualityDocumentationController`.
+- `GET /api/v1/quality-documents/:id` — Handled by `QualityDocumentationController`.
+- `GET /api/v1/quality-documents/number/:documentNumber` — Handled by `QualityDocumentationController`.
+- `POST /api/v1/quality-documents/:id/revoke` — Handled by `QualityDocumentationController`.
+
+### 5.25 Machinery Fleet & Equipment Maintenance Registry (`modules/machine`)
+
+> **Business Purpose:** Registers plant machinery, status management (Idle, Running, Maintenance, Breakdown, Offline), process capability tags, and notes.
+
+#### Models & Schemas
+- **`machine.model.ts`** — Mongoose model: `Machine`. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`MachineRepository`** (`machine.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `create()`, `findById()`, `findByCode()`, `update()`, `delete()`, `query()`, `findCapableMachines()`, `getFleetSummary()`.
+
+#### Services
+- **`MachineService`** (`machine.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `createMachine()`, `updateMachine()`, `changeMachineStatus()`, `addNote()`, `getMachineById()`, `getMachineByCode()`, `queryMachines()`, `findCapableMachines()`, `getFleetSummary()`.
+
+#### Controllers
+- **`MachineController`** (`machine.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`machine.validator.ts`**: Exported Zod validation schemas: `createMachineSchema`, `updateMachineSchema`, `changeMachineStatusSchema`, `addMachineNoteSchema`, `queryMachinesSchema`.
+
+#### API Endpoints & Routes
+- `GET /api/v1/machines/summary/fleet` — Handled by `MachineController`.
+- `GET /api/v1/machines/capabilities/search` — Handled by `MachineController`.
+- `GET /api/v1/machines` — Handled by `MachineController`.
+- `POST /api/v1/machines` — Handled by `MachineController`.
+- `GET /api/v1/machines/code/:machineCode` — Handled by `MachineController`.
+- `GET /api/v1/machines/:id` — Handled by `MachineController`.
+- `PUT /api/v1/machines/:id` — Handled by `MachineController`.
+- `POST /api/v1/machines/:id/status` — Handled by `MachineController`.
+- `POST /api/v1/machines/:id/notes` — Handled by `MachineController`.
+
+### 5.26 Preventive & Breakdown Maintenance Management (`modules/maintenance`)
+
+> **Business Purpose:** Coordinates Preventive Maintenance (PM) schedules, overdue service tracking, breakdown emergency reporting, repair work orders, and MTTR/MTBF metrics.
+
+#### Models & Schemas
+- **`maintenance.model.ts`** — Mongoose model: ``. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`MaintenanceRepository`** (`maintenance.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `createPlan()`, `findPlanById()`, `findPlanByCode()`, `updatePlan()`, `queryPlans()`, `findOverduePlans()`, `createWorkOrder()`, `findWorkOrderById()`, `findWorkOrderByNumber()`, `findActiveBreakdownByMachineId()`, `updateWorkOrder()`, `queryWorkOrders()`, `generateNextWorkOrderNumber()`, `getMetrics()`.
+
+#### Services
+- **`MaintenanceService`** (`maintenance.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `createPreventivePlan()`, `updatePreventivePlan()`, `queryPlans()`, `getOverduePlans()`, `reportBreakdown()`, `resolveBreakdown()`, `createWorkOrder()`, `completeWorkOrder()`, `getWorkOrderById()`, `queryWorkOrders()`, `getMetrics()`.
+
+#### Controllers
+- **`MaintenanceController`** (`maintenance.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`maintenance.validator.ts`**: Exported Zod validation schemas: `createPreventivePlanSchema`, `updatePreventivePlanSchema`, `reportBreakdownSchema`, `createWorkOrderSchema`, `resolveBreakdownSchema`, `completeWorkOrderSchema`, `queryMaintenanceWorkOrdersSchema`, `queryPreventivePlansSchema`.
+
+#### API Endpoints & Routes
+- `GET /api/v1/maintenance/metrics` — Handled by `MaintenanceController`.
+- `GET /api/v1/maintenance/plans/overdue` — Handled by `MaintenanceController`.
+- `GET /api/v1/maintenance/plans` — Handled by `MaintenanceController`.
+- `POST /api/v1/maintenance/plans` — Handled by `MaintenanceController`.
+- `PUT /api/v1/maintenance/plans/:id` — Handled by `MaintenanceController`.
+- `POST /api/v1/maintenance/breakdown` — Handled by `MaintenanceController`.
+- `POST /api/v1/maintenance/breakdown/:id/resolve` — Handled by `MaintenanceController`.
+- `GET /api/v1/maintenance/work-orders` — Handled by `MaintenanceController`.
+- `POST /api/v1/maintenance/work-orders` — Handled by `MaintenanceController`.
+- `GET /api/v1/maintenance/work-orders/:id` — Handled by `MaintenanceController`.
+- `POST /api/v1/maintenance/work-orders/:id/complete` — Handled by `MaintenanceController`.
+
+### 5.27 AMS 2750G Pyrometry & Sensor Calibration (`modules/pyrometry`)
+
+> **Business Purpose:** Enforces aerospace thermal compliance: thermocouple channel tracking, System Accuracy Tests (SAT), Temperature Uniformity Surveys (TUS), and multi-zone telemetry.
+
+#### Models & Schemas
+- **`pyrometry.model.ts`** — Mongoose model: ``. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`PyrometryRepository`** (`pyrometry.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `createChannel()`, `findChannelById()`, `findChannelByChannelId()`, `findChannelsByMachineId()`, `updateChannel()`, `queryChannels()`, `createCalibration()`, `findCalibrationById()`, `findLatestApprovedCalibration()`, `updateCalibration()`, `queryCalibrations()`, `generateNextCalibrationNumber()`, `createTelemetrySample()`, `findTelemetryByJobId()`, `findLatestTelemetryByMachineId()`.
+
+#### Services
+- **`PyrometryService`** (`pyrometry.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `registerChannel()`, `incrementChannelUsage()`, `queryChannels()`, `logSensorCalibration()`, `logTusSurvey()`, `logSatTest()`, `approveCalibration()`, `logTelemetrySample()`, `evaluateMachineCompliance()`, `validateMachinePyrometryReadiness()`, `getCalibrationById()`, `queryCalibrations()`, `getJobTelemetry()`.
+
+#### Controllers
+- **`PyrometryController`** (`pyrometry.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`pyrometry.validator.ts`**: Exported Zod validation schemas: `registerChannelSchema`, `logSensorCalibrationSchema`, `logTusSurveySchema`, `logSatTestSchema`, `approveCalibrationSchema`, `logTelemetrySchema`, `queryCalibrationsSchema`, `queryChannelsSchema`.
+
+#### API Endpoints & Routes
+- `GET /api/v1/pyrometry/machines/:machineId/compliance-status` — Handled by `PyrometryController`.
+- `POST /api/v1/pyrometry/channels` — Handled by `PyrometryController`.
+- `GET /api/v1/pyrometry/channels` — Handled by `PyrometryController`.
+- `POST /api/v1/pyrometry/calibrations/sensor` — Handled by `PyrometryController`.
+- `POST /api/v1/pyrometry/calibrations/tus` — Handled by `PyrometryController`.
+- `POST /api/v1/pyrometry/calibrations/sat` — Handled by `PyrometryController`.
+- `POST /api/v1/pyrometry/calibrations/:id/approve` — Handled by `PyrometryController`.
+- `GET /api/v1/pyrometry/calibrations` — Handled by `PyrometryController`.
+- `GET /api/v1/pyrometry/calibrations/:id` — Handled by `PyrometryController`.
+- `POST /api/v1/pyrometry/telemetry` — Handled by `PyrometryController`.
+- `GET /api/v1/pyrometry/telemetry/jobs/:jobId` — Handled by `PyrometryController`.
+
+### 5.28 Workforce Attendance, Shifts & Leave Management (`modules/attendance`)
+
+> **Business Purpose:** Manages shift definitions, worker schedules, clock-in/out punch timestamps, supervisor corrections, leave requests/balances, overtime authorizations, and holiday calendars.
+
+#### Models & Schemas
+- **`attendance.model.ts`** — Mongoose model: `Shift`. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`AttendanceRepository`** (`attendance.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `createShift()`, `findShiftById()`, `findShiftByCode()`, `findAllActiveShifts()`, `updateShift()`, `createSchedule()`, `findScheduleById()`, `findEmployeeScheduleOnDate()`, `querySchedules()`, `generateNextScheduleCode()`, `createAttendanceRecord()`, `findAttendanceById()`, `findEmployeeAttendanceOnDate()`, `queryAttendance()`, `generateNextAttendanceNumber()`, `createLeaveRequest()`, `findLeaveRequestById()`, `findApprovedLeavesForEmployee()`, `queryLeaves()`, `generateNextLeaveNumber()`, `findOrCreateLeaveBalance()`, `findLeaveBalance()`, `createOvertimeRecord()`, `findOvertimeById()`, `queryOvertime()`, `generateNextOvertimeNumber()`, `createShiftSwap()`, `findShiftSwapById()`, `generateNextSwapNumber()`, `createPlantHoliday()`, `findHolidaysInDateRange()`.
+
+#### Services
+- **`AttendanceService`** (`attendance.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `createShift()`, `updateShift()`, `getActiveShifts()`, `createSchedule()`, `bulkCreateSchedules()`, `reassignShift()`, `querySchedules()`, `clockIn()`, `clockOut()`, `correctAttendance()`, `queryAttendance()`, `createLeaveRequest()`, `approveLeave()`, `rejectLeave()`, `getLeaveBalance()`, `queryLeaves()`, `createOvertimeRequest()`, `approveOvertime()`, `rejectOvertime()`, `queryOvertime()`, `createShiftSwap()`, `approveShiftSwap()`, `createPlantHoliday()`, `getPlantHolidays()`, `getWorkforceAvailability()`.
+
+#### Controllers
+- **`AttendanceController`** (`attendance.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`attendance.validator.ts`**: Exported Zod validation schemas: `createShiftSchema`, `updateShiftSchema`, `createScheduleSchema`, `bulkCreateScheduleSchema`, `reassignShiftSchema`, `clockInSchema`, `clockOutSchema`, `correctAttendanceSchema`, `createLeaveRequestSchema`, `approveLeaveSchema`, `rejectLeaveSchema`, `createOvertimeRequestSchema`, `approveOvertimeSchema`, `rejectOvertimeSchema`, `createShiftSwapSchema`, `createPlantHolidaySchema`, `querySchedulesSchema`, `queryAttendanceSchema`, `queryLeavesSchema`, `queryOvertimeSchema`, `queryWorkforceAvailabilitySchema`.
+
+#### API Endpoints & Routes
+- `GET /api/v1/attendance/availability` — Handled by `AttendanceController`.
+- `GET /api/v1/attendance/shifts` — Handled by `AttendanceController`.
+- `POST /api/v1/attendance/shifts` — Handled by `AttendanceController`.
+- `PUT /api/v1/attendance/shifts/:id` — Handled by `AttendanceController`.
+- `GET /api/v1/attendance/schedules` — Handled by `AttendanceController`.
+- `POST /api/v1/attendance/schedules` — Handled by `AttendanceController`.
+- `POST /api/v1/attendance/schedules/bulk` — Handled by `AttendanceController`.
+- `POST /api/v1/attendance/schedules/reassign` — Handled by `AttendanceController`.
+- `POST /api/v1/attendance/swaps` — Handled by `AttendanceController`.
+- `POST /api/v1/attendance/swaps/:id/approve` — Handled by `AttendanceController`.
+- `GET /api/v1/attendance/records` — Handled by `AttendanceController`.
+- `POST /api/v1/attendance/clock-in` — Handled by `AttendanceController`.
+- `POST /api/v1/attendance/clock-out` — Handled by `AttendanceController`.
+- `POST /api/v1/attendance/records/:id/correct` — Handled by `AttendanceController`.
+- `GET /api/v1/attendance/leaves` — Handled by `AttendanceController`.
+- `POST /api/v1/attendance/leaves` — Handled by `AttendanceController`.
+- `POST /api/v1/attendance/leaves/:id/approve` — Handled by `AttendanceController`.
+- `POST /api/v1/attendance/leaves/:id/reject` — Handled by `AttendanceController`.
+- `GET /api/v1/attendance/leaves/balances/:employeeId` — Handled by `AttendanceController`.
+- `GET /api/v1/attendance/overtime` — Handled by `AttendanceController`.
+- `POST /api/v1/attendance/overtime` — Handled by `AttendanceController`.
+- `POST /api/v1/attendance/overtime/:id/approve` — Handled by `AttendanceController`.
+- `POST /api/v1/attendance/overtime/:id/reject` — Handled by `AttendanceController`.
+- `GET /api/v1/attendance/holidays` — Handled by `AttendanceController`.
+- `POST /api/v1/attendance/holidays` — Handled by `AttendanceController`.
+
+### 5.29 Outbound Dispatch Logistics & Gate Clearance (`modules/dispatch`)
+
+> **Business Purpose:** Manages the 6-stage dispatch lifecycle, grouping finished jobs into consignments, quality gate verification, carrier scheduling, departure, and delivery confirmation.
+
+#### Models & Schemas
+- **`dispatch.model.ts`** — Mongoose model: `DispatchConsignment`. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`DispatchRepository`** (`dispatch.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `create()`, `findById()`, `findByDispatchNumber()`, `findByDeliveryChallanNumber()`, `update()`, `query()`, `generateNextDispatchNumber()`, `generateNextDeliveryChallanNumber()`, `generateNextGatePassNumber()`.
+
+#### Services
+- **`DispatchService`** (`dispatch.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `createDispatch()`, `verifyQuality()`, `scheduleDispatch()`, `approveDispatch()`, `recordDeparture()`, `confirmDelivery()`, `cancelDispatch()`, `queryDispatches()`, `getDispatchById()`, `getDispatchByNumber()`.
+
+#### Controllers
+- **`DispatchController`** (`dispatch.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`dispatch.validator.ts`**: Exported Zod validation schemas: `PackageDetailsSchema`, `CreateDispatchLineSchema`, `createDispatchSchema`, `verifyDispatchQualitySchema`, `scheduleDispatchSchema`, `approveDispatchSchema`, `departDispatchSchema`, `deliverDispatchSchema`, `cancelDispatchSchema`, `queryDispatchesSchema`.
+
+#### API Endpoints & Routes
+- `POST /api/v1/dispatches` — Handled by `DispatchController`.
+- `GET /api/v1/dispatches` — Handled by `DispatchController`.
+- `GET /api/v1/dispatches/number/:dispatchNumber` — Handled by `DispatchController`.
+- `GET /api/v1/dispatches/:id` — Handled by `DispatchController`.
+- `POST /api/v1/dispatches/:id/verify-quality` — Handled by `DispatchController`.
+- `POST /api/v1/dispatches/:id/schedule` — Handled by `DispatchController`.
+- `POST /api/v1/dispatches/:id/approve` — Handled by `DispatchController`.
+- `POST /api/v1/dispatches/:id/depart` — Handled by `DispatchController`.
+- `POST /api/v1/dispatches/:id/deliver` — Handled by `DispatchController`.
+- `POST /api/v1/dispatches/:id/cancel` — Handled by `DispatchController`.
+
+### 5.30 Manufacturing Finance & General Ledger (`modules/finance`)
+
+> **Business Purpose:** Provides double-entry general ledger accounting, chart of accounts, factory cost centers, journal posting/reversal, accounting period close, and trial balance generation.
+
+#### Models & Schemas
+- **`finance.model.ts`** — Mongoose model: `Account, CostCenter, AccountingPeriod, JournalEntry`. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`FinanceRepository`** (`finance.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `createAccount()`, `findAccountByCode()`, `findAllAccounts()`, `updateAccount()`, `seedDefaultAccounts()`, `createCostCenter()`, `findCostCenterByCode()`, `findAllCostCenters()`, `seedDefaultCostCenters()`, `createPeriod()`, `findPeriodByCode()`, `findPeriodForDate()`, `findAllPeriods()`, `updatePeriod()`, `seedDefaultPeriods()`, `createJournalEntry()`, `findJournalById()`, `findJournalByNumber()`, `updateJournal()`, `queryJournalEntries()`, `generateNextEntryNumber()`, `getJournalEntriesForLedger()`, `getAllPostedJournalsUpTo()`.
+
+#### Services
+- **`FinanceService`** (`finance.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `createAccount()`, `getAllAccounts()`, `getAccountByCode()`, `updateAccount()`, `createCostCenter()`, `getAllCostCenters()`, `createPeriod()`, `getAllPeriods()`, `closePeriod()`, `reopenPeriod()`, `createJournalEntry()`, `postJournalEntry()`, `reverseJournalEntry()`, `getGeneralLedgerReport()`, `getTrialBalanceReport()`, `queryJournals()`, `getJournalById()`, `getJournalByNumber()`.
+
+#### Controllers
+- **`FinanceController`** (`finance.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`finance.validator.ts`**: Exported Zod validation schemas: `createAccountSchema`, `updateAccountSchema`, `createCostCenterSchema`, `createPeriodSchema`, `closePeriodSchema`, `createJournalLineSchema`, `createJournalEntrySchema`, `reverseJournalEntrySchema`, `queryJournalEntriesSchema`, `queryLedgerSchema`, `queryTrialBalanceSchema`.
+
+#### API Endpoints & Routes
+- `POST /api/v1/finance/accounts` — Handled by `FinanceController`.
+- `GET /api/v1/finance/accounts` — Handled by `FinanceController`.
+- `GET /api/v1/finance/accounts/:code` — Handled by `FinanceController`.
+- `PATCH /api/v1/finance/accounts/:code` — Handled by `FinanceController`.
+- `POST /api/v1/finance/cost-centers` — Handled by `FinanceController`.
+- `GET /api/v1/finance/cost-centers` — Handled by `FinanceController`.
+- `POST /api/v1/finance/periods` — Handled by `FinanceController`.
+- `GET /api/v1/finance/periods` — Handled by `FinanceController`.
+- `POST /api/v1/finance/periods/:periodCode/close` — Handled by `FinanceController`.
+- `POST /api/v1/finance/periods/:periodCode/reopen` — Handled by `FinanceController`.
+- `POST /api/v1/finance/journals` — Handled by `FinanceController`.
+- `GET /api/v1/finance/journals` — Handled by `FinanceController`.
+- `GET /api/v1/finance/journals/number/:entryNumber` — Handled by `FinanceController`.
+- `GET /api/v1/finance/journals/:id` — Handled by `FinanceController`.
+- `POST /api/v1/finance/journals/:id/post` — Handled by `FinanceController`.
+- `POST /api/v1/finance/journals/:id/reverse` — Handled by `FinanceController`.
+- `GET /api/v1/finance/ledger` — Handled by `FinanceController`.
+- `GET /api/v1/finance/trial-balance` — Handled by `FinanceController`.
+
+### 5.31 Manufacturing Job Costing & Rate Cards (`modules/costing`)
+
+> **Business Purpose:** Calculates standard and actual job costs across materials, labor, machine runtime, energy, and overhead allocation; manages rate cards and cost freezing.
+
+#### Models & Schemas
+- **`costing.model.ts`** — Mongoose model: `CostRateCard, JobCost`. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`CostingRepository`** (`costing.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `findActiveRateCard()`, `findRateCardByCode()`, `findAllRateCards()`, `createRateCard()`, `updateRateCard()`, `seedDefaultRateCards()`, `generateNextCostingNumber()`, `createJobCost()`, `findJobCostById()`, `findJobCostByJobId()`, `findJobCostByNumber()`, `queryJobCosts()`, `getSummaryReport()`.
+
+#### Services
+- **`CostingService`** (`costing.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `getActiveRateCard()`, `getRateCardByCode()`, `getAllRateCards()`, `createRateCard()`, `updateRateCard()`, `calculateJobCost()`, `recalculateJobCost()`, `freezeJobCost()`, `getJobCostById()`, `getJobCostByJobId()`, `queryJobCosts()`, `getCostingSummaryReport()`.
+
+#### Controllers
+- **`CostingController`** (`costing.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`costing.validator.ts`**: Exported Zod validation schemas: `createCostRateCardSchema`, `updateCostRateCardSchema`, `calculateJobCostSchema`, `recalculateJobCostSchema`, `freezeJobCostSchema`, `queryJobCostsSchema`.
+
+#### API Endpoints & Routes
+- `GET /api/v1/costing/rate-cards/active` — Handled by `CostingController`.
+- `GET /api/v1/costing/rate-cards` — Handled by `CostingController`.
+- `GET /api/v1/costing/rate-cards/:code` — Handled by `CostingController`.
+- `POST /api/v1/costing/rate-cards` — Handled by `CostingController`.
+- `PATCH /api/v1/costing/rate-cards/:code` — Handled by `CostingController`.
+- `POST /api/v1/costing/jobs` — Handled by `CostingController`.
+- `POST /api/v1/costing/jobs/:id/recalculate` — Handled by `CostingController`.
+- `POST /api/v1/costing/jobs/:id/freeze` — Handled by `CostingController`.
+- `GET /api/v1/costing/jobs` — Handled by `CostingController`.
+- `GET /api/v1/costing/jobs/summary` — Handled by `CostingController`.
+- `GET /api/v1/costing/jobs/job/:jobId` — Handled by `CostingController`.
+- `GET /api/v1/costing/jobs/:id` — Handled by `CostingController`.
+
+### 5.32 Customer Invoicing & Accounts Receivable (`modules/billing`)
+
+> **Business Purpose:** Generates customer invoices from completed dispatchable jobs, records invoice finalization, payment receipts, invoice voiding, and accounts receivable aging.
+
+#### Models & Schemas
+- **`billing.model.ts`** — Mongoose model: `Invoice`. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`BillingRepository`** (`billing.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `generateNextInvoiceNumber()`, `generateNextPaymentNumber()`, `createInvoice()`, `findInvoiceById()`, `findInvoiceByNumber()`, `findInvoiceByDispatchId()`, `findActiveInvoiceForDispatch()`, `findActiveInvoiceForJob()`, `queryInvoices()`, `getAgingReport()`, `getReceivablesSummary()`.
+
+#### Services
+- **`BillingService`** (`billing.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `createInvoice()`, `finalizeInvoice()`, `recordPayment()`, `voidInvoice()`, `getInvoiceById()`, `getInvoiceByNumber()`, `queryInvoices()`, `getAgingReport()`, `getReceivablesSummary()`.
+
+#### Controllers
+- **`BillingController`** (`billing.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`billing.validator.ts`**: Exported Zod validation schemas: `createInvoiceSchema`, `finalizeInvoiceSchema`, `recordPaymentSchema`, `voidInvoiceSchema`, `queryInvoicesSchema`, `queryAgingReportSchema`.
+
+#### API Endpoints & Routes
+- `POST /api/v1/billing/invoices` — Handled by `BillingController`.
+- `GET /api/v1/billing/invoices` — Handled by `BillingController`.
+- `GET /api/v1/billing/invoices/summary` — Handled by `BillingController`.
+- `GET /api/v1/billing/aging` — Handled by `BillingController`.
+- `GET /api/v1/billing/invoices/number/:invoiceNumber` — Handled by `BillingController`.
+- `GET /api/v1/billing/invoices/:id` — Handled by `BillingController`.
+- `POST /api/v1/billing/invoices/:id/finalize` — Handled by `BillingController`.
+- `POST /api/v1/billing/invoices/:id/payments` — Handled by `BillingController`.
+- `POST /api/v1/billing/invoices/:id/void` — Handled by `BillingController`.
+
+### 5.33 Executive Analytics & Domain Reporting (`modules/reporting`)
+
+> **Business Purpose:** Aggregates plant-wide telemetry to generate executive dashboards, production throughput, equipment OEE, quality FPY, attendance, inventory valuation, and profitability reports.
+
+#### Models & Schemas
+- _No dedicated Mongoose collection; acts as a pure calculation, aggregation, or analytical engine._
+
+#### Repositories
+- **`ReportingRepository`** (`reporting.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `getProductionJobs()`, `getQualityInspections()`, `getNcrs()`, `getCapas()`, `getMachines()`, `getMaintenanceWorkOrders()`, `getAttendanceRecords()`, `getOvertimeRecords()`, `getInventoryBalances()`, `getItems()`, `getWarehouses()`, `getQuarantineRecords()`, `getDispatches()`, `getJobCosts()`, `getInvoices()`, `getAuditLogs()`.
+
+#### Services
+- **`ReportingService`** (`reporting.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `getExecutiveDashboard()`, `getThroughputReport()`, `getCycleTimeReport()`, `getOeeDowntimeReport()`, `getQualityAnalyticsReport()`, `getWorkforceAttendanceReport()`, `getInventoryWarehouseReport()`, `getDispatchReport()`, `getJobCostProfitabilityReport()`, `formatToCsv()`, `getCommandCenterDashboard()`.
+
+#### Controllers
+- **`ReportingController`** (`reporting.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`reporting.validator.ts`**: Exported Zod validation schemas: `dateRangeFilterSchema`.
+
+#### API Endpoints & Routes
+- `GET /api/v1/reporting/command-center` — Handled by `ReportingController`.
+- `GET /api/v1/reporting/dashboard/executive` — Handled by `ReportingController`.
+- `GET /api/v1/reporting/production/throughput` — Handled by `ReportingController`.
+- `GET /api/v1/reporting/production/cycle-time` — Handled by `ReportingController`.
+- `GET /api/v1/reporting/equipment/oee` — Handled by `ReportingController`.
+- `GET /api/v1/reporting/quality` — Handled by `ReportingController`.
+- `GET /api/v1/reporting/workforce/attendance` — Handled by `ReportingController`.
+- `GET /api/v1/reporting/inventory/valuation` — Handled by `ReportingController`.
+- `GET /api/v1/reporting/dispatch` — Handled by `ReportingController`.
+- `GET /api/v1/reporting/costing/profitability` — Handled by `ReportingController`.
+
+### 5.34 Notification Center & Multi-Channel Alerts (`modules/notification`)
+
+> **Business Purpose:** Dispatches real-time in-app alerts, tracks unread badge counters, handles mark-as-read actions, broadcasts system notifications, and manages user preferences.
+
+#### Models & Schemas
+- **`notification.model.ts`** — Mongoose model: ``. Exported interfaces: `NotificationDocument, NotificationPreferenceDocument`. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`NotificationRepository`** (`notification.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `createNotification()`, `findNotificationById()`, `findNotificationsByRecipient()`, `getUnreadNotificationCount()`, `markNotificationAsRead()`, `markAllNotificationsAsRead()`, `findDuplicateByIdempotencyKey()`, `getUserPreferences()`, `saveUserPreferences()`, `checkRateLimitCooldown()`.
+
+#### Services
+- **`NotificationService`** (`notification.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `registerEventSubscriptions()`, `handleQcRejectedEvent()`, `handleNcrRaisedEvent()`, `handleMachineBreakdownEvent()`, `handleMaintenanceWorkOrderEvent()`, `handlePyrometryCalibrationEvent()`, `handleLowStockAlertEvent()`, `handleDispatchScheduledEvent()`, `handleJobPausedEvent()`, `dispatchTemplatedNotification()`, `getNotifications()`, `getUnreadCount()`, `markAsRead()`, `markAllAsRead()`, `getUserPreferences()`, `updateUserPreferences()`, `broadcastAlert()`.
+
+#### Controllers
+- **`NotificationController`** (`notification.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`notification.validator.ts`**: Exported Zod validation schemas: `queryNotificationsSchema`, `updatePreferencesSchema`, `broadcastAlertSchema`.
+
+#### API Endpoints & Routes
+- `GET /api/v1/notifications` — Handled by `NotificationController`.
+- `GET /api/v1/notifications/unread-count` — Handled by `NotificationController`.
+- `POST /api/v1/notifications/mark-all-read` — Handled by `NotificationController`.
+- `POST /api/v1/notifications/:id/read` — Handled by `NotificationController`.
+- `GET /api/v1/notifications/preferences/me` — Handled by `NotificationController`.
+- `PUT /api/v1/notifications/preferences/me` — Handled by `NotificationController`.
+- `POST /api/v1/notifications/broadcast` — Handled by `NotificationController`.
+
+### 5.35 Universal Global Search & Quick Actions (`modules/search`)
+
+> **Business Purpose:** Executes multi-domain, permission-scoped, tenant-isolated full-text queries across jobs, machines, inventory, customers, quality inspections, and dispatches.
+
+#### Models & Schemas
+- _No dedicated Mongoose collection; acts as a pure calculation, aggregation, or analytical engine._
+
+#### Repositories
+- **`SearchRepository`** (`search.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `searchJobs()`, `searchCustomers()`, `searchEmployees()`, `searchMaterials()`, `searchHeatLots()`, `searchMachines()`, `searchInspections()`, `searchNcrs()`, `searchWarehouses()`, `searchDispatches()`, `searchInvoices()`.
+
+#### Services
+- **`SearchService`** (`search.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `search()`, `getQuickActionsForActor()`, `getSuggestionsForQuery()`.
+
+#### Controllers
+- **`SearchController`** (`search.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`search.validator.ts`**: Exported Zod validation schemas: `querySearchSchema`.
+
+#### API Endpoints & Routes
+- `GET /api/v1/search` — Handled by `SearchController`.
+- `GET /api/v1/search/quick-actions` — Handled by `SearchController`.
+- `GET /api/v1/search/suggestions` — Handled by `SearchController`.
+
+### 5.36 Immutable Security Audit Trail Explorer (`modules/audit`)
+
+> **Business Purpose:** Captures and queries tamper-evident audit records with actor identity, action type, IP address, before/after diffs, and entity audit history.
+
+#### Models & Schemas
+- **`audit-log.model.ts`** — Mongoose model: `AuditLog`. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+
+#### Repositories
+- **`AuditLogRepository`** (`audit-log.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `queryAuditLogs()`, `findEntityHistory()`.
+
+#### Services
+- **`AuditService`** (`audit.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `computeDiff()`, `record()`, `queryAuditLogs()`, `getEntityHistory()`.
+
+#### Controllers
+- **`AuditController`** (`audit.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`audit.validator.ts`**: Exported Zod validation schemas: .
+
+#### API Endpoints & Routes
+- `GET /api/v1/audit/logs` — Handled by `AuditController`.
+- `GET /api/v1/audit/entities/:entityType/:entityId` — Handled by `AuditController`.
+
 
 ---
 
-## 10. Workforce, Attendance, Shifts & Labor Operations
+## 6. Frontend Architecture, Pages & Component Library
 
-### 10.1 Shift Management
+### 6.1 Application Shell & Navigation Layouts
 
-- `POST /api/v1/attendance/shifts` — Defines a plant operating shift with start/end times, break allowances, and overtime rules.
-- `GET /api/v1/attendance/shifts` — Lists all defined operating shifts and schedules.
-- `GET /api/v1/attendance/shifts/:id` — Retrieves details and working hour configurations for a specific shift.
-- `PUT /api/v1/attendance/shifts/:id` — Updates shift working hours, break durations, or grace period settings.
-- `DELETE /api/v1/attendance/shifts/:id` — Deactivates an unused plant shift definition.
+The frontend is built with React 19, Redux Toolkit, React Router 7, and a custom Apple Human Interface Guidelines (HIG) design system in Vanilla CSS. The interface is organized around a responsive application shell that dynamically adapts between desktop, tablet, and mobile viewports:
 
-### 10.2 Shift Scheduling & Roster
+- **Root Entrypoint (`main.tsx`):** Boots the React 19 application tree, binding to the `#root` DOM container with StrictMode enabled.
+- **Root Router Shell (`App.tsx`):** Orchestrates all top-level routing, Redux store context injection, and route guards. Separates public unauthenticated views from protected operational pages.
+- **Main Application Shell (`MainLayout.tsx`):** Enforces the standard enterprise desktop layout consisting of the persistent collapsible sidebar (`Sidebar.tsx`), top application bar (`Header.tsx`), and scrollable content viewport wrapped in `PageContainer.tsx`.
+- **Authentication Shell (`AuthLayout.tsx`):** Centers login forms within an Apple-styled frosted glass card with deep background gradients and branding.
+- **Application Header (`Header.tsx`):** 
+  - Houses the corporate brand identity and active tenant tag.
+  - Interactive `Ctrl+K` Global Search pill triggering the Command Palette.
+  - Live system status beacon.
+  - Notification drawer trigger with unread badge counter.
+  - User profile menu displaying current operator name, assigned roles, and clean logout trigger.
+- **Navigation Sidebar (`Sidebar.tsx`):**
+  - Grouped navigation organized by operational domains:
+    - **Manufacturing:** Command Center (`/dashboard`), Production Jobs (`/jobs`), Machinery Fleet (`/machines`), Inventory & Lots (`/inventory`), Warehouse & FG (`/warehouse`).
+    - **Quality & Lab:** Quality Inspections & NCRs (`/quality`).
+    - **Logistics & Finance:** Outbound Dispatch (`/dispatch`), Manufacturing Finance (`/finance`).
+    - **Workforce & Management:** Workforce & Attendance (`/workforce`), Executive Reports (`/reports`), Security & Audit (`/settings`).
+  - Tactile active-link indicators with subtle tinted backdrops and Lucide icon pairings.
+- **Protected Route Guard (`ProtectedRoute.tsx`):** Validates user authentication via `useAuth()` before rendering route components; redirects unauthenticated visitors to `/login` while preserving the attempted target URL for post-login return.
+- **Universal Command Palette (`CommandPalette.tsx`):**
+  - Accessible from anywhere in the application via the global `Ctrl+K` or `Cmd+K` shortcut.
+  - Frosted glass backdrop with blurred background.
+  - Instant live search querying across Jobs, Equipment, Inventory, Dispatches, Customers, and Quality Inspections.
+  - Domain category filter chips to narrow scope.
+  - Keyboard navigation with Arrow keys, Enter selection, and Escape dismissal.
+  - LocalStorage history preserving recent searches.
 
-- `POST /api/v1/attendance/schedules` — Assigns an employee to a scheduled shift slot on a specific date.
-- `GET /api/v1/attendance/schedules` — Retrieves shift roster assignments by department, employee, or date range.
-- `GET /api/v1/attendance/schedules/conflicts` — Scans scheduled rosters to detect double-booking or rest-period violations.
-- `GET /api/v1/attendance/schedules/calendar` — Returns the complete plant shift roster formatted for monthly calendar views.
-- `GET /api/v1/attendance/schedules/history/:employeeId` — Fetches the historical shift assignment record for an employee.
-- `POST /api/v1/attendance/schedules/:id/reassign` — Reassigns a shift slot to a different qualified operator.
-- `DELETE /api/v1/attendance/schedules/:id` — Removes an employee from a scheduled shift assignment.
+### 6.2 Frontend Route Matrix (14 Active Routes)
 
-### 10.3 Attendance Records
+| Path | Element | Shell Layout | Auth Required | Purpose & Capabilities |
+|---|---|---|---|---|
+| `/login` | `<LoginPage />` | `AuthLayout` | No | Operator authentication, tenant selection, password credentials. |
+| `/`, `/dashboard` | `<DashboardPage />` | `MainLayout` | Yes | Command center, live thermal runs, equipment status, active alerts. |
+| `/jobs`, `/production-jobs`, `/production-jobs/:id` | `<JobsPage />` | `MainLayout` | Yes | Production work orders, 12-stage lifecycle transitions, recipe review. |
+| `/quality`, `/quality/inspections`, `/ncrs` | `<QualityPage />` | `MainLayout` | Yes | Lab testing, hardness surveys, NCR dispositioning, CoC generation. |
+| `/machines`, `/furnaces`, `/maintenance` | `<MachinesPage />` | `MainLayout` | Yes | Machinery fleet status, pyrometry compliance, breakdown reporting. |
+| `/inventory`, `/heat-lots` | `<InventoryPage />` | `MainLayout` | Yes | Raw material stock ledger, MTR heat lot inwarding, stock adjustments. |
+| `/warehouse`, `/warehouses`, `/finished-goods` | `<WarehousePage />` | `MainLayout` | Yes | Warehouse location topology, quarantine holds, finished goods staging. |
+| `/workforce`, `/attendance` | `<WorkforcePage />` | `MainLayout` | Yes | Operator skills, shift rosters, clock-in/out punch timestamps. |
+| `/dispatch`, `/dispatches`, `/dispatches/:id` | `<DispatchPage />` | `MainLayout` | Yes | Outbound shipments, QA gate verification, gate clearance, delivery. |
+| `/finance`, `/billing`, `/costing` | `<FinancePage />` | `MainLayout` | Yes | Factory billing invoices, job-level cost breakdowns, ledger accounts. |
+| `/reports`, `/reporting` | `<ReportsPage />` | `MainLayout` | Yes | Executive OEE, throughput tonnage, quality FPY %, cost variance. |
+| `/settings`, `/audit` | `<SettingsPage />` | `MainLayout` | Yes | Audit log explorer, entity before/after diffs, tenant profile info. |
+| `/unauthorized` | `<UnauthorizedPage />` | `MainLayout` | Yes | Role/permission denial screen with safe navigation fallback. |
+| `/404` | `<NotFoundPage />` | `MainLayout` | No | Clean 404 error page for undefined paths. |
 
-- `POST /api/v1/attendance/records` — Captures employee clock-in and clock-out timestamps for a shift.
-- `PATCH /api/v1/attendance/records/:id/correct` — Allows supervisors to correct missed punches or adjust recorded hours with justification.
-- `GET /api/v1/attendance/records` — Lists attendance logs with status filters (Present, Late, Absent, Early Departure).
-- `GET /api/v1/attendance/records/:id` — Retrieves details and punch timestamps for a single attendance record.
+### 6.3 Complete Page Workbenches (All 14 Pages)
 
-### 10.4 Leave Management
+#### 1. Dashboard Page (`DashboardPage.tsx`, 41.7 KB)
+- **Role:** Central manufacturing command center providing real-time shop-floor operational visibility and executive KPIs.
+- **State & Filters:** Manages `activeTab`, `timeFilter` ('Live Shift', 'Today', 'This Week', 'This Month'), and live refresh timers.
+- **Key Visualizations & Modules:**
+  - Fleet Status Grid: Live operational state cards for all active furnaces (Running, Idle, Maintenance, Breakdown) with current cycle temperatures and progress bars.
+  - Active Work Orders Rail: Priority-ranked jobs currently inside thermal cycles with dwell timers and target specifications.
+  - Quality Pass/Fail Meter: Live First Pass Yield (FPY %) gauge with open NCR counters.
+  - Inventory Reorder Alerts: Low-stock warning banner for quench oils, process gases, and bar stock.
+  - Real-Time Event Feed: Streaming audit and domain event log displaying actor, action, and timestamp.
 
-- `POST /api/v1/attendance/leaves` — Submits a formal paid or unpaid leave request for supervisor review.
-- `PATCH /api/v1/attendance/leaves/:id/approve` — Approves a submitted leave request and updates employee leave balances.
-- `PATCH /api/v1/attendance/leaves/:id/reject` — Rejects a leave request and records the supervisor's reason.
-- `PATCH /api/v1/attendance/leaves/:id/cancel` — Allows employees to cancel a pending or approved leave request before the leave date.
-- `GET /api/v1/attendance/leaves/balances/:employeeId` — Returns available Annual, Sick, and Casual leave balances for an employee.
-- `GET /api/v1/attendance/leaves/history/:employeeId` — Retrieves historical leave requests and approval records for an employee.
-- `GET /api/v1/attendance/leaves` — Lists all leave applications with status and department filtering.
+#### 2. Jobs Workbench (`JobsPage.tsx`, 34.4 KB)
+- **Role:** Comprehensive management of production jobs across the complete 12-stage heat treatment lifecycle.
+- **State & Actions:** Manages `jobs`, `selectedJob`, `statusFilter`, `searchQuery`, and `isNewJobOpen` modal state.
+- **Key Capabilities:**
+  - Work Order Master Table: Displays job codes, customer names, alloy grades, recipe codes, scheduled machine, and status badges.
+  - Status Filter Tabs: Quick toggles for `All`, `Draft`, `Scheduled`, `In Progress`, `Quality Check`, and `Completed`.
+  - Detail Inspection Drawer: Deep-dive slide-out reviewing recipe parameters (Target Temp °C, Soak Minutes, Carbon %C, Quench Medium), furnace and operator assignments, and state transition history.
+  - Work Order Creation Modal: Guided wizard to bind Customer, Item, Recipe, Specification, and Target Quantity with automated validation.
+  - Lifecycle Action Triggers: One-click actions to Start, Pause, Resume, Log Downtime, Record Milestone Progress, and Transition to Storage.
 
-### 10.5 Overtime Management
+#### 3. Quality Control Workbench (`QualityPage.tsx`, 27.5 KB)
+- **Role:** ISO 17025 / AMS 2750G metallurgical inspection and non-conformance disposition workbench.
+- **State & Sub-Views:** `activeTab` ('Inspections', 'NCRs & CAPAs', 'Analytics'), `inspections`, `ncrs`, and `selectedInspection`.
+- **Key Capabilities:**
+  - Inspection Worklist: Displays inspection number, linked job, heat lot, inspector name, and status (Pending, In Progress, Approved, Rejected).
+  - Hardness Survey Data Entry: Input forms to capture Rockwell (HRC), Vickers (HV), and Brinell (HBW) readings across sample locations.
+  - Traverse Case Depth Curve: Visual representation of hardness vs. depth to verify Effective Case Depth (ECD).
+  - Approval / Rejection Workflow: QA Manager digital sign-off producing Certificate of Conformance (CoC), or formal rejection raising an NCR.
+  - NCR / CAPA Tracker: Tracks root cause investigations (5-Why analysis), containment actions, and corrective preventive actions.
 
-- `POST /api/v1/attendance/overtimes` — Requests authorization for planned overtime hours before a shift.
-- `POST /api/v1/attendance/overtimes/record` — Directly logs verified overtime hours worked by an employee.
-- `PATCH /api/v1/attendance/overtimes/:id/approve` — Authorizes overtime hours for payroll calculation at applicable multiplier rates.
-- `PATCH /api/v1/attendance/overtimes/:id/reject` — Rejects unauthorized overtime claims with supervisor notes.
-- `GET /api/v1/attendance/overtimes/history/:employeeId` — Returns the chronological overtime record for an employee.
-- `GET /api/v1/attendance/overtimes` — Lists overtime logs with multiplier categories (1.5x, 2.0x) and status filters.
+#### 4. Machinery & Equipment Workbench (`MachinesPage.tsx`, 28.5 KB)
+- **Role:** Asset management for furnaces, CNC machinery, and quench tanks.
+- **State & Sub-Views:** `activeTab` ('Fleet Overview', 'Maintenance Work Orders', 'Pyrometry & Calibration'), `machines`, and `workOrders`.
+- **Key Capabilities:**
+  - Asset Fleet Cards: Renders technical cards showing max operating temperature (°C), maximum charge weight (kg), atmosphere control capabilities, and live status.
+  - Machine Registration Modal: Input technical parameters, heating element types, thermocouple channels, and plant bay locations.
+  - Breakdown Logging Modal: Rapid emergency stoppage logging with severity tags, automatically transitioning equipment to `BREAKDOWN`.
+  - Pyrometry & Calibration Log: Displays System Accuracy Test (SAT) and Temperature Uniformity Survey (TUS) due dates with warning alerts.
 
-### 10.6 Shift Swapping & Holiday Calendar
+#### 5. Inventory & Heat-Lots Workbench (`InventoryPage.tsx`, 24.7 KB)
+- **Role:** Raw material stock ledger, heat lot traceability, and Mill Test Certificate (MTR) management.
+- **State & Sub-Views:** `activeTab` ('Stock Ledger', 'Heat Lots & MTRs', 'Stock Movements'), `items`, `heatLots`, `selectedHeatLot`.
+- **Key Capabilities:**
+  - Stock Ledger Table: Displays SKU, item name, material grade, current balance, reserved quantity, available quantity, and safety reorder point.
+  - Goods Receipt Inwarding Modal: Captures supplier heat numbers, Mill Test Certificate (MTR) numbers, chemical analysis, and assigned storage bin.
+  - Heat Lot Traceability Drawer: Bi-directional genealogy display linking raw heat numbers to consumed jobs and customer dispatch consignments.
+  - Stock Adjustment Action: Supervisor-authorized balance corrections with mandatory reason codes.
 
-- `POST /api/v1/attendance/shift-swaps` — Submits a peer-to-peer shift swap request between two qualified workers.
-- `PATCH /api/v1/attendance/shift-swaps/:id/approve` — Approves a shift swap and automatically updates both workers' rosters.
-- `POST /api/v1/attendance/holidays` — Adds a recognized plant holiday or scheduled shutdown to the operating calendar.
-- `GET /api/v1/attendance/holidays` — Lists all upcoming and past plant holidays.
+#### 6. Warehouse & Locations Workbench (`WarehousePage.tsx`, 12.6 KB)
+- **Role:** Physical plant warehouse topology, quarantine holding, and finished-goods storage.
+- **State & Actions:** `warehouses`, `isAddModalOpen`, `code`, `name`, `type` ('Raw Material', 'WIP', 'Quarantine', 'Finished Goods'), and `plantArea`.
+- **Key Capabilities:**
+  - Warehouse Topology Grid: Renders warehouse bays with total locations, occupied locations, and percentage utilization meters.
+  - Storage Location Manager: Form to create and update racks, shelves, and bins with capacity constraints.
+  - Quarantine Holding View: Highlights quarantined items awaiting quality review, preventing unauthorized issue or dispatch.
+  - Finished Goods Bay: Staging area for QA-cleared completed jobs ready for packing and dispatch.
 
-### 10.7 Availability & Calendar Queries
+#### 7. Workforce & Attendance Workbench (`WorkforcePage.tsx`, 13.1 KB)
+- **Role:** Personnel directory, shift scheduling, operator skill certification, and attendance tracking.
+- **State & Actions:** `shifts`, `isClockInOpen`, `employeeId`, `shiftCode`, and `availableStaff`.
+- **Key Capabilities:**
+  - Daily Attendance Table: Displays operator name, employee code, scheduled shift, punch-in time, punch-out time, and compliance status.
+  - Shift Clock-In Modal: Captures operator badge ID, assigned shift, and punch notes.
+  - Operator Skills Matrix: Visual display of operator qualifications (Vacuum Furnace, Sealed Quench, Induction Hardening, Pyrometry).
+  - Shift Schedule Calendar: Monthly grid showing workforce coverage and scheduled shift allocations.
 
-- `GET /api/v1/attendance/availability/:employeeId` — Checks an employee's real-time working availability for emergency job assignments.
-- `GET /api/v1/attendance/calendar` — Returns the consolidated plant calendar combining shifts, leaves, and plant holidays.
+#### 8. Outbound Dispatch Workbench (`DispatchPage.tsx`, 17.8 KB)
+- **Role:** Outbound shipping logistics, document compliance, and delivery tracking.
+- **State & Actions:** `dispatches`, `selectedDispatch`, `isConsignmentModalOpen`, and customer/carrier selection fields.
+- **Key Capabilities:**
+  - Shipping Orders Table: Displays consignment code, customer name, total items, transport carrier, gate departure status, and delivery date.
+  - Consignment Creation Wizard: Groups finished goods from completed work orders into a shipping manifest.
+  - Quality Gate Verification: Asserts that all attached jobs possess approved and signed Certificates of Conformance (CoC) before enabling departure.
+  - Carrier & Gate Clearance: Records carrier name, vehicle number, driver details, and gate departure authorization.
+  - Proof of Delivery (PoD): Confirms customer delivery receipt and records PoD document references.
 
-### 10.8 Frontend Workforce Pages & Components
+#### 9. Manufacturing Finance Workbench (`FinancePage.tsx`, 20.1 KB)
+- **Role:** Factory job costing, customer billing, and general ledger operations.
+- **State & Sub-Views:** `activeTab` ('Customer Invoices', 'Job Costing & Profitability', 'General Ledger & Accounts'), `invoices`, and `jobCosts`.
+- **Key Capabilities:**
+  - Invoices Master Table: Lists issued invoices, customer names, total amounts, payment terms, and statuses (Draft, Issued, Paid, Void).
+  - Invoice Creation Modal: Generates commercial invoices directly from approved completed/dispatched jobs.
+  - Job Costing Breakdown: Visualizes direct material, direct labor, machine runtime cost, energy consumption, and factory overhead per job.
+  - General Ledger View: Posted journal entries with double-entry debit/credit balances and cost center filtering.
 
-- **Workforce Shifts Page (`/workforce/shifts`):** Displays the shift roster with operator allocation chips and swap controls.
-- **Workforce Attendance Page (`/workforce/attendance`):** Renders daily attendance logs with clock-in actions and punch adjustment dialogs.
-- **Leave Requests Page (`/workforce/leave`):** Provides a leave submission portal with balance cards and supervisor approval queues.
-- **Overtime Page (`/workforce/overtime`):** Tracks overtime authorizations, multiplier calculations, and budget compliance metrics.
-- **Shift Cards (`ShiftCards.tsx`):** Displays visual cards summarizing shift coverage and assigned personnel.
-- **Workforce Attendance Table (`WorkforceAttendanceTable.tsx`):** Renders tabular attendance data with shift compliance percentages.
-- **Workforce Calendar (`WorkforceCalendar.tsx`):** Visualizes shift rosters, approved leaves, and plant holidays on a monthly grid.
+#### 10. Executive Reports & Analytics (`ReportsPage.tsx`, 7.8 KB)
+- **Role:** Executive reporting and domain operational analytics.
+- **State & Controls:** `timeRange` ('Last 7 Days', 'Month to Date', 'Quarter to Date', 'Year to Date') and export actions.
+- **Key Capabilities:**
+  - Plant Throughput Metrics: Total heat-treated tonnage, average heating cycle durations, and furnace utilization rates.
+  - Overall Equipment Effectiveness (OEE): Aggregated Availability, Performance, and Quality ratings across the furnace fleet.
+  - First Pass Yield (FPY %): Trends over time with defect root-cause distribution.
+  - Export Options: On-demand downloadable exports in CSV and JSON formats.
 
----
+#### 11. System Settings & Audit Explorer (`SettingsPage.tsx`, 11.7 KB)
+- **Role:** Security audit log explorer and organization configuration.
+- **State & Sub-Views:** `activeTab` ('Audit Logs', 'Organization Profile', 'Security Policies'), `logs`, `isLoading`.
+- **Key Capabilities:**
+  - Tamper-Evident Audit Table: Lists timestamp, actor identity, action type (CREATE, UPDATE, DELETE, STATUS_CHANGE), entity type, and IP address.
+  - Property Diff Inspector: Modal rendering deep JSON before-and-after property diffs for any modified entity.
+  - Tenant Organization Profile: Displays plant facility name, tenant code, and operational parameters.
 
-## 11. Employee Directory & Personnel Management
+#### 12. Authentication View (`LoginPage.tsx`, 7.2 KB)
+- **Role:** Secure authentication portal with high-contrast inputs and tenant routing.
+- **State & Controls:** `email`, `password`, `tenantId`, `isLoading`, and structured error alerts.
+- **Key Capabilities:**
+  - Validates credentials against `/api/v1/auth/login`.
+  - Dispatches `setCredentials` to Redux, persisting access and refresh tokens to LocalStorage.
+  - Seamless redirection to the initially requested protected route.
 
-### 11.1 Backend API Endpoints
+#### 13. Unauthorized Access View (`UnauthorizedPage.tsx`, 1.7 KB)
+- **Role:** Clean permission denial view when a user's assigned roles lack the required granular permission.
+- **Key Capabilities:** Explains access restriction with a direct navigation button back to the Dashboard.
 
-- `POST /api/v1/employees` — Creates an employee record with department, job title, and contact details.
-- `GET /api/v1/employees` — Lists all employees with search and department filtering.
-- `GET /api/v1/employees/:id` — Retrieves an employee profile including certifications, assignments, and employment status.
-- `GET /api/v1/employees/code/:code` — Looks up an employee record by their unique badge/employee code.
-- `PUT /api/v1/employees/:id` — Updates employee profile data, contact details, or department assignments.
-- `DELETE /api/v1/employees/:id` — Soft-deletes an employee record upon offboarding.
-- `PATCH /api/v1/employees/:id/status` — Updates an employee's active status (e.g., Active, On Leave, Suspended).
-- `PATCH /api/v1/employees/:id/deactivate` — Deactivates an employee's system access upon departure while preserving history.
-- `PATCH /api/v1/employees/:id/reactivate` — Re-enables system access for a returning employee.
-- `PATCH /api/v1/employees/:id/restore` — Restores an archived employee profile back to active directory views.
-- `PATCH /api/v1/employees/:id/assign` — Assigns an employee to a specific plant department or production cell.
-- `PATCH /api/v1/employees/:id/skills` — Updates certified technical skills (e.g., Vacuum Furnace Operator, Pyrometry Specialist).
-- `PATCH /api/v1/employees/:id/availability` — Sets recurring weekly working hours and availability preferences for an operator.
-
-### 11.2 Frontend Employee Pages & Components
-
-- **Employee Directory Page (`/workforce/employees`):** Renders searchable employee cards with job titles, departments, and skill badges.
-- **Employee Details Page (`/workforce/employees/:id`):** Provides a complete employee workbench covering profile info, job history, and certifications.
-- **Employee Profile Page (`/workforce/employees/:id/profile`):** Displays technical qualifications, safety certifications, and emergency contacts.
-- **Attendance History Page (`/workforce/employees/:id/attendance`):** Shows per-employee clock-in history and punch records.
-- **Employee Cards (`EmployeeCards.tsx`):** Renders responsive profile cards with quick-action links.
-- **Attendance Timeline (`AttendanceTimeline.tsx`):** Visualizes daily attendance punch events in a chronological timeline.
-- **Employee Activity Feed (`EmployeeActivityFeed.tsx`):** Streams recent actions, job allocations, and system events for an employee.
-- **Leave Calendar (`LeaveCalendar.tsx`):** Shows individual leave history and approved time-off on a personal calendar.
-- **Profile Tabs (`ProfileTabs.tsx`):** Provides tabbed navigation between employee profile sections.
-
----
-
-## 12. Configurable State Machine & Workflow Engine
-
-### 12.1 Backend API Endpoints
-
-**Workflow Definitions:**
-
-- `POST /api/v1/workflows/definitions` — Creates a JSON-defined state machine with transition rules, guards, and action hooks.
-- `POST /api/v1/workflows/definitions/:workflowId/versions` — Creates a new version of an existing workflow definition without breaking running instances.
-- `GET /api/v1/workflows/definitions` — Lists all configured workflow definitions across domain processes.
-- `GET /api/v1/workflows/definitions/:id` — Retrieves a specific workflow definition and its complete state graph.
-- `DELETE /api/v1/workflows/definitions/:id` — Deactivates a workflow definition to prevent new instance creation.
-
-**Workflow Instances:**
-
-- `POST /api/v1/workflows/instances` — Spawns a new workflow instance for a business entity (e.g., starting an approval workflow).
-- `POST /api/v1/workflows/instances/:id/actions` — Executes a named transition action to advance an instance to its next valid state.
-- `POST /api/v1/workflows/instances/:id/rollback` — Reverts a workflow instance to its prior state when an error or rejection occurs.
-- `GET /api/v1/workflows/instances/:id` — Retrieves the current state, active payload, and available next actions for an instance.
-- `GET /api/v1/workflows/instances/:id/history` — Returns the complete transition history and timestamped audit log for a workflow instance.
-
-### 12.2 Frontend Workflow Integration
-
-- **Workflow API (`workflowApi.ts`):** Exposes typed RTK Query hooks to manage workflow definitions, execute actions, and query history.
-- **State Machine Guard Integration:** Powers approval chains for production jobs, QA certifications, leave applications, and dispatch gates.
-
----
-
-## 13. Outbound Dispatch & Shipping Logistics
-
-### 13.1 Shipment Lifecycle State Machine
-
-`DRAFT` ➔ `QUALITY_VERIFIED` ➔ `SCHEDULED` ➔ `APPROVED` ➔ `DISPATCHED` ➔ `DELIVERED` / `CANCELLED`
-
-### 13.2 Backend API Endpoints
-
-- `POST /api/v1/dispatch` — Creates an outbound consignment order grouping finished jobs for customer delivery.
-- `GET /api/v1/dispatch` — Lists dispatch consignments with status, customer, and date range filters.
-- `GET /api/v1/dispatch/:id` — Retrieves complete dispatch order details including job manifests, carrier info, and compliance documents.
-- `POST /api/v1/dispatch/:id/verify-quality` — Verifies that all jobs in the consignment have passed QA inspection and possess approved CoCs.
-- `POST /api/v1/dispatch/:id/verify-documents` — Confirms compliance documents (Delivery Challan, CoC, Packing List) are attached.
-- `POST /api/v1/dispatch/:id/schedule` — Assigns carrier name, Bill of Lading (BOL), vehicle registration, and driver details.
-- `POST /api/v1/dispatch/:id/approve` — Grants plant manager authorization for the shipment to depart the facility.
-- `POST /api/v1/dispatch/:id/dispatch` — Records physical departure from the facility and updates shipment status to In Transit.
-- `POST /api/v1/dispatch/:id/deliver` — Confirms final delivery to the customer and uploads Proof of Delivery (PoD) records.
-- `POST /api/v1/dispatch/:id/cancel` — Cancels an unsent dispatch order and releases assigned jobs back to finished-goods storage.
-- `GET /api/v1/dispatch/:id/history` — Returns the complete timestamped audit trail of shipping state transitions.
-
-### 13.3 Frontend Dispatch Pages & Components
-
-- **Dispatch List Page (`/dispatch`):** Displays dispatch orders with status tabs, carrier tracking info, and compliance indicators.
-- **Dispatch Details Workbench (`/dispatch/:id`):** Provides a 5-tab shipping console covering Manifest, Compliance, Carrier, Challan, and History.
-- **Delivery Challan Print View:** Generates an ISO-formatted printable delivery manifest with signature blocks and packing lists.
-
----
-
-## 14. Executive Analytics & Domain Reporting
-
-### 14.1 Backend API Endpoints
-
-- `GET /api/v1/reports/dashboards/executive` — Returns high-level executive KPIs covering monthly revenue, plant OEE, delivery rates, and scrap percentages.
-- `GET /api/v1/reports/dashboards/operational` — Returns live shop-floor operational metrics covering active jobs, machine status, and workforce coverage.
-- `GET /api/v1/reports/production` — Generates production throughput reports summarizing completed tonnage and cycle durations.
-- `GET /api/v1/reports/inventory` — Generates inventory valuation reports by material category and consumption rate.
-- `GET /api/v1/reports/attendance` — Generates workforce attendance compliance and overtime cost analysis reports.
-- `GET /api/v1/reports/utilization` — Computes fleet equipment uptime, downtime hours, and OEE performance rankings.
-- `GET /api/v1/reports/quality` — Compiles First Pass Yield (FPY %) metrics, defect Pareto distributions, and open NCR summaries.
-- `GET /api/v1/reports/financial` — Exposes financial billing and revenue summaries (scaffolded).
-- `POST /api/v1/reports/export` — Asynchronously generates downloadable report exports in CSV, XLSX, or PDF format.
-- `POST /api/v1/reports/schedules` — Creates an automated recurring schedule to generate and email reports.
-- `GET /api/v1/reports/schedules` — Lists configured automated report schedules.
-- `POST /api/v1/reports/schedules/:id/execute` — Manually triggers the immediate execution and delivery of a scheduled report.
-
-### 14.2 Frontend Report Pages & Components
-
-- **Executive Analytics Dashboard (`/reports`):** Displays high-level executive KPI cards and revenue trend charts.
-- **Production Reports Page (`/reports/production`):** Visualizes throughput tonnage, completed heat treatment batches, and cycle metrics.
-- **Inventory Reports Page (`/reports/inventory`):** Shows stock valuation by material category and tracks monthly consumption trends.
-- **Machine Equipment Reports (`/reports/machines`):** Analyzes equipment uptime, maintenance costs, and OEE performance.
-- **Workforce Attendance Reports (`/reports/attendance`):** Visualizes shift attendance rates, overtime hours, and labor costs.
-- **Report Filters Panel (`ReportFiltersPanel.tsx`):** Provides date range and facility bay selectors for report filtering.
-- **Report KPI Summary Cards (`ReportKpiCards.tsx`):** Displays executive metrics with period-over-period delta indicators.
-- **Report Export Dialog (`ReportExportDialog.tsx`):** Configures format (CSV, XLSX, PDF) and date range for report exports.
-- **Interactive Chart Suite (`InteractiveCharts.tsx`):** Renders interactive revenue trend lines and process volume donut charts.
+#### 14. Not Found Fallback (`NotFoundPage.tsx`, 1.8 KB)
+- **Role:** Apple-styled 404 screen displayed when an invalid URL route is entered.
+- **Key Capabilities:** Visual warning icon, descriptive message, and a one-click return to safe routes.
 
 ---
 
-## 15. Global Search & Command Palette
+### 6.4 Apple HIG Design System Primitive Library (18 Components)
 
-### 15.1 Backend API Endpoints
+The frontend features a cohesive, bespoke Apple Human Interface Guidelines (HIG) component system in `frontend/src/design-system`:
 
-- `GET /api/v1/search?q=...&categories=...` — Executes a multi-domain, permission-scoped search across all ERP entities.
-- `GET /api/v1/search/suggestions?q=...` — Returns instant query suggestions and recent search terms as the user types.
-
-### 15.2 Backend Search Engine Features
-
-- **Cross-Domain Search Indexing:** Queries Jobs, Employees, Customers, Equipment, Inventory, Quality Inspections, and Dispatches simultaneously.
-- **Permission-Aware Scoping:** Filters out results from domains where the user lacks explicit read permissions.
-- **Tenant Partitioning:** Automatically scopes all search queries to the authenticated tenant and ignores soft-deleted records.
-- **Category Filtering:** Restricts searches to specific domain categories when selected by the user.
-- **Structured Result Grouping:** Organizes results by domain entity with standardized identifiers, titles, and status chips.
-
-### 15.3 Frontend Command Palette (`CommandPalette.tsx`)
-
-- **Global Shortcut Trigger (`Ctrl+K`):** Opens the command palette from anywhere in the application.
-- **Frosted Glass Backdrop:** Uses Apple-styled frosted glass materials (`material-thick`) with background blur.
-- **Domain Category Filter Capsules:** Provides clickable category chips to narrow search scope (e.g., Jobs, Machines, Inventory).
-- **Persistent Search History:** Stores recent searches in `localStorage` for fast replay and one-click clearing.
-- **Live Autocomplete Chips:** Displays search suggestions as the user types.
-- **Full Keyboard Navigation:** Supports `ArrowUp`/`ArrowDown` navigation, `Enter` to select, and `ESC` to dismiss.
-- **Search RTK Query Layer (`searchApi.ts`):** Handles caching and request debouncing for search queries.
-
----
-
-## 16. Notification Center & Alert Delivery
-
-### 16.1 Backend API Endpoints
-
-- `POST /api/v1/notifications/templates` — Creates reusable notification templates with dynamic merge variables.
-- `GET /api/v1/notifications/templates` — Lists available notification templates by domain category.
-- `GET /api/v1/notifications/preferences` — Retrieves the authenticated user's delivery channel preferences.
-- `PUT /api/v1/notifications/preferences` — Updates the authenticated user's notification preferences.
-- `GET /api/v1/notifications/preferences/:userId` — Retrieves notification preferences for a specific user (admin).
-- `PUT /api/v1/notifications/preferences/:userId` — Updates notification preferences for a specific user (admin).
-- `POST /api/v1/notifications/send` — Programmatically dispatches an alert across enabled delivery channels.
-- `GET /api/v1/notifications/unread-count` — Returns the current count of unread notifications for badge counters.
-- `PATCH /api/v1/notifications/mark-all-read` — Marks all notifications in the user's inbox as read.
-- `GET /api/v1/notifications/user/:userId` — Retrieves paginated notifications for a user's inbox.
-- `PATCH /api/v1/notifications/:id/read` — Marks a specific notification as read.
-- `GET /api/v1/notifications/:id/history` — Returns the delivery history and channel receipt logs for a notification.
-
-### 16.2 Frontend Notification Components & Pages
-
-- **Slide-Over Notification Panel (`NotificationPanel.tsx`):** Provides a quick-access drawer displaying categorized alerts with deep-link navigation.
-- **Notification Center Page (`/notifications`):** Offers a full inbox interface with search, category filtering, and priority indicators.
-- **Notification Preferences Console (`NotificationPreferences.tsx`):** Configures delivery channels (In-App, Email, SMS, Push, Webhooks) and muting rules.
-- **Notification API Layer (`notificationApi.ts`):** Exposes RTK Query hooks for notification fetching, reading, and preference management.
+| Category | Component File | Description & Visual Characteristics | Typical Usage |
+|---|---|---|---|
+| **Buttons** | `ActionButton.tsx` | Split compound button with primary action and context dropdown. | Multi-action buttons (e.g. Save vs Save & Dispatch). |
+| **Buttons** | `AppButton.tsx` | Core button with variants (Primary, Secondary, Tinted, Ghost, Danger, Pill), loading spinners, and disabled states. | Primary user action triggers across forms and dialogs. |
+| **Buttons** | `IconButton.tsx` | Compact circular or squircle icon button with tooltip integration and tactile active scaling. | Toolbar actions (refresh, edit, delete, close, settings). |
+| **Feedback**| `AppAlert.tsx` | Semantic banner with Info, Success, Warning, and Danger styles. | Form feedback, validation errors, system notifications. |
+| **Feedback**| `AppDialog.tsx` | Accessible modal dialog with backdrop blur, keyboard trapping, and spring animations. | Data entry modals, confirmation alerts, edit dialogs. |
+| **Feedback**| `AppLoader.tsx` | Smooth SVG spinner with variable size variants. | Network request loading states and asynchronous spinners. |
+| **Feedback**| `StatusBadge.tsx`| Color-coded status badge with subtle semantic tints and dot indicator. | Lifecycle states on jobs, machines, quality, and shifts. |
+| **Forms** | `AppCheckbox.tsx`| Accessible checkbox with smooth indicator transition. | Table row multi-selection, binary form preferences. |
+| **Forms** | `AppInput.tsx` | Text and numeric input with floating label, validation error, and focus rings. | Data capture across forms, filter bars, and modals. |
+| **Forms** | `AppRadio.tsx` | Radio group with accessible keyboard navigation. | Mutually exclusive option selection (e.g. priority tiers). |
+| **Forms** | `AppSelect.tsx` | Styled select dropdown with custom arrow and option styling. | Single-selection pickers (e.g. status, customer, machine). |
+| **Navigation**|`AppDropdown.tsx`| Floating dropdown menu with spring entrance and item icons. | Action menus, filter option lists, user account menus. |
+| **Navigation**|`AppTabs.tsx` | Segmented pill tabs and underline tabs with counter badges. | Sub-view navigation within workbenches. |
+| **Navigation**|`NavigationItem.tsx`| Tactile sidebar button with active route tint and icon pairing. | Primary sidebar navigation links. |
+| **Navigation**|`PageHeader.tsx` | Standardized view header with title, subtitle, icon, and action slot. | Consistent visual hierarchy at the top of every workbench. |
+| **States** | `EmptyState.tsx` | Illustrative empty container with icon, message, and call to action. | Shown when tables or filter queries return zero results. |
+| **Surfaces** | `AppCard.tsx` | Squircle container card with glass, elevated, and outlined variants. | Form containers, dashboard KPI cards, summary widgets. |
+| **Surfaces** | `AppDrawer.tsx` | Slide-over side sheet with backdrop blur and spring slide animation. | Deep detail inspection without navigating away from tables. |
 
 ---
 
-## 17. Manufacturing Command Center Dashboard
+### 6.5 Frontend State Management, RTK Base API & HTTP Client
 
-### 17.1 Dashboard Widgets (10 Active Widgets)
+#### 1. Redux Toolkit Store (`store/store.ts`)
+- Configures the central Redux store combining the RTK Query API slice (`baseApi`), authentication state (`authSlice`), and UI state (`uiSlice`).
+- Exports strongly typed `RootState` and `AppDispatch` definitions.
 
-- **KPI Summary Widget (`KpiSummaryWidget.tsx`):** Displays real-time metrics for Active Jobs, Running Furnaces, Pending QC, and Today's Dispatches.
-- **Production Summary Widget (`ProductionSummaryWidget.tsx`):** Renders a 7-day job completion bar chart showing throughput trends.
-- **Machine Status Widget (`MachineStatusWidget.tsx`):** Displays a fleet-wide status distribution chart (Running, Idle, Maintenance, Breakdown).
-- **Inventory Alerts Widget (`InventoryAlertsWidget.tsx`):** Lists raw materials and consumables that have fallen below safety reorder points.
-- **Pending Approvals Widget (`PendingApprovalsWidget.tsx`):** Surfaces pending supervisor approval requests for leaves, overtimes, and QC sign-offs.
-- **Quality Alerts Widget (`QualityAlertsWidget.tsx`):** Highlights open Non-Conformance Reports (NCRs) and recent inspection failures.
-- **Attendance Summary Widget (`AttendanceSummaryWidget.tsx`):** Shows today's shift check-in percentage and workforce attendance rate.
-- **Upcoming Maintenance Widget (`UpcomingMaintenanceWidget.tsx`):** Displays upcoming Preventive Maintenance schedules and days-to-due counters.
-- **Recent Activity Feed (`RecentActivityWidget.tsx`):** Streams real-time cross-domain events (job starts, QC approvals, dispatches) with timestamps.
-- **Pending Jobs Widget (`PendingJobsWidget.tsx`):** Lists work orders in `PENDING_REVIEW` status awaiting engineering approval.
+#### 2. Base RTK Query API Slice (`store/baseApi.ts`)
+- **Central API Client:** Configured with `baseUrl: env.API_BASE_URL` (`/api/v1`).
+- **Header Injection:** Automatically extracts JWT access token and active tenant ID from Redux state (or LocalStorage fallback) and injects `Authorization: Bearer <token>` and `x-tenant-id: <tenantId>` headers into every outgoing request.
+- **Single-Flight Re-Authentication Interceptor:** Wraps `rawBaseQuery` with `baseQueryWithReauth`. If any query encounters a `401 Unauthorized`, it transparently calls `performTokenRefresh()` and replays the original query once with the new token.
+- **Domain Tag Types (24):** `Auth`, `User`, `Role`, `Tenant`, `Customer`, `ItemMaster`, `Recipe`, `Specification`, `Machine`, `Maintenance`, `Employee`, `Shift`, `Attendance`, `Leave`, `Overtime`, `Inventory`, `Batch`, `Warehouse`, `Job`, `QualityInspection`, `Dispatch`, `Costing`, `Finance`, `Report`, `Notification`, `AuditLog`.
 
-### 17.2 Dashboard Features
+#### 3. Authentication Slice (`store/slices/authSlice.ts`)
+- **State Properties:** `user`, `token`, `refreshToken`, `tenantId`, `isAuthenticated`, `roles`, `permissions`.
+- **Reducers:**
+  - `setCredentials`: Stores authenticated user profile and tokens in Redux and LocalStorage.
+  - `updateTokens`: Updates access and refresh tokens synchronously during token rotation.
+  - `logout`: Purges user credentials and tokens from Redux and LocalStorage.
 
-- **Time Range Selector:** Toggles dashboard telemetry windows between Live Shift, Today, Yesterday, This Week, and This Month.
-- **Shop-Floor Telemetry Refresh:** Refreshes live sensor data with animated toast confirmations.
-- **Rapid Work Order Creator:** Provides a header shortcut to open the `CreateJobModal` directly from the dashboard.
+#### 4. UI Slice (`store/slices/uiSlice.ts`)
+- **State Properties:** `sidebarCollapsed` (boolean), `commandPaletteOpen` (boolean), `activeTab` (string), `theme` ('light' | 'dark').
+- **Reducers:** `toggleSidebar`, `setSidebarCollapsed`, `openCommandPalette`, `closeCommandPalette`, `setActiveTab`, `setTheme`.
 
----
+#### 5. Authenticated HTTP Client (`services/apiClient.ts`)
+- **Single-Flight Mutex (`performTokenRefresh`):** Prevents the "refresh storm" problem where multiple concurrent API calls with an expired token would trigger multiple refresh requests. Reuses a single shared promise mutex for all concurrent callers.
+- **Session Expiration Handler (`handleSessionExpiration`):** Cleans up credentials and cleanly redirects the browser to `/login`.
+- **Core Wrapper (`authenticatedFetch`):** Attaches headers, executes HTTP fetch, and intercepts 401 status codes to refresh tokens and retry.
+- **Typed REST Helpers:** `apiClient.get(url)`, `apiClient.post(url, body)`, `apiClient.put(url, body)`, `apiClient.delete(url)`.
 
-## 18. Frontend Application Shell & Navigation
-
-### 18.1 Layout Components
-
-- **Main Shell (`MainLayout.tsx`):** Orchestrates the responsive application layout with sidebar, header, and main content areas.
-- **Navigation Sidebar (`Sidebar.tsx`):** Renders a collapsible navigation rail organized by domain modules (Production, Quality, Machines, etc.).
-- **Application Header (`Header.tsx`):** Houses company branding, the `Ctrl+K` search bar, the notification bell, and the user profile menu.
-- **Mobile Navigation Drawer (`MobileNavDrawer.tsx`):** Provides a touch-friendly bottom sheet navigation menu for tablet and mobile viewports.
-- **User Profile Menu (`UserMenu.tsx`):** Displays user identity, role tags, settings shortcuts, dark mode toggles, and logout actions.
-- **Application Footer (`Footer.tsx`):** Renders platform version, system status indicators, and legal notices.
-- **Auth Shell (`AuthLayout.tsx`):** Provides a centered glassmorphic card container for login and password recovery pages.
-- **Page Container Wrapper (`PageContainer.tsx`):** Enforces standard max-width constraints and responsive padding across all views.
-- **Page Transition Wrapper (`PageTransition.tsx`):** Applies smooth fade-and-drift animations (`animate-page-enter`) during route changes.
-
-### 18.2 Error Handling
-
-- **Application Error Boundary (`ErrorBoundary.tsx`):** Catches unhandled React rendering errors and displays a recovery UI with retry actions.
-- **Not Found Page (`/404`):** Displays an Apple-styled 404 screen with navigation options to return to safe routes.
-- **Protected Route Guard (`auth/ProtectedRoute.tsx`):** Enforces JWT authentication and permission checks before rendering protected routes.
+#### 6. Custom React Hooks
+- **`useAuth` (`hooks/useAuth.ts`):** Returns current user identity, active tenant, authentication status, and clean logout trigger.
+- **`usePermission` (`hooks/usePermission.ts`):** Checks whether the current user has specific granular permissions (e.g. `hasPermission('QC_APPROVE')`), allowing conditional UI element rendering.
 
 ---
 
-## 19. Frontend Charts & Data Visualization
+### 6.6 Apple HIG Design System Tokens & Aesthetics
 
-All visualization components are built using custom SVG and Canvas implementations styled with Apple design tokens:
+The user interface strictly implements Apple Human Interface Guidelines (HIG) design principles in `frontend/src/styles/index.css`:
 
-- **Area Trend Chart (`AreaChart.tsx`):** Renders smooth gradient area charts for time-series metrics like Revenue, FPY %, and OEE trends.
-- **Categorical Bar Chart (`BarChart.tsx`):** Renders grouped bar charts for categorical comparisons like production volume by process.
-- **Segmented Donut Chart (`DonutChart.tsx`):** Renders proportional donut charts with centered KPI callouts for distribution metrics.
-
----
-
-## 20. Frontend Apple Design System & Component Library
-
-### 20.1 Apple HIG Design Tokens
-
-- **SF Pro Typography Scale:** Standardizes font sizes and line heights across `text-display`, `text-large-title`, `text-title-1`, `text-body`, and `text-caption`.
-- **Translucent Materials:** Applies frosted glass backgrounds (`material-ultra-thin`, `material-thin`, `material-regular`, `material-thick`) with backdrop filters.
-- **Continuous Squircles:** Uses squircle corner radii (`rounded-2xl`, `rounded-3xl` for cards; `rounded-xl` for buttons; `rounded-full` for chips).
-- **Tactile Spring Curves:** Powers UI micro-interactions using standard spring cubic-bezier curves and press feedback (`active:scale-[0.97]`).
-- **Keyframe Animations:** Standardizes UI motion via `animate-page-enter`, `animate-dialog-enter`, `animate-drawer-enter-right`, and `animate-toast-enter`.
-- **Semantic Color Tokens:** Manages light/dark themes using semantic tokens for canvas, surface, borders, text, and status states.
-- **Accessibility & Motion Guards:** Respects user preferences for `prefers-reduced-motion` and `prefers-reduced-transparency` with WCAG 2.1 AA compliance.
-
-### 20.2 Complete UI Primitive Components (30 Directories)
-
-| Component                          | Description                                                                        | Purpose                                                                                 |
-| ---------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| **`AppButton`**                    | Standard button with Primary, Secondary, Tinted, Ghost, Danger, and Pill variants. | Provides tactile interactive button controls with loading spinners and disabled states. |
-| **`IconButton`**                   | Compact circular/square icon button with tooltip integration.                      | Houses toolbar actions like refresh, edit, delete, and notifications.                   |
-| **`ActionButton`**                 | Compound split-button with an attached context menu dropdown.                      | Offers primary actions with alternative secondary choices.                              |
-| **`PageHeader`**                   | Standardized page header component with title, subtitle, icon, and action slots.   | Establishes consistent visual hierarchy at the top of every screen.                     |
-| **`IconText`**                     | Single-line alignment component for Lucide icons and text labels.                  | Guarantees perfect vertical baseline alignment for icon-text pairings.                  |
-| **`AppBreadcrumbs`**               | Accessible navigation breadcrumb trail using semantic `<nav>` markup.              | Informs users of their current location within nested module hierarchies.               |
-| **`AppCard`**                      | Container card with glass, elevated, outlined, and interactive hover variants.     | Groups related content and forms into visually distinct surface containers.             |
-| **`DataTable`**                    | High-density data table with keyboard row selection and sorting.                   | Renders paginated business data with accessible headers and responsive overflow.        |
-| **`AppPagination`**                | Accessible pagination controller with rows-per-page selectors.                     | Manages navigation across large paginated data sets.                                    |
-| **`AppTabs`**                      | Segmented pill tabs and underline tabs with badge counter support.                 | Swaps between sub-views and filtered perspectives without page reloads.                 |
-| **`AppDialog`**                    | Accessible modal dialog with backdrop blur and focus trapping.                     | Focuses user attention on critical confirmation prompts and editing forms.              |
-| **`AppDrawer`**                    | Slide-over side sheet with spring entrance animations.                             | Houses deep inspection details and creation wizards without navigating away.            |
-| **`AppInput`**                     | Form input component with associated labels, validation errors, and focus rings.   | Captures textual and numeric user inputs with validation styling.                       |
-| **`AppSelect`**                    | Styled select dropdown component with keyboard accessibility.                      | Allows single selection from short lists of options.                                    |
-| **`AppDropdown`**                  | Lightweight dropdown menu selector for form controls and filter bars.              | Provides clean dropdown option pickers within toolbars.                                 |
-| **`AppCheckbox`**                  | Accessible checkbox component with custom indicator styling.                       | Captures binary preferences and multi-row table selections.                             |
-| **`AppRadio`**                     | Accessible radio group component with custom indicators.                           | Enforces single selection among mutually exclusive choices.                             |
-| **`AppSwitch`**                    | Toggle switch component with smooth thumb transitions.                             | Toggles instant boolean feature flags and system settings.                              |
-| **`SearchBar`**                    | Input bar with leading search icon and one-click clear button.                     | Provides real-time text filtering across tables and lists.                              |
-| **`AppChip`**                      | Semantic status chip with success, warning, error, and primary variants.           | Labels entities with compact status and category metadata tags.                         |
-| **`IconBadge`**                    | Compact badge component pairing a mini icon with a text label.                     | Highlights telemetry readings and operational tags in high-density views.               |
-| **`StatusBadge`**                  | Domain-specific status badge for inspections, jobs, and shifts.                    | Renders standardized status badges with color-coded semantic tints.                     |
-| **`AppAvatar`**                    | User avatar component displaying user profile photos or initials.                  | Identifies actors in user tables, audit logs, and assignment chips.                     |
-| **`AppAlert`**                     | Inline alert banner supporting Info, Success, Warning, and Error types.            | Communicates important system messages, validation summaries, and warnings.             |
-| **`ToastContainer`**               | Floating toast notification provider with spring animation.                        | Delivers non-blocking confirmation toasts for completed background mutations.           |
-| **`AppSkeleton`**                  | Shimmering placeholder component matching target layout shapes.                    | Prevents layout shift and indicates loading states during data fetching.                |
-| **`AppLoader` / `LoadingSpinner`** | Accessible SVG loading spinner with size variants.                                 | Indicates active background network queries and processing states.                      |
-| **`EmptyState`**                   | Empty-view container with icon, title, description, and call-to-action button.     | Guides users when tables or queries return zero results.                                |
-| **`ErrorState`**                   | Error placeholder with illustrative icon and a retry trigger.                      | Provides recovery actions when network queries or components fail to load.              |
-| **`FilterPanel`**                  | Collapsible filter container with apply and reset buttons.                         | Houses complex multi-parameter filter controls for tables.                              |
-| **`AppTooltip`**                   | Floating tooltip wrapper with directional positioning.                             | Reveals supplementary explanatory text on hover or focus.                               |
-| **`AppSection`**                   | Semantic section container with standard title and action slots.                   | Groups related fields and widgets into clear visual chapters.                           |
-| **`NavigationItem`**               | Sidebar navigation button with active route indicators and collapsed tooltips.     | Manages primary sidebar navigation links with accessibility compliance.                 |
-
-### 20.3 Design System Showcase
-
-- **Design System Gallery (`/design-system`):** Provides an interactive documentation page demonstrating all UI primitives, variants, and states.
+- **SF Pro Typography Scale:** Standardized font sizes, weights, and line heights:
+  - Display: `text-display` (40px, font-bold, tracking-tight)
+  - Large Title: `text-large-title` (32px, font-bold)
+  - Title 1: `text-title-1` (24px, font-semibold)
+  - Title 2: `text-title-2` (20px, font-semibold)
+  - Body: `text-body` (15px, font-normal, line-height 1.5)
+  - Callout: `text-callout` (14px, font-medium)
+  - Caption: `text-caption` (12px, font-medium, text-secondary)
+- **Continuous Squircle Curvature:** Uses Apple continuous squircle corner radii:
+  - Cards & Modals: `rounded-2xl` (16px) and `rounded-3xl` (24px)
+  - Inputs & Buttons: `rounded-xl` (12px)
+  - Chips & Badges: `rounded-full` (9999px)
+- **Translucent Materials (Glassmorphism):** Utilizes multi-layer translucent materials with CSS `backdrop-filter: blur(20px)`:
+  - `material-ultra-thin`: Subtlest blur for layered table headers.
+  - `material-thin`: Standard card surface in dark mode.
+  - `material-regular`: Navigation bar and floating toolbar material.
+  - `material-thick`: Modal backdrops and Command Palette dialogs.
+- **Tactile Spring Micro-Interactions:** Micro-interactions use cubic-bezier spring curves and tactile press feedback:
+  - Button press state: `active:scale-[0.97] transition-transform duration-150`
+  - Card hover state: Subtle elevation and border highlighting.
+- **Keyframe Motion & Transitions:** Smooth 60fps animations:
+  - `animate-page-enter`: Subtle fade and 6px upward drift on route transitions.
+  - `animate-dialog-enter`: Spring zoom-and-fade for modals.
+  - `animate-drawer-enter-right`: Smooth slide-in for inspection drawers.
+  - `animate-toast-enter`: Spring bounce for floating notification toasts.
+- **Semantic Colors & Accessibility:** Meets WCAG 2.1 AA contrast standards in both light and dark modes with dedicated semantic tokens for background, canvas, surface, borders, text, and status states (Success, Warning, Danger, Info).
 
 ---
 
-## 21. Frontend RTK Query API Layer
+## 7. End-to-End Operational Domain Workflows
 
-| API File                 | Domain               | Purpose & Functionality                                                                                        |
-| ------------------------ | -------------------- | -------------------------------------------------------------------------------------------------------------- |
-| **`authApi.ts`**         | Authentication       | Manages user login, token refresh, logout, password resets, and user profile queries.                          |
-| **`jobApi.ts`**          | Production Jobs      | Handles work-order CRUD, status transitions, scheduling, worker/machine allocations, and progress logging.     |
-| **`qualityApi.ts`**      | Quality Control      | Manages inspection creation, hardness survey logs, defect tracking, CoC generation, and NCR/CAPA workflows.    |
-| **`machineApi.ts`**      | Equipment            | Handles machine registration, capability queries, breakdown reporting, and utilization telemetry.              |
-| **`maintenanceApi.ts`**  | Maintenance          | Manages preventive maintenance schedules, overdue schedule queries, and completed service logs.                |
-| **`inventoryApi.ts`**    | Inventory            | Handles stock item CRUD, goods receipt/issue, stock transfers, reservations, and heat lot batch tracking.      |
-| **`attendanceApi.ts`**   | Workforce Attendance | Manages shift definitions, worker scheduling rosters, punch logs, leave requests, and overtime authorizations. |
-| **`employeeApi.ts`**     | Personnel            | Handles employee directory CRUD, skill certifications, availability windows, and deactivations.                |
-| **`dispatchApi.ts`**     | Dispatch Logistics   | Manages shipping orders, QA verification gates, document compliance checks, and delivery confirmations.        |
-| **`reportApi.ts`**       | Analytics & Reports  | Fetches executive/operational dashboards, domain report datasets, and manages automated report schedules.      |
-| **`searchApi.ts`**       | Global Search        | Executes multi-domain permission-scoped searches and fetches real-time query suggestions.                      |
-| **`notificationApi.ts`** | Notifications        | Handles notification fetching, unread counters, mark-as-read actions, and delivery preference updates.         |
-| **`settingsApi.ts`**     | System Settings      | Manages system settings, tenant profiles, feature flags, user management, and role assignments.                |
-| **`customerApi.ts`**     | Customers            | Handles client company CRUD, credit limit updates, and customer directory filtering.                           |
-| **`workflowApi.ts`**     | Workflow Engine      | Manages workflow state-machine definitions, instance execution, transition actions, and rollbacks.             |
-| **`baseApi.ts`**         | Core Infrastructure  | Configures the base RTK Query client with automatic JWT token injection and tenant header handling.            |
+### 7.1 12-Stage Heat Treatment Lifecycle Workflow
 
----
+```mermaid
+stateDiagram-v2
+    [*] --> DRAFT: Create Work Order
+    DRAFT --> PENDING_REVIEW: Submit for Approval
+    PENDING_REVIEW --> APPROVED: Engineering Sign-off
+    APPROVED --> SCHEDULED: Assign Furnace & Slot
+    SCHEDULED --> IN_PROGRESS: Charge Furnace & Start Timer
+    IN_PROGRESS --> PAUSED: Stoppage / Gas Check
+    PAUSED --> IN_PROGRESS: Resume Cycle
+    IN_PROGRESS --> QUALITY_CHECK: Complete Cycle & Unload
+    QUALITY_CHECK --> STORAGE: QA Inspection Approved
+    STORAGE --> READY_FOR_DISPATCH: Staged in Finished Goods
+    READY_FOR_DISPATCH --> DISPATCHED: Gate Release & Departure
+    DISPATCHED --> COMPLETED: Customer Delivery Confirmed
+    DRAFT --> CANCELLED: Void Work Order
+    PENDING_REVIEW --> CANCELLED: Void Work Order
+    SCHEDULED --> CANCELLED: Cancel Schedule Slot
+```
 
-## 22. Security Audit Trail Explorer
-
-### 22.1 Backend
-
-- `GET /api/v1/admin/audit-logs` — Returns a paginated query interface for audit logs with domain, action, actor, and date filters.
-
-### 22.2 Frontend Audit Log Console (`/settings/audit-logs`)
-
-- **Filterable Audit Table (`AuditLogTable.tsx`):** Displays audit records with timestamp, actor, action type, and IP address.
-- **Payload Diff Inspector Modal:** Renders a JSON before-and-after visual diff showing exact field modifications for any audit entry.
-- **Audit Export Tool:** Generates CSV or JSON exports of audit trails for external regulatory compliance reviews.
+1. **Work Order Creation (`POST /api/v1/production-jobs`):** Supervisor creates a work order specifying Customer, Part, Recipe, Specification, and Target Quantity. Generates sequential ID `JOB-YYYYMM-XXXX`. State is `DRAFT`.
+2. **Engineering Review (`POST /api/v1/production-jobs/:id/transition`):** Metallurgist reviews recipe parameters. Job transitions to `PENDING_REVIEW` then `APPROVED`.
+3. **Scheduling (`POST /api/v1/production-schedules`):** Scheduler allocates an approved job to a capable furnace during an open time window. Emits `Job.Scheduled`. State transitions to `SCHEDULED`.
+4. **Furnace Charge & Start (`POST /api/v1/production-jobs/:id/start`):** Operator loads charge into furnace, verifies thermocouples, and starts heating cycle. Machine transitions to `RUNNING`. Job state transitions to `IN_PROGRESS`. Emits `Job.Started`.
+5. **Stage Progression & Telemetry (`POST /api/v1/production-jobs/:id/stage-progress`):** Milestones are captured through Preheat, Carburize/Soak, Quench, and Temper. Temperatures are continuously logged.
+6. **Cycle Completion (`POST /api/v1/production-jobs/:id/complete`):** Furnace cycle ends. Charge is unloaded. Job state transitions to `QUALITY_CHECK`. Automatically spawns an inspection record in the Quality module. Emits `Job.Completed`.
+7. **Storage Transition (`POST /api/v1/production-jobs/:id/transition-storage`):** Once QA signs off the inspection, job transitions to `STORAGE` and finished goods are placed in storage bins.
+8. **Dispatch Staging & Release:** Job transitions to `READY_FOR_DISPATCH`, is attached to a consignment, and upon gate departure transitions to `DISPATCHED`. Customer receipt moves job to `COMPLETED`.
 
 ---
 
-## 23. Finance & Manufacturing Cost Control
+### 7.2 Plan-to-Job Conversion & Constraint Feasibility Workflow
 
-This module is intentionally limited to the financial functions required to understand and control the economics of a heat-treatment factory. It does **not** introduce procurement, CRM, sales management, or unrelated enterprise-finance features.
-
-### 23.1 General Ledger & Accounting Core
-
-- `POST /api/v1/finance/journals` — Creates a balanced journal entry for approved manufacturing, expense, asset, or adjustment transactions.
-- `POST /api/v1/finance/journals/:id/post` — Posts an approved journal entry to the general ledger and locks the original transaction.
-- `POST /api/v1/finance/journals/:id/reverse` — Creates a reversing journal entry while preserving the original accounting history.
-- `GET /api/v1/finance/ledger` — Retrieves posted ledger movements with account, date, job, machine, and cost-center filtering.
-- `GET /api/v1/finance/trial-balance` — Generates a trial balance for the selected accounting period.
-- `GET /api/v1/finance/profit-loss` — Produces a period-based profit and loss view using posted accounting transactions.
-- `POST /api/v1/finance/periods/close` — Closes an accounting period after validation of unresolved postings and adjustments.
-
-### 23.2 Chart of Accounts & Cost Centers
-
-- `POST /api/v1/finance/accounts` — Creates a general-ledger account suitable for manufacturing operations and factory expenses.
-- `GET /api/v1/finance/accounts` — Lists active accounts and account hierarchy.
-- `PUT /api/v1/finance/accounts/:id` — Updates account descriptions, classifications, or active status without altering historical postings.
-- `POST /api/v1/finance/cost-centers` — Creates a factory cost center such as Furnace Bay, Quality Lab, Maintenance, Utilities, or Administration.
-- `GET /api/v1/finance/cost-centers` — Lists cost centers used for expense allocation and operational reporting.
-
-### 23.3 Factory Expense Capture
-
-- `POST /api/v1/finance/expenses` — Records approved factory operating expenses with account, cost center, date, amount, and reference details.
-- `GET /api/v1/finance/expenses` — Retrieves expense records with job, machine, department, and period filters.
-- `PATCH /api/v1/finance/expenses/:id/allocate` — Allocates an eligible expense to a job, machine, department, or shared factory cost pool.
-
-### 23.4 Billing & Receivables
-
-- `POST /api/v1/finance/invoices` — Generates a customer invoice from an approved completed/dispatchable heat-treatment job or job group.
-- `GET /api/v1/finance/invoices` — Lists issued invoices with customer, job, status, and date filters.
-- `GET /api/v1/finance/invoices/:id` — Retrieves invoice details, linked jobs, tax values, and accounting status.
-- `POST /api/v1/finance/invoices/:id/issue` — Finalizes and posts an invoice for accounting.
-- `POST /api/v1/finance/receipts` — Records customer payment receipts against issued invoices.
-- `GET /api/v1/finance/receivables` — Returns outstanding customer balances and invoice aging.
-
-### 23.5 Frontend Finance Pages
-
-- **Finance Dashboard (`/finance`):** Displays factory revenue, operating expenses, outstanding receivables, and production-cost indicators.
-- **Ledger Page (`/finance/ledger`):** Provides searchable posted ledger transactions and accounting-period filtering.
-- **Job Cost View (`/finance/job-costs`):** Displays material, labor, machine, energy, overhead, and total cost by production job.
-- **Invoice Page (`/finance/invoices`):** Manages heat-treatment invoices and payment status.
-- **Cost Center Page (`/finance/cost-centers`):** Displays cost accumulation by factory department and operational area.
+1. **Master Production Plan Establishment (`POST /api/v1/production-plans`):** Production Planner drafts a master plan for the upcoming period with target quantities and required completion dates.
+2. **Material Requirements Run (`POST /api/v1/material-requirements/calculate`):** The MRP engine evaluates the bill of materials for all planned items against active inventory balances. Identifies shortages and logs material reservations (`POST /reserve`).
+3. **Furnace & Workforce Capacity Checks (`POST /api/v1/furnaces/check-compatibility`, `POST /api/v1/workforce-capacity/evaluate-coverage`):** Asserts furnace working zone dimensions, temperature ratings, and operator skill certifications against planned workloads.
+4. **Constraint Feasibility Audit (`POST /api/v1/constraint-analysis/evaluate-plan/:planId`):** Runs a composite bottleneck analysis across furnace capacity, operator availability, and material shortages. Returns a feasibility score and flagged constraints.
+5. **Plan-to-Job Conversion (`POST /api/v1/production-jobs/convert-plan/:planId`):** Approved plans are converted into executable production work orders without duplicate data entry.
 
 ---
 
-## 24. Heat-Treatment Product & Process Master Data
+### 7.3 Metallurgical Quality Inspection & CoC Generation Workflow
 
-This module provides the controlled master data required to execute repeatable heat-treatment work. It is intentionally focused on heat-treatment parts, material grades, processes, recipes, specifications, and revisions.
-
-### 24.1 Item & Material Master
-
-- `POST /api/v1/master-data/items` — Creates a controlled material or finished-part master record.
-- `GET /api/v1/master-data/items` — Lists items by material grade, customer reference, process family, or active status.
-- `GET /api/v1/master-data/items/:id` — Retrieves item specifications, approved processes, revisions, and traceability requirements.
-- `PUT /api/v1/master-data/items/:id` — Updates a master record through controlled revision management.
-- `POST /api/v1/master-data/items/:id/revisions` — Creates a new effective-dated revision while preserving prior approved revisions.
-
-### 24.2 Heat-Treatment Process & Recipe Master
-
-- `POST /api/v1/master-data/processes` — Defines a reusable heat-treatment process family and its required controls.
-- `GET /api/v1/master-data/processes` — Lists approved heat-treatment process definitions.
-- `POST /api/v1/master-data/processes/:id/recipes` — Creates an approved process recipe containing temperature, ramp, soak, atmosphere, quench, and temper parameters.
-- `GET /api/v1/master-data/processes/:id/recipes` — Lists active and historical recipe revisions.
-- `PUT /api/v1/master-data/recipes/:id` — Updates an unpublished recipe revision before approval.
-- `POST /api/v1/master-data/recipes/:id/approve` — Approves a recipe revision for production use.
-- `POST /api/v1/master-data/recipes/:id/retire` — Retires a recipe revision from future scheduling while preserving historical usage.
-
-### 24.3 Specification & Requirement Master
-
-- `POST /api/v1/master-data/specifications` — Creates a customer or engineering specification defining required process and quality limits.
-- `GET /api/v1/master-data/specifications` — Lists specifications by process, material, customer, and status.
-- `PUT /api/v1/master-data/specifications/:id` — Updates a specification through revision control.
-- `POST /api/v1/master-data/specifications/:id/approve` — Approves a specification revision for production and inspection use.
-
-### 24.4 Controlled Master-Data Rules
-
-- **Effective Dating:** Prevents future jobs from unintentionally using expired recipes or specifications.
-- **Revision Locking:** Prevents modification of approved revisions after production usage.
-- **Job Snapshotting:** Copies the exact approved recipe/specification revision into the job record for immutable historical traceability.
+1. **Inspection Work Order Creation (`POST /api/v1/quality-inspections`):** Spawns automatically upon job completion or raw material delivery. Generates `QC-YYYYMM-XXXX`. Status is `PENDING`.
+2. **Inspector Assignment (`POST /api/v1/quality-inspections/:id/assign`):** Assigns a certified QC metallurgist. Status moves to `IN_PROGRESS`.
+3. **Physical Lab Testing (`POST /api/v1/metallurgical-lab/:id/hardness`, `POST /.../traverse`):** Metallurgist performs hardness tests across Rockwell, Vickers, or Brinell scales, and records cross-sectional microhardness traverse curves to determine Effective Case Depth (ECD).
+4. **Microstructural Evaluation (`POST /api/v1/metallurgical-lab/:id/microstructure`):** Records grain size numbers (ASTM E112), retained austenite percentage (%), and surface decarburization depth.
+5. **Quality Manager Sign-Off (`POST /api/v1/quality-inspections/:id/approve`):** If all readings meet engineering specification limits, QA Manager approves the inspection.
+6. **Certificate of Conformance (CoC) Issuance (`POST /api/v1/quality-documents`):** Compiles hardness surveys and test results into an ISO 17025 / AMS 2750G compliant CoC with digital signatures and a QR verification code. Emits `Quality.CocIssued`.
 
 ---
 
-## 25. Material Requirements & Production Planning
+### 7.4 Non-Conformance (NCR) & CAPA Verification Workflow
 
-This module is limited to planning the factory's heat-treatment workload, material availability, furnace capacity, and operator capacity. It does not introduce generic enterprise demand-planning features unrelated to factory execution.
-
-### 25.1 Material Requirement Planning
-
-- `POST /api/v1/planning/material-requirements/run` — Calculates required raw-material quantities for approved and scheduled heat-treatment work.
-- `GET /api/v1/planning/material-requirements` — Lists material requirements, available stock, shortages, and reserved quantities.
-- `GET /api/v1/planning/material-requirements/shortages` — Returns unresolved material shortages that could block scheduled work.
-- `POST /api/v1/planning/material-requirements/:id/reserve` — Reserves available heat lots or inventory quantities against planned jobs.
-
-### 25.2 Production Planning
-
-- `POST /api/v1/planning/production-plans` — Creates a production plan from approved jobs and required completion dates.
-- `GET /api/v1/planning/production-plans` — Lists active production plans and their progress.
-- `GET /api/v1/planning/production-plans/:id` — Retrieves planned jobs, required materials, furnace capacity, and operator coverage.
-- `PUT /api/v1/planning/production-plans/:id` — Updates planning priorities, planned quantities, or target dates before execution.
-- `POST /api/v1/planning/production-plans/:id/recalculate` — Recalculates the plan after machine, material, or workforce constraints change.
-
-### 25.3 Furnace Capacity Planning
-
-- `GET /api/v1/planning/capacity/machines` — Returns available furnace capacity by date, shift, machine capability, and planned load.
-- `GET /api/v1/planning/capacity/operators` — Returns operator capacity and skill coverage by shift.
-- `POST /api/v1/planning/capacity/check` — Validates whether a set of jobs can fit within machine, shift, material, and workforce constraints.
-- `GET /api/v1/planning/bottlenecks` — Identifies machine, material, or workforce bottlenecks affecting planned completion dates.
-
-### 25.4 Planned-to-Execution Handoff
-
-- **Plan-to-Job Conversion:** Converts an approved production plan into executable production jobs without duplicating master data.
-- **Capacity Reservation:** Reserves furnace and operator slots against planned work until the job is scheduled or released.
-- **Constraint Visibility:** Prevents scheduling work that lacks required material, qualified operators, or capable/available equipment.
+1. **Inspection Rejection (`POST /api/v1/quality-inspections/:id/reject`):** If lab test readings fall outside drawing limits, inspection is rejected. Emits `QualityInspection.Rejected`.
+2. **Automatic NCR Generation (`POST /api/v1/ncrs`):** An NCR record is automatically created (`NCR-YYYYMM-XXXX`). Non-conforming material is immediately placed into quarantine.
+3. **Root Cause Analysis (`PUT /api/v1/ncrs/:id/root-cause`):** Engineering team conducts 5-Why or Fishbone analysis, documenting root causes (e.g. thermocouple drift, quench oil temperature fluctuation).
+4. **Dispositioning (`POST /api/v1/ncrs/:id/disposition`):** Material Review Board (MRB) assigns disposition: Scrap, Rework (Re-temper/Re-harden), or Return to Supplier.
+5. **CAPA Tracking & Verification (`POST /api/v1/ncrs/:ncrId/capas`, `POST /api/v1/capas/:id/verify`):** Corrective and Preventive Actions are assigned, executed, verified by the Quality Director, and closed (`POST /:id/close`).
 
 ---
 
-## 26. Job Costing & Manufacturing Cost Accounting
+### 7.5 Furnace Pyrometry (SAT/TUS) & Breakdown Maintenance Workflow
 
-This module is specifically designed to determine the true cost and profitability of heat-treatment jobs. It is not a generic enterprise budgeting system.
-
-### 26.1 Standard Cost Components
-
-- **Material Cost:** Calculates consumed raw-material and process-consumable cost from actual issued quantities and inventory valuation.
-- **Labor Cost:** Calculates direct labor using verified production hours, shift rates, and overtime where applicable.
-- **Machine Cost:** Allocates furnace or machine operating cost using runtime, setup time, and configured machine rates.
-- **Energy Cost:** Allocates gas, electricity, quench media, or other process-energy cost using actual consumption or approved rate models.
-- **Overhead Cost:** Applies controlled factory overhead pools to jobs using configured allocation bases.
-
-### 26.2 Job Costing Endpoints
-
-- `GET /api/v1/costing/jobs/:jobId` — Returns the complete actual and standard cost breakdown for a production job.
-- `POST /api/v1/costing/jobs/:jobId/recalculate` — Recalculates job cost after inventory, labor, machine, or overhead transactions are posted.
-- `GET /api/v1/costing/jobs/variance` — Returns material, labor, machine, energy, and overhead variances across jobs.
-- `GET /api/v1/costing/jobs/profitability` — Calculates job-level revenue, total manufacturing cost, contribution, and margin.
-
-### 26.3 Cost Rate Management
-
-- `POST /api/v1/costing/rates/machine` — Defines or revises machine-hour cost rates.
-- `POST /api/v1/costing/rates/labor` — Defines or revises labor cost rates by skill, shift, or role.
-- `POST /api/v1/costing/rates/overhead` — Defines controlled overhead allocation rates for factory cost centers.
-- `POST /api/v1/costing/rates/energy` — Defines approved energy/process-consumable rates used for cost estimation.
-
-### 26.4 Cost Traceability
-
-- **Transaction-Level Traceability:** Every job cost component links back to the inventory, attendance, machine, energy, or accounting transaction that produced it.
-- **Frozen Historical Cost:** Finalized jobs retain their calculated historical cost even when future cost rates change.
+1. **Telemetry Streaming (`POST /api/v1/pyrometry/telemetry`):** Thermocouple sensors (Control, Overtemperature, Load) stream temperature readings during cycles.
+2. **System Accuracy Test (SAT) (`POST /api/v1/pyrometry/calibrations/sat`):** Technicians perform periodic SATs by inserting a calibrated test probe adjacent to the control sensor; calculates temperature deviation and pass/fail status.
+3. **Temperature Uniformity Survey (TUS) (`POST /api/v1/pyrometry/calibrations/tus`):** Multi-point survey mapping temperature variations across the furnace working zone to certify AMS 2750G furnace class (e.g. Class 2: ±6°C).
+4. **Breakdown Reporting (`POST /api/v1/maintenance/breakdown`):** When an unexpected failure occurs (heating element burnout, quench pump failure), operator logs a breakdown. Machine status switches to `BREAKDOWN`.
+5. **Maintenance Work Order Execution (`POST /api/v1/maintenance/work-orders`, `POST /.../complete`):** Maintenance technician replaces components, logs labor hours, and marks work order complete. Machine returns to `IDLE`.
 
 ---
 
-## 27. Warehouse & Finished-Goods Management
+### 7.6 Raw Material Heat-Lot Inwarding & Bi-Directional Genealogy Workflow
 
-This module is limited to the physical storage and traceability needs of a heat-treatment factory: raw-material storage, in-process holding, quarantine, finished-goods storage, and dispatch staging. It does not implement a generic enterprise warehouse suite.
-
-### 27.1 Warehouse & Bin Structure
-
-- `POST /api/v1/warehouse/locations` — Creates a physical storage location, bay, rack, or bin.
-- `GET /api/v1/warehouse/locations` — Lists storage locations with type, capacity, and active status.
-- `PUT /api/v1/warehouse/locations/:id` — Updates capacity, labeling, or location status.
-- `GET /api/v1/warehouse/occupancy` — Returns current occupancy and available capacity by storage area.
-
-### 27.2 Putaway, Moves & Transfers
-
-- `POST /api/v1/warehouse/putaway` — Places received or completed heat-treatment material into an approved storage location.
-- `POST /api/v1/warehouse/move` — Records a controlled movement between bins within the factory.
-- `POST /api/v1/warehouse/transfer` — Transfers a heat lot or finished-goods quantity between warehouse areas.
-- `GET /api/v1/warehouse/movements` — Retrieves the complete physical movement history for a material, heat lot, or finished-goods lot.
-
-### 27.3 Quarantine & Release
-
-- `POST /api/v1/warehouse/quarantine` — Places a material, heat lot, or finished-goods quantity into controlled quarantine.
-- `GET /api/v1/warehouse/quarantine` — Lists quarantined material with quality and disposition status.
-- `POST /api/v1/warehouse/quarantine/:id/release` — Releases material only after the required quality or management authorization.
-- `POST /api/v1/warehouse/quarantine/:id/reject` — Marks material as rejected and prevents further production or dispatch use.
-
-### 27.4 Finished-Goods Storage
-
-- `POST /api/v1/warehouse/finished-goods/receive` — Receives QA-cleared jobs into finished-goods storage.
-- `GET /api/v1/warehouse/finished-goods` — Lists finished-goods lots with customer, job, location, quantity, and dispatch status.
-- `PATCH /api/v1/warehouse/finished-goods/:id/reserve` — Reserves finished goods for an approved dispatch.
-- `PATCH /api/v1/warehouse/finished-goods/:id/release` — Releases a finished-goods reservation when a dispatch is cancelled or changed.
-
-### 27.5 Cycle Counting & Stock Verification
-
-- `POST /api/v1/warehouse/counts` — Creates a physical stock-count task for a location or heat lot range.
-- `POST /api/v1/warehouse/counts/:id/record` — Records the physical count and discrepancy details.
-- `POST /api/v1/warehouse/counts/:id/approve` — Approves a stock discrepancy adjustment after supervisor review.
-
-### 27.6 Frontend Warehouse Pages
-
-- **Warehouse Dashboard (`/warehouse`):** Displays raw-material, WIP, quarantine, and finished-goods occupancy.
-- **Location View (`/warehouse/locations`):** Visualizes storage areas, bins, capacity, and current contents.
-- **Quarantine Queue (`/warehouse/quarantine`):** Displays blocked lots awaiting quality or disposition actions.
-- **Finished-Goods Page (`/warehouse/finished-goods`):** Manages QA-cleared lots awaiting dispatch.
-- **Stock Count Page (`/warehouse/counts`):** Tracks scheduled and completed physical stock verification tasks.
+1. **Goods Receipt (`POST /api/v1/inventory/goods-receipt`):** Delivery arrives from mill/distributor. Inward supervisor logs invoice number, quantity, and material grade.
+2. **Heat-Lot Creation (`POST /api/v1/heat-lots/inward`):** Creates heat lot record (`HEAT-YYYY-XXXX`), attaching supplier heat number and chemical composition from the Mill Test Certificate (MTR).
+3. **Inward Quality Gate:** Material is held in quarantine until receiving inspection confirms chemistry and hardness. Once cleared, it is released to usable raw material stock.
+4. **Job Consumption (`POST /api/v1/heat-lots/:id/consume`):** Production work orders consume specific quantities from the heat lot.
+5. **Bi-Directional Traceability:**
+   - **Forward Trace (`GET /api/v1/heat-lots/forward-trace/:number`):** Given a raw heat number, returns all production jobs, inspection reports, and customer dispatches that utilized that heat.
+   - **Backward Trace (`GET /api/v1/heat-lots/backward-trace`):** Given a dispatched job or finished part, traces back to the exact furnace run, quench media batch, and supplier mill heat lot.
 
 ---
+
+### 7.7 Warehouse Storage, Quarantine Holding & Finished Goods Allocation Workflow
+
+1. **Putaway Routing (`POST /api/v1/warehouse/locations`):** Warehouse locations are configured with area, aisle, rack, and bin codes, tagged by material type (Raw Material, WIP, Quarantine, Finished Goods).
+2. **Quarantine Isolation (`POST /api/v1/quarantine`):** Defective or uninspected materials are transferred into quarantine bins. System prevents these materials from being scheduled or issued.
+3. **Authorized Quarantine Release (`POST /api/v1/quarantine/:id/release`):** Upon QA sign-off, quarantined stock is released and moved to usable inventory bins.
+4. **Finished Goods Staging (`POST /api/v1/finished-goods/inward`):** Completed jobs passing final inspection are moved into finished goods storage bins.
+5. **Reservation for Dispatch (`POST /api/v1/finished-goods/:id/reserve`):** When a dispatch consignment is created, finished goods quantities are locked against that order.
+
+---
+
+### 7.8 Workforce Shift Roster, Punch Clock-In & Leave Workflow
+
+1. **Shift Definition (`POST /api/v1/attendance/shifts`):** HR defines shifts (Morning, Afternoon, Night) with start time, end time, grace periods, and break allowances.
+2. **Roster Scheduling (`POST /api/v1/attendance/schedules`):** Supervisors schedule employees into shifts. System verifies that no worker is scheduled without mandatory rest windows.
+3. **Clock-In / Clock-Out (`POST /api/v1/attendance/clock-in`, `POST /.../clock-out`):** Workers record attendance timestamps. System calculates shift duration and flags late arrivals or overtime.
+4. **Attendance Correction (`POST /api/v1/attendance/records/:id/correct`):** Supervisors correct missed punches with required audit justification.
+5. **Leave Applications & Approvals (`POST /api/v1/attendance/leaves`, `POST /.../:id/approve`):** Workers apply for time off; supervisor approval automatically updates shift rosters and deducts leave balances.
+6. **Peer Shift Swapping (`POST /api/v1/attendance/swaps`, `POST /.../:id/approve`):** Two qualified workers propose a shift swap; supervisor approval swaps both rosters atomically.
+
+---
+
+### 7.9 Outbound Dispatch & Gate Clearance Workflow
+
+1. **Consignment Drafting (`POST /api/v1/dispatches`):** Logistics coordinator creates a dispatch order selecting the customer and destination. Generates `DISP-YYYYMM-XXXX`. Status is `DRAFT`.
+2. **Finished Goods Attachment:** Jobs in finished goods storage are attached to the consignment.
+3. **Quality Compliance Gate (`POST /api/v1/dispatches/:id/verify-quality`):** System validates that every attached job has an approved, signed Certificate of Conformance (CoC). If any job lacks a valid CoC, the shipment cannot proceed.
+4. **Carrier Scheduling (`POST /api/v1/dispatches/:id/schedule`):** Logistics attaches carrier name, vehicle number, driver name, and planned departure time. Status moves to `SCHEDULED`.
+5. **Gate Departure Authorization (`POST /api/v1/dispatches/:id/approve`, `POST /.../depart`):** Plant Manager authorizes gate pass. Vehicle departs plant; consignment status transitions to `IN_TRANSIT`. Emits `Dispatch.Shipped`.
+6. **Customer Delivery & PoD (`POST /api/v1/dispatches/:id/deliver`):** Driver delivers shipment. Customer signs delivery challan; Proof of Delivery (PoD) is uploaded. Status transitions to `DELIVERED`. Emits `Dispatch.Delivered`.
+
+---
+
+### 7.10 Manufacturing Job Costing & Variance Analysis Workflow
+
+1. **Cost Rate Card Configuration (`POST /api/v1/costing/rate-cards`):** Finance defines machine-hour rates (power, depreciation, maintenance), labor-hour rates by skill level, and factory overhead absorption percentages.
+2. **Direct Material Cost Calculation:** Actual quantities of bar stock, carburizing gases, and quench polymers issued to the job are valued at weighted average inventory cost.
+3. **Direct Labor & Machine Cost Allocation:** Actual operator production hours and furnace cycle runtime hours are multiplied by their respective rate cards.
+4. **Total Manufacturing Cost Rollup (`POST /api/v1/costing/jobs`):** Sums material, labor, machine, energy, and allocated overhead to determine total job cost and unit manufacturing cost.
+5. **Cost Recalculation & Freezing (`POST /api/v1/costing/jobs/:id/recalculate`, `POST /.../freeze`):** Upon job completion, actual costs are locked to provide an immutable cost record for historical profitability analysis.
+
+---
+
+### 7.11 Customer Invoicing & Payment Reconciliation Workflow
+
+1. **Invoice Generation (`POST /api/v1/billing/invoices`):** Billing team generates a commercial invoice from an approved completed or dispatched job. Generates `INV-YYYYMM-XXXX`. Status is `DRAFT`.
+2. **Tax & Payment Terms Calculation:** Invoices compute applicable taxes, payment terms (Net 30, Net 60), and line-item totals.
+3. **Invoice Finalization (`POST /api/v1/billing/invoices/:id/finalize`):** Invoice is sealed and issued to the customer. Accounts Receivable is incremented, and general ledger journal entries are automatically posted. Emits `Finance.InvoiceIssued`.
+4. **Customer Payment Receipt (`POST /api/v1/billing/invoices/:id/payments`):** Customer payment remittance is recorded. Outstanding invoice balance is decremented. If balance reaches zero, status transitions to `PAID`. Emits `Finance.PaymentReceived`.
+5. **Accounts Receivable Aging (`GET /api/v1/billing/aging`):** Generates aging summaries (Current, 1-30 Days, 31-60 Days, 61-90 Days, 90+ Days) to monitor credit risk.
+
+---
+
+### 7.12 General Ledger Accounting & Financial Period Close Workflow
+
+1. **Chart of Accounts Setup (`POST /api/v1/finance/accounts`):** Finance establishes general ledger accounts categorized as Assets, Liabilities, Equity, Revenue, Direct Manufacturing Costs, and Operating Expenses.
+2. **Cost Center Configuration (`POST /api/v1/finance/cost-centers`):** Factory cost centers are established (Furnace Bay 1, Furnace Bay 2, Quality Lab, Maintenance Cell, Administration).
+3. **Journal Entry Posting (`POST /api/v1/finance/journals`, `POST /.../:id/post`):** Double-entry accounting journals are posted with validated balanced debits and credits.
+4. **Trial Balance Generation (`GET /api/v1/finance/trial-balance`):** Sums all debits and credits across the chart of accounts for any accounting date range to ensure ledger equilibrium.
+5. **Accounting Period Close (`POST /api/v1/finance/periods/:periodCode/close`):** At month-end, the period is validated for unresolved transactions and sealed. Postings to closed periods are strictly rejected.
+
+---
+
+### 7.13 Executive KPI & Shop-Floor Operational Reporting Workflow
+
+1. **Shop-Floor Telemetry Aggregation (`GET /api/v1/reporting/command-center`):** Aggregates live furnace operational states, active work orders, operator coverage, and open quality holds into a unified payload for the command center.
+2. **Executive Dashboard Compilation (`GET /api/v1/reporting/dashboard/executive`):** Calculates monthly revenue, plant-wide OEE, delivery on-time rates, and scrap percentages.
+3. **Production Throughput & Cycle Time Analysis (`GET /api/v1/reporting/production/throughput`, `GET /.../cycle-time`):** Computes completed tonnage and cycle duration metrics categorized by thermal process family (Carburizing, Quenching, Annealing, Tempering).
+4. **Equipment OEE Rankings (`GET /api/v1/reporting/equipment/oee`):** Computes Availability, Performance, and Quality ratings per furnace asset, identifying underperforming machinery.
+5. **Quality Yield Trends (`GET /api/v1/reporting/quality`):** Generates First Pass Yield (FPY %) trend curves and defect Pareto charts.
+
+---
+
+### 7.14 Universal Global Search & Quick Actions Workflow
+
+1. **Global Shortcut Trigger (`Ctrl+K` / `Cmd+K`):** Operator presses shortcut from any screen in the ERP. Redux dispatches `openCommandPalette`.
+2. **Frosted Glass Modal Mounts:** The `CommandPalette.tsx` dialog opens over the current view with an Apple-styled frosted glass backdrop.
+3. **Live Query Typing (`GET /api/v1/search?q=...`):** As the operator types, debounced requests query the backend search service.
+4. **Permission & Tenant Scoping:** The search repository executes cross-domain searches across Jobs, Machines, Inventory, Dispatches, Customers, and Quality Inspections, automatically scoping to the tenant and filtering out domains where the user lacks read permission.
+5. **Categorized Results Display:** Results are organized into domain clusters with icon badges, status chips, and primary identifiers.
+6. **Keyboard Navigation & Deep-Link:** Operator navigates results with Up/Down arrow keys and presses Enter to instantly route directly to the target record's workbench drawer or details view.
+
+
+---
+
+## 8. Operational Runbooks, SRE Documentation & Testing Infrastructure
+
+### 8.1 Database Seeding Engine (`backend/src/scripts/seed.ts`, 64.8 KB)
+
+The database seeding subsystem generates realistic, high-frequency, relational test data for development, staging, and certification environments:
+- **Tenant Scope:** Target tenant defaults to `tenant_default_001` (configured in `app.config.ts`).
+- **Idempotent Purge & Seed:** Atomically deletes previous test documents for the tenant before populating fresh mock records.
+- **Relational Integrity Across Domains:** Seeds cohesive multi-domain business entities:
+  - Users & Roles: Superadmin, QA Metallurgist, Shift Supervisor, Operator with hashed passwords (`bcrypt`).
+  - Item Master & Customers: 4140, 8620, Inconel 718 alloy grades, draw numbers, customer profiles.
+  - Thermal Recipes: Vacuum carburizing, oil quench, and double-temper cycles with precise temperature ramps and soak timings.
+  - Machinery Fleet: Multi-zone vacuum furnaces, sealed quench furnaces, pit carburizers with pyrometry telemetry.
+  - Production Jobs: 12-stage work orders linked to recipes, furnaces, and operators.
+  - Quality Inspections & Lab: Hardness traverse survey points, microstructural grain size assessments, and approved CoCs.
+  - Traceability: Mill heat lots, supplier MTR certificates, and consumption links.
+  - Warehouse & Inventory: Storage bays, raw bar stock balances, and finished goods reservations.
+  - Logistics & Billing: Outbound dispatches, carrier details, commercial invoices, and payments.
+
+### 8.2 Centralized Configuration Subsystem (`backend/src/config/`)
+
+The configuration layer encapsulates all environment parameters with strict type safety:
+- **`app.config.ts`:** Aggregates server, database, JWT, CORS, rate-limiting, and tenant configuration into a frozen, typed `config` object.
+- **`database.config.ts`:** Manages database connection strings and pooling parameters.
+- **`env.schema.ts`:** Zod schema defining all required and optional environment variables with default fallbacks and format validations.
+- **`logger.config.ts`:** Winston structured logging configuration with file transports and console formats.
+- **`env.config.ts`:** Re-exports validated environment parameters.
+
+### 8.3 Operational Runbooks & Technical Specifications (`docs/`)
+
+The platform includes 8 authoritative engineering specifications and operational runbooks:
+1. **`DATABASE_ARCHITECTURE.md`:** MongoDB schema design standards, ESR indexing rules, dual identifier conventions, embedding vs. referencing decision matrix, and transaction standards.
+2. **`TENANT_ISOLATION_ARCHITECTURE.md`:** Multi-tenant threat model, header vs. JWT claim verification, `BaseRepository<T>` auto-scoping, and developer guardrails.
+3. **`PRODUCTION_DEPLOYMENT_RUNBOOK.md`:** Pre-deployment checklist, zero-downtime rolling update steps, smoke testing protocols, and verification commands.
+4. **`DEPLOYMENT_ROLLBACK_PROCEDURES.md`:** Step-by-step emergency rollback triggers, database snapshot restoration, and traffic redirection procedures.
+5. **`BACKUP_AND_DISASTER_RECOVERY.md`:** Point-in-time recovery (PITR) protocols, hourly snapshot schedules, off-site replication, and Recovery Time Objective (RTO < 30 min) / Recovery Point Objective (RPO < 5 min) targets.
+6. **`INCIDENT_RESPONSE_RUNBOOK.md`:** Severity classification (SEV-1 through SEV-4), escalation matrices, root-cause analysis (RCA) templates, and post-mortem procedures.
+7. **`PHASE_1_CERTIFICATION_REPORT.md`:** Verification findings for core platform stability, data boundary enforcement, and error resilience.
+8. **`FACTORY_ACCEPTANCE_REPORT.md`:** End-to-end metallurgical workflow verification and compliance sign-off.
+
+### 8.4 Automated Test Suite Matrix (47 Backend Specs + Frontend Suites)
+
+The codebase features comprehensive test suites validating layer boundaries, data integrity, and business logic:
+- **Backend Architecture Governance (`tests/architecture-boundaries.spec.ts`):** Automated AST scanner asserting 100% compliance with 14 layer-boundary rules (`check:arch`).
+- **Domain Integration Suites (47 Specs in `backend/tests/`):**
+  - Production Execution & Lifecycle: `production-job.spec.ts`, `production-execution-workflow.spec.ts`, `production-scheduling.spec.ts`, `plan-to-job-handoff.spec.ts`.
+  - Metallurgical Lab & Quality: `quality-inspection.spec.ts`, `metallurgical-lab.spec.ts`, `ncr-capa.spec.ts`, `quality-documentation.spec.ts`, `pyrometry.spec.ts`.
+  - Machine & Maintenance: `machine.spec.ts`, `maintenance.spec.ts`, `furnace-capacity.spec.ts`.
+  - Traceability & Inventory: `heat-lot-traceability.spec.ts`, `inventory-ledger.spec.ts`, `warehouse.spec.ts`, `finished-goods.spec.ts`, `quarantine.spec.ts`.
+  - Workforce & Attendance: `workforce-attendance.spec.ts`, `workforce-capacity.spec.ts`.
+  - Finance, Costing & Billing: `finance.spec.ts`, `costing.spec.ts`, `billing.spec.ts`.
+  - Platform Core & Security: `auth.spec.ts`, `rbac.spec.ts`, `tenant-isolation.spec.ts`, `audit-logging.spec.ts`, `error-handling.spec.ts`, `database.spec.ts`, `health.spec.ts`.
+- **Frontend Test Suites (`frontend/src/`):**
+  - End-to-End Workflow Testing: `e2e-workflows.test.tsx` (Testing integrated React workflows).
+  - Design System Primitives Testing: `design-system/components.test.tsx` (Testing accessible buttons, inputs, dialogs, badges).
+  - API Client Testing: `services/apiClient.test.ts` (Testing single-flight token refresh mutex and 401 retry loops).

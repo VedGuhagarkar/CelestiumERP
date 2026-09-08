@@ -43,6 +43,8 @@ import { billingRouter } from '../modules/billing/billing.routes.js';
 import { reportingRouter } from '../modules/reporting/reporting.routes.js';
 import { notificationRouter } from '../modules/notification/notification.routes.js';
 import { searchRouter } from '../modules/search/search.routes.js';
+import { purchaseOrderRouter } from '../modules/purchase-order/purchase-order.routes.js';
+import { grnRouter } from '../modules/grn/grn.routes.js';
 
 /**
  * Root API v1 Router
@@ -139,6 +141,9 @@ v1Router.use('/billing', billingRouter);
 v1Router.use('/reporting', reportingRouter);
 v1Router.use('/notifications', notificationRouter);
 v1Router.use('/search', searchRouter);
+v1Router.use('/purchase-orders', purchaseOrderRouter);
+v1Router.use('/grn', grnRouter);
+v1Router.use('/material-receipts', grnRouter);
 
 
 

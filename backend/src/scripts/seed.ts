@@ -13,12 +13,15 @@ import { CustomerModel } from '../modules/customer/customer.model.js';
 import { ItemModel } from '../modules/item/item.model.js';
 import { RecipeModel } from '../modules/recipe/recipe.model.js';
 import { SpecificationModel } from '../modules/specification/specification.model.js';
+import { PurchaseOrderModel } from '../modules/purchase-order/purchase-order.model.js';
+import { MaterialReceiptModel, GRNModel, GRNUnitModel } from '../modules/grn/grn.model.js';
 import { HeatLotModel } from '../modules/traceability/heat-lot.model.js';
 import { MachineModel } from '../modules/machine/machine.model.js';
 import { ProductionJobModel } from '../modules/production-job/production-job.model.js';
 import { QualityInspectionModel } from '../modules/quality-inspection/quality-inspection.model.js';
 import { NonConformanceReportModel } from '../modules/ncr-capa/ncr-capa.model.js';
 import { WarehouseModel } from '../modules/warehouse/warehouse.model.js';
+import { StorageLocationModel } from '../modules/warehouse/storage-location.model.js';
 import { DispatchConsignmentModel } from '../modules/dispatch/dispatch.model.js';
 import { Invoice } from '../modules/billing/billing.model.js';
 import { JobCost } from '../modules/costing/costing.model.js';
@@ -48,12 +51,17 @@ export async function seedSampleDatabase() {
       ItemModel.deleteMany({ tenantId: TENANT_ID }),
       RecipeModel.deleteMany({ tenantId: TENANT_ID }),
       SpecificationModel.deleteMany({ tenantId: TENANT_ID }),
+      PurchaseOrderModel.deleteMany({ tenantId: TENANT_ID }),
+      MaterialReceiptModel.deleteMany({ tenantId: TENANT_ID }),
+      GRNModel.deleteMany({ tenantId: TENANT_ID }),
+      GRNUnitModel.deleteMany({ tenantId: TENANT_ID }),
       HeatLotModel.deleteMany({ tenantId: TENANT_ID }),
       MachineModel.deleteMany({ tenantId: TENANT_ID }),
       ProductionJobModel.deleteMany({ tenantId: TENANT_ID }),
       QualityInspectionModel.deleteMany({ tenantId: TENANT_ID }),
       NonConformanceReportModel.deleteMany({ tenantId: TENANT_ID }),
       WarehouseModel.deleteMany({ tenantId: TENANT_ID }),
+      StorageLocationModel.deleteMany({ tenantId: TENANT_ID }),
       DispatchConsignmentModel.deleteMany({ tenantId: TENANT_ID }),
       Invoice.deleteMany({ tenantId: TENANT_ID }),
       JobCost.deleteMany({ tenantId: TENANT_ID }),
@@ -366,64 +374,7 @@ export async function seedSampleDatabase() {
       }
     ]);
 
-    // 6. Seed Heat Lots & Material Traceability
-    console.log('🔬 Seeding heat lots & metallurgical certificates...');
-    const heatLots = await HeatLotModel.create([
-      {
-        tenantId: TENANT_ID,
-        heatLotNumber: 'HL-4340-2026A',
-        itemId: items[0]._id.toString(),
-        itemCode: items[0].itemCode,
-        materialGrade: 'AISI 4340',
-        supplierHeatNumber: 'HEAT-TIMKEN-99482',
-        supplierName: 'TimkenSteel Corporation',
-        mtrNumber: 'COA-TK-2026-99482',
-        receivedDate: new Date(Date.now() - 30 * 86400000),
-        receivedQuantity: 5000,
-        uom: 'KG',
-        currentQuantity: 4200,
-        allocatedQuantity: 800,
-        consumedQuantity: 0,
-        storageLocation: 'Bay 1 - Rack A3',
-        status: 'RELEASED'
-      },
-      {
-        tenantId: TENANT_ID,
-        heatLotNumber: 'HL-8620-2026B',
-        itemId: items[1]._id.toString(),
-        itemCode: items[1].itemCode,
-        materialGrade: 'AISI 8620',
-        supplierHeatNumber: 'HEAT-ARCELOR-88319',
-        supplierName: 'ArcelorMittal Global Special Steels',
-        mtrNumber: 'COA-AM-2026-88319',
-        receivedDate: new Date(Date.now() - 40 * 86400000),
-        receivedQuantity: 7500,
-        uom: 'KG',
-        currentQuantity: 6100,
-        allocatedQuantity: 1400,
-        consumedQuantity: 0,
-        storageLocation: 'Bay 2 - Rack B1',
-        status: 'RELEASED'
-      },
-      {
-        tenantId: TENANT_ID,
-        heatLotNumber: 'HL-718-2026C',
-        itemId: items[2]._id.toString(),
-        itemCode: items[2].itemCode,
-        materialGrade: 'Inconel 718',
-        supplierHeatNumber: 'HEAT-SPECMET-77104',
-        supplierName: 'Special Metals Corporation',
-        mtrNumber: 'COA-SMC-2026-77104',
-        receivedDate: new Date(Date.now() - 15 * 86400000),
-        receivedQuantity: 2000,
-        uom: 'KG',
-        currentQuantity: 1850,
-        allocatedQuantity: 150,
-        consumedQuantity: 0,
-        storageLocation: 'Bay 1 - Vault S2',
-        status: 'RELEASED'
-      }
-    ]);
+    // 6. Creation Phase (PO -> Receipt -> Warehouse Putaway -> GRN -> Units) follows Recipes & Warehouses below.
 
     // 7. Seed Engineering Specifications & Process Recipes
     console.log('📜 Seeding specifications & recipes...');
@@ -622,7 +573,535 @@ export async function seedSampleDatabase() {
       }
     ]);
 
-    // 8. Seed Machines & Furnace Fleet (AMS 2750G Pyrometry Instrumented)
+    // 8. Seed Warehouses & Storage Locations
+    console.log('🏭 Seeding warehouses & storage locations...');
+    const warehouses = await WarehouseModel.create([
+      {
+        tenantId: TENANT_ID,
+        code: 'WH-MAIN-01',
+        name: 'Main Plant Thermal Stores',
+        type: 'MAIN_PLANT',
+        plantArea: 'Bay 1-4 Central Floor',
+        status: 'ACTIVE'
+      },
+      {
+        tenantId: TENANT_ID,
+        code: 'WH-FG-01',
+        name: 'Finished Goods & Shipping Dock',
+        type: 'FINISHED_STORE',
+        plantArea: 'Outbound Loading Dock Bay 5',
+        status: 'ACTIVE'
+      }
+    ]);
+
+    const storageLocations = await StorageLocationModel.create([
+      {
+        tenantId: TENANT_ID,
+        warehouseId: warehouses[0]._id.toString(),
+        warehouseCode: warehouses[0].code,
+        locationCode: 'BAY-1-A3',
+        zone: 'Zone 1',
+        bay: 'Bay 1',
+        rack: 'Rack A',
+        bin: '3',
+        zoneType: 'RAW_MATERIAL_YARD',
+        status: 'ACTIVE'
+      },
+      {
+        tenantId: TENANT_ID,
+        warehouseId: warehouses[0]._id.toString(),
+        warehouseCode: warehouses[0].code,
+        locationCode: 'BAY-2-B1',
+        zone: 'Zone 2',
+        bay: 'Bay 2',
+        rack: 'Rack B',
+        bin: '1',
+        zoneType: 'RAW_MATERIAL_YARD',
+        status: 'ACTIVE'
+      },
+      {
+        tenantId: TENANT_ID,
+        warehouseId: warehouses[0]._id.toString(),
+        warehouseCode: warehouses[0].code,
+        locationCode: 'BAY-1-S2',
+        zone: 'Zone 1',
+        bay: 'Bay 1',
+        rack: 'Vault S',
+        bin: '2',
+        zoneType: 'RAW_MATERIAL_YARD',
+        status: 'ACTIVE'
+      }
+    ]);
+
+    // 9. Authoritative Creation Phase: PO -> Receipt -> Warehouse Storage -> GRN -> Units
+    console.log('📜 Seeding authoritative Creation Phase (PO -> Receipt -> Storage -> GRN -> Units)...');
+
+    const purchaseOrders = await PurchaseOrderModel.create([
+      {
+        tenantId: TENANT_ID,
+        poNumber: 'PO-202608-0001',
+        supplierName: 'TimkenSteel Corporation',
+        supplierCode: 'SUP-TIMKEN-01',
+        orderDate: new Date(Date.now() - 35 * 86400000),
+        expectedDeliveryDate: new Date(Date.now() - 30 * 86400000),
+        status: 'RECEIVED',
+        items: [
+          {
+            lineItemId: 'line_1_po001',
+            itemId: items[0]._id.toString(),
+            itemCode: items[0].itemCode,
+            itemName: items[0].name,
+            materialGrade: items[0].materialGrade,
+            processFamily: recipes[0].processFamily,
+            recipeId: recipes[0]._id.toString(),
+            recipeCode: recipes[0].recipeCode,
+            recipeRevision: 1,
+            orderedQuantity: 5000,
+            receivedQuantity: 5000,
+            uom: 'KG',
+            unitPrice: 12.50,
+            currency: 'USD'
+          }
+        ],
+        totalOrderedQuantity: 5000,
+        totalReceivedQuantity: 5000,
+        totalAmount: 62500,
+        currency: 'USD',
+        createdBy: users[1]._id.toString()
+      },
+      {
+        tenantId: TENANT_ID,
+        poNumber: 'PO-202608-0002',
+        supplierName: 'ArcelorMittal Global Special Steels',
+        supplierCode: 'SUP-ARCELOR-01',
+        orderDate: new Date(Date.now() - 45 * 86400000),
+        expectedDeliveryDate: new Date(Date.now() - 40 * 86400000),
+        status: 'RECEIVED',
+        items: [
+          {
+            lineItemId: 'line_1_po002',
+            itemId: items[1]._id.toString(),
+            itemCode: items[1].itemCode,
+            itemName: items[1].name,
+            materialGrade: items[1].materialGrade,
+            processFamily: recipes[1].processFamily,
+            recipeId: recipes[1]._id.toString(),
+            recipeCode: recipes[1].recipeCode,
+            recipeRevision: 1,
+            orderedQuantity: 7500,
+            receivedQuantity: 7500,
+            uom: 'KG',
+            unitPrice: 9.80,
+            currency: 'USD'
+          }
+        ],
+        totalOrderedQuantity: 7500,
+        totalReceivedQuantity: 7500,
+        totalAmount: 73500,
+        currency: 'USD',
+        createdBy: users[1]._id.toString()
+      },
+      {
+        tenantId: TENANT_ID,
+        poNumber: 'PO-202608-0003',
+        supplierName: 'Special Metals Corporation',
+        supplierCode: 'SUP-SPECMET-01',
+        orderDate: new Date(Date.now() - 20 * 86400000),
+        expectedDeliveryDate: new Date(Date.now() - 15 * 86400000),
+        status: 'RECEIVED',
+        items: [
+          {
+            lineItemId: 'line_1_po003',
+            itemId: items[2]._id.toString(),
+            itemCode: items[2].itemCode,
+            itemName: items[2].name,
+            materialGrade: items[2].materialGrade,
+            processFamily: recipes[0].processFamily,
+            recipeId: recipes[0]._id.toString(),
+            recipeCode: recipes[0].recipeCode,
+            recipeRevision: 1,
+            orderedQuantity: 2000,
+            receivedQuantity: 2000,
+            uom: 'KG',
+            unitPrice: 48.00,
+            currency: 'USD'
+          }
+        ],
+        totalOrderedQuantity: 2000,
+        totalReceivedQuantity: 2000,
+        totalAmount: 96000,
+        currency: 'USD',
+        createdBy: users[1]._id.toString()
+      }
+    ]);
+
+    const materialReceipts = await MaterialReceiptModel.create([
+      {
+        tenantId: TENANT_ID,
+        receiptNumber: 'REC-202608-0001',
+        poId: purchaseOrders[0]._id.toString(),
+        poNumber: purchaseOrders[0].poNumber,
+        supplierName: purchaseOrders[0].supplierName,
+        supplierChallanNumber: 'DC-TIMKEN-99482',
+        supplierInvoiceNumber: 'INV-TK-2026-99482',
+        carrierVehicle: 'MH-12-AB-9901',
+        receivedDate: new Date(Date.now() - 30 * 86400000),
+        receivedBy: users[7]._id.toString(),
+        warehouseId: warehouses[0]._id.toString(),
+        warehouseCode: warehouses[0].code,
+        storageLocationCode: 'BAY-1-A3',
+        status: 'STORED',
+        items: [
+          {
+            poLineItemId: purchaseOrders[0].items[0].lineItemId,
+            itemId: items[0]._id.toString(),
+            itemCode: items[0].itemCode,
+            itemName: items[0].name,
+            materialGrade: items[0].materialGrade,
+            processFamily: recipes[0].processFamily,
+            recipeId: recipes[0]._id.toString(),
+            recipeCode: recipes[0].recipeCode,
+            recipeRevision: 1,
+            receivedQuantity: 5000,
+            uom: 'KG',
+            supplierHeatNumber: 'HEAT-TIMKEN-99482',
+            mtrNumber: 'COA-TK-2026-99482'
+          }
+        ]
+      },
+      {
+        tenantId: TENANT_ID,
+        receiptNumber: 'REC-202608-0002',
+        poId: purchaseOrders[1]._id.toString(),
+        poNumber: purchaseOrders[1].poNumber,
+        supplierName: purchaseOrders[1].supplierName,
+        supplierChallanNumber: 'DC-ARCELOR-88319',
+        supplierInvoiceNumber: 'INV-AM-2026-88319',
+        carrierVehicle: 'MH-12-CD-4412',
+        receivedDate: new Date(Date.now() - 40 * 86400000),
+        receivedBy: users[7]._id.toString(),
+        warehouseId: warehouses[0]._id.toString(),
+        warehouseCode: warehouses[0].code,
+        storageLocationCode: 'BAY-2-B1',
+        status: 'STORED',
+        items: [
+          {
+            poLineItemId: purchaseOrders[1].items[0].lineItemId,
+            itemId: items[1]._id.toString(),
+            itemCode: items[1].itemCode,
+            itemName: items[1].name,
+            materialGrade: items[1].materialGrade,
+            processFamily: recipes[1].processFamily,
+            recipeId: recipes[1]._id.toString(),
+            recipeCode: recipes[1].recipeCode,
+            recipeRevision: 1,
+            receivedQuantity: 7500,
+            uom: 'KG',
+            supplierHeatNumber: 'HEAT-ARCELOR-88319',
+            mtrNumber: 'COA-AM-2026-88319'
+          }
+        ]
+      },
+      {
+        tenantId: TENANT_ID,
+        receiptNumber: 'REC-202608-0003',
+        poId: purchaseOrders[2]._id.toString(),
+        poNumber: purchaseOrders[2].poNumber,
+        supplierName: purchaseOrders[2].supplierName,
+        supplierChallanNumber: 'DC-SPECMET-77104',
+        supplierInvoiceNumber: 'INV-SM-2026-77104',
+        carrierVehicle: 'MH-12-EF-7710',
+        receivedDate: new Date(Date.now() - 15 * 86400000),
+        receivedBy: users[7]._id.toString(),
+        warehouseId: warehouses[0]._id.toString(),
+        warehouseCode: warehouses[0].code,
+        storageLocationCode: 'BAY-1-S2',
+        status: 'STORED',
+        items: [
+          {
+            poLineItemId: purchaseOrders[2].items[0].lineItemId,
+            itemId: items[2]._id.toString(),
+            itemCode: items[2].itemCode,
+            itemName: items[2].name,
+            materialGrade: items[2].materialGrade,
+            processFamily: recipes[0].processFamily,
+            recipeId: recipes[0]._id.toString(),
+            recipeCode: recipes[0].recipeCode,
+            recipeRevision: 1,
+            receivedQuantity: 2000,
+            uom: 'KG',
+            supplierHeatNumber: 'HEAT-SPECMET-77104',
+            mtrNumber: 'COA-SMC-2026-77104'
+          }
+        ]
+      }
+    ]);
+
+    const grns = await GRNModel.create([
+      {
+        tenantId: TENANT_ID,
+        grnNumber: 'GRN-202608-0001',
+        materialReceiptId: materialReceipts[0]._id.toString(),
+        materialReceiptNumber: materialReceipts[0].receiptNumber,
+        poId: purchaseOrders[0]._id.toString(),
+        poNumber: purchaseOrders[0].poNumber,
+        supplierName: purchaseOrders[0].supplierName,
+        supplierChallanNumber: materialReceipts[0].supplierChallanNumber,
+        supplierInvoiceNumber: materialReceipts[0].supplierInvoiceNumber,
+        carrierVehicle: materialReceipts[0].carrierVehicle,
+        grnDate: new Date(Date.now() - 30 * 86400000),
+        warehouseId: warehouses[0]._id.toString(),
+        warehouseCode: warehouses[0].code,
+        storageLocationCode: 'BAY-1-A3',
+        status: 'PRINTED',
+        printCount: 2,
+        lastPrintedAt: new Date(Date.now() - 29 * 86400000),
+        lastPrintedBy: users[4]._id.toString(),
+        inspectedBy: users[4]._id.toString(),
+        approvedBy: users[1]._id.toString(),
+        remarks: 'Chemistry & dimensions verified 100% compliant with AISI 4340 AMS 2759/1',
+        items: [
+          {
+            itemId: items[0]._id.toString(),
+            itemCode: items[0].itemCode,
+            itemName: items[0].name,
+            materialGrade: items[0].materialGrade,
+            processFamily: recipes[0].processFamily,
+            recipeId: recipes[0]._id.toString(),
+            recipeCode: recipes[0].recipeCode,
+            recipeRevision: 1,
+            receivedQuantity: 5000,
+            uom: 'KG',
+            supplierHeatNumber: 'HEAT-TIMKEN-99482',
+            mtrNumber: 'COA-TK-2026-99482',
+            unitIdentifiers: ['UNIT-GRN-202608-0001-001']
+          }
+        ]
+      },
+      {
+        tenantId: TENANT_ID,
+        grnNumber: 'GRN-202608-0002',
+        materialReceiptId: materialReceipts[1]._id.toString(),
+        materialReceiptNumber: materialReceipts[1].receiptNumber,
+        poId: purchaseOrders[1]._id.toString(),
+        poNumber: purchaseOrders[1].poNumber,
+        supplierName: purchaseOrders[1].supplierName,
+        supplierChallanNumber: materialReceipts[1].supplierChallanNumber,
+        supplierInvoiceNumber: materialReceipts[1].supplierInvoiceNumber,
+        carrierVehicle: materialReceipts[1].carrierVehicle,
+        grnDate: new Date(Date.now() - 40 * 86400000),
+        warehouseId: warehouses[0]._id.toString(),
+        warehouseCode: warehouses[0].code,
+        storageLocationCode: 'BAY-2-B1',
+        status: 'PRINTED',
+        printCount: 1,
+        lastPrintedAt: new Date(Date.now() - 39 * 86400000),
+        lastPrintedBy: users[4]._id.toString(),
+        inspectedBy: users[4]._id.toString(),
+        approvedBy: users[1]._id.toString(),
+        remarks: 'MTR verified against AMS 2759/7 for AISI 8620 carburizing stock',
+        items: [
+          {
+            itemId: items[1]._id.toString(),
+            itemCode: items[1].itemCode,
+            itemName: items[1].name,
+            materialGrade: items[1].materialGrade,
+            processFamily: recipes[1].processFamily,
+            recipeId: recipes[1]._id.toString(),
+            recipeCode: recipes[1].recipeCode,
+            recipeRevision: 1,
+            receivedQuantity: 7500,
+            uom: 'KG',
+            supplierHeatNumber: 'HEAT-ARCELOR-88319',
+            mtrNumber: 'COA-AM-2026-88319',
+            unitIdentifiers: ['UNIT-GRN-202608-0002-001']
+          }
+        ]
+      },
+      {
+        tenantId: TENANT_ID,
+        grnNumber: 'GRN-202608-0003',
+        materialReceiptId: materialReceipts[2]._id.toString(),
+        materialReceiptNumber: materialReceipts[2].receiptNumber,
+        poId: purchaseOrders[2]._id.toString(),
+        poNumber: purchaseOrders[2].poNumber,
+        supplierName: purchaseOrders[2].supplierName,
+        supplierChallanNumber: materialReceipts[2].supplierChallanNumber,
+        supplierInvoiceNumber: materialReceipts[2].supplierInvoiceNumber,
+        carrierVehicle: materialReceipts[2].carrierVehicle,
+        grnDate: new Date(Date.now() - 15 * 86400000),
+        warehouseId: warehouses[0]._id.toString(),
+        warehouseCode: warehouses[0].code,
+        storageLocationCode: 'BAY-1-S2',
+        status: 'PRINTED',
+        printCount: 1,
+        lastPrintedAt: new Date(Date.now() - 14 * 86400000),
+        lastPrintedBy: users[4]._id.toString(),
+        inspectedBy: users[4]._id.toString(),
+        approvedBy: users[1]._id.toString(),
+        remarks: 'AMS 5662 Inconel 718 aerospace raw stock certified',
+        items: [
+          {
+            itemId: items[2]._id.toString(),
+            itemCode: items[2].itemCode,
+            itemName: items[2].name,
+            materialGrade: items[2].materialGrade,
+            processFamily: recipes[0].processFamily,
+            recipeId: recipes[0]._id.toString(),
+            recipeCode: recipes[0].recipeCode,
+            recipeRevision: 1,
+            receivedQuantity: 2000,
+            uom: 'KG',
+            supplierHeatNumber: 'HEAT-SPECMET-77104',
+            mtrNumber: 'COA-SMC-2026-77104',
+            unitIdentifiers: ['UNIT-GRN-202608-0003-001']
+          }
+        ]
+      }
+    ]);
+
+    const grnUnits = await GRNUnitModel.create([
+      {
+        tenantId: TENANT_ID,
+        unitIdentifier: 'UNIT-GRN-202608-0001-001',
+        grnId: grns[0]._id.toString(),
+        grnNumber: grns[0].grnNumber,
+        poId: purchaseOrders[0]._id.toString(),
+        poNumber: purchaseOrders[0].poNumber,
+        materialReceiptId: materialReceipts[0]._id.toString(),
+        materialReceiptNumber: materialReceipts[0].receiptNumber,
+        itemId: items[0]._id.toString(),
+        itemCode: items[0].itemCode,
+        itemName: items[0].name,
+        materialGrade: items[0].materialGrade,
+        processFamily: recipes[0].processFamily,
+        recipeId: recipes[0]._id.toString(),
+        recipeCode: recipes[0].recipeCode,
+        recipeRevision: 1,
+        quantity: 5000,
+        uom: 'KG',
+        supplierHeatNumber: 'HEAT-TIMKEN-99482',
+        mtrNumber: 'COA-TK-2026-99482',
+        warehouseId: warehouses[0]._id.toString(),
+        warehouseCode: warehouses[0].code,
+        storageLocationCode: 'BAY-1-A3',
+        status: 'AVAILABLE_FOR_PLANNING',
+        generatedAt: new Date(Date.now() - 30 * 86400000)
+      },
+      {
+        tenantId: TENANT_ID,
+        unitIdentifier: 'UNIT-GRN-202608-0002-001',
+        grnId: grns[1]._id.toString(),
+        grnNumber: grns[1].grnNumber,
+        poId: purchaseOrders[1]._id.toString(),
+        poNumber: purchaseOrders[1].poNumber,
+        materialReceiptId: materialReceipts[1]._id.toString(),
+        materialReceiptNumber: materialReceipts[1].receiptNumber,
+        itemId: items[1]._id.toString(),
+        itemCode: items[1].itemCode,
+        itemName: items[1].name,
+        materialGrade: items[1].materialGrade,
+        processFamily: recipes[1].processFamily,
+        recipeId: recipes[1]._id.toString(),
+        recipeCode: recipes[1].recipeCode,
+        recipeRevision: 1,
+        quantity: 7500,
+        uom: 'KG',
+        supplierHeatNumber: 'HEAT-ARCELOR-88319',
+        mtrNumber: 'COA-AM-2026-88319',
+        warehouseId: warehouses[0]._id.toString(),
+        warehouseCode: warehouses[0].code,
+        storageLocationCode: 'BAY-2-B1',
+        status: 'AVAILABLE_FOR_PLANNING',
+        generatedAt: new Date(Date.now() - 40 * 86400000)
+      },
+      {
+        tenantId: TENANT_ID,
+        unitIdentifier: 'UNIT-GRN-202608-0003-001',
+        grnId: grns[2]._id.toString(),
+        grnNumber: grns[2].grnNumber,
+        poId: purchaseOrders[2]._id.toString(),
+        poNumber: purchaseOrders[2].poNumber,
+        materialReceiptId: materialReceipts[2]._id.toString(),
+        materialReceiptNumber: materialReceipts[2].receiptNumber,
+        itemId: items[2]._id.toString(),
+        itemCode: items[2].itemCode,
+        itemName: items[2].name,
+        materialGrade: items[2].materialGrade,
+        processFamily: recipes[0].processFamily,
+        recipeId: recipes[0]._id.toString(),
+        recipeCode: recipes[0].recipeCode,
+        recipeRevision: 1,
+        quantity: 2000,
+        uom: 'KG',
+        supplierHeatNumber: 'HEAT-SPECMET-77104',
+        mtrNumber: 'COA-SMC-2026-77104',
+        warehouseId: warehouses[0]._id.toString(),
+        warehouseCode: warehouses[0].code,
+        storageLocationCode: 'BAY-1-S2',
+        status: 'AVAILABLE_FOR_PLANNING',
+        generatedAt: new Date(Date.now() - 15 * 86400000)
+      }
+    ]);
+
+    const heatLots = await HeatLotModel.create([
+      {
+        tenantId: TENANT_ID,
+        heatLotNumber: 'HL-4340-2026A',
+        itemId: items[0]._id.toString(),
+        itemCode: items[0].itemCode,
+        materialGrade: 'AISI 4340',
+        supplierHeatNumber: 'HEAT-TIMKEN-99482',
+        supplierName: 'TimkenSteel Corporation',
+        mtrNumber: 'COA-TK-2026-99482',
+        receivedDate: new Date(Date.now() - 30 * 86400000),
+        receivedQuantity: 5000,
+        uom: 'KG',
+        currentQuantity: 4200,
+        allocatedQuantity: 800,
+        consumedQuantity: 0,
+        storageLocation: 'BAY-1-A3',
+        status: 'RELEASED'
+      },
+      {
+        tenantId: TENANT_ID,
+        heatLotNumber: 'HL-8620-2026B',
+        itemId: items[1]._id.toString(),
+        itemCode: items[1].itemCode,
+        materialGrade: 'AISI 8620',
+        supplierHeatNumber: 'HEAT-ARCELOR-88319',
+        supplierName: 'ArcelorMittal Global Special Steels',
+        mtrNumber: 'COA-AM-2026-88319',
+        receivedDate: new Date(Date.now() - 40 * 86400000),
+        receivedQuantity: 7500,
+        uom: 'KG',
+        currentQuantity: 6100,
+        allocatedQuantity: 1400,
+        consumedQuantity: 0,
+        storageLocation: 'BAY-2-B1',
+        status: 'RELEASED'
+      },
+      {
+        tenantId: TENANT_ID,
+        heatLotNumber: 'HL-718-2026C',
+        itemId: items[2]._id.toString(),
+        itemCode: items[2].itemCode,
+        materialGrade: 'Inconel 718',
+        supplierHeatNumber: 'HEAT-SPECMET-77104',
+        supplierName: 'Special Metals Corporation',
+        mtrNumber: 'COA-SMC-2026-77104',
+        receivedDate: new Date(Date.now() - 15 * 86400000),
+        receivedQuantity: 2000,
+        uom: 'KG',
+        currentQuantity: 1850,
+        allocatedQuantity: 150,
+        consumedQuantity: 0,
+        storageLocation: 'BAY-1-S2',
+        status: 'RELEASED'
+      }
+    ]);
+
+    // 10. Seed Machines & Furnace Fleet (AMS 2750G Pyrometry Instrumented)
     console.log('🔥 Seeding furnace fleet & pyrometry telemetry...');
     const machines = await MachineModel.create([
       {
@@ -1281,27 +1760,8 @@ export async function seedSampleDatabase() {
       }
     ]);
 
-    // 11. Seed Warehouses & Dispatches
-    console.log('🚚 Seeding warehouses & dispatch gate passes...');
-    const warehouses = await WarehouseModel.create([
-      {
-        tenantId: TENANT_ID,
-        code: 'WH-MAIN-01',
-        name: 'Main Plant Thermal Stores',
-        type: 'MAIN_PLANT',
-        plantArea: 'Bay 1-4 Central Floor',
-        status: 'ACTIVE'
-      },
-      {
-        tenantId: TENANT_ID,
-        code: 'WH-FG-01',
-        name: 'Finished Goods & Shipping Dock',
-        type: 'FINISHED_STORE',
-        plantArea: 'Outbound Loading Dock Bay 5',
-        status: 'ACTIVE'
-      }
-    ]);
-
+    // 11. Seed Dispatches & Gate Passes
+    console.log('🚚 Seeding dispatch gate passes & delivery consignments...');
     const dispatches = await DispatchConsignmentModel.create([
       {
         tenantId: TENANT_ID,

@@ -296,43 +296,111 @@ describe('End-to-End Manufacturing ERP Interaction Suite', () => {
     });
   });
 
-  describe('6. Inventory & Heat Lot Traceability', () => {
-    it('switches between item master and heat lots with active search filtering', () => {
+  describe('6. Creation Phase & Metallurgical Material Inwarding Lineage', () => {
+    it('switches between Creation Phase tabs (POs, Receipts, GRNs, Traceable Units) with active search filtering', () => {
       renderWithProviders(<InventoryPage />);
 
-      const searchInput = screen.getByPlaceholderText(/search items, grades, melts/i);
-      fireEvent.change(searchInput, { target: { value: 'Inconel' } });
+      // Search filters active POs
+      const searchInput = screen.getByPlaceholderText(/search pos, grns, units, melts/i);
+      fireEvent.change(searchInput, { target: { value: 'Timken' } });
+      expect(screen.getByText('PO-202609-0001')).toBeDefined();
 
-      expect(screen.getByText('Inconel 718 High-Temperature Aerospace Rod')).toBeDefined();
-
-      const heatLotsBtn = screen.getByRole('button', { name: /traceable heat lots/i });
-      fireEvent.click(heatLotsBtn);
-
-      expect(screen.getByText('HL-718-2026C')).toBeDefined();
+      // Switch to Traceable Units tab
+      const unitsTabBtn = screen.getByRole('tab', { name: /traceable units/i });
+      fireEvent.click(unitsTabBtn);
+      expect(screen.getByText('UNIT-GRN-202609-0001-001')).toBeDefined();
     });
 
-    it('opens Receive Heat Lot dialog and inward alloy melt', async () => {
+    it('opens Create Purchase Order dialog and issues PO with bound Recipe', async () => {
       globalThis.fetch = vi.fn().mockImplementation(() =>
         Promise.resolve({
           ok: true,
           status: 201,
-          json: async () => ({ success: true, data: { id: 'hl_new_01' } })
+          json: async () => ({
+            success: true,
+            data: {
+              id: 'po_test_01',
+              poNumber: 'PO-202609-0099',
+              supplierName: 'TimkenSteel Specialty Metals',
+              status: 'ISSUED',
+              items: [
+                {
+                  itemId: 'itm_01',
+                  itemCode: 'MAT-4140-RND-50',
+                  materialGrade: 'AISI 4140',
+                  recipeId: 'rec_01',
+                  recipeCode: 'REC-CARB-4140-01',
+                  orderedQuantity: 5000,
+                  uom: 'KG',
+                  unitPrice: 4.85
+                }
+              ]
+            }
+          })
         })
       );
 
       renderWithProviders(<InventoryPage />);
 
-      const receiveBtn = screen.getByRole('button', { name: /receive heat lot/i });
-      fireEvent.click(receiveBtn);
+      const createPoBtn = screen.getByRole('button', { name: /create purchase order/i });
+      fireEvent.click(createPoBtn);
 
-      expect(screen.getByText(/receive raw material heat lot/i)).toBeDefined();
+      expect(screen.getByText(/create purchase order \(step 1 of creation phase\)/i)).toBeDefined();
 
-      const inwardBtn = screen.getByRole('button', { name: /inward heat lot/i });
-      fireEvent.click(inwardBtn);
+      const submitPoBtn = screen.getByRole('button', { name: /issue purchase order/i });
+      fireEvent.click(submitPoBtn);
 
       await waitFor(() => {
-        expect(screen.getByText(/received and quarantined for lab intake/i)).toBeDefined();
+        expect(screen.getByText(/created successfully/i)).toBeDefined();
       });
+    });
+
+    it('opens Record Material Receipt dialog and records delivery against PO', async () => {
+      globalThis.fetch = vi.fn().mockImplementation(() =>
+        Promise.resolve({
+          ok: true,
+          status: 201,
+          json: async () => ({
+            success: true,
+            data: {
+              id: 'rcpt_test_01',
+              receiptNumber: 'MR-202609-0099',
+              poNumber: 'PO-202609-0001',
+              status: 'RECEIVED'
+            }
+          })
+        })
+      );
+
+      renderWithProviders(<InventoryPage />);
+
+      const recordRcptBtn = screen.getByRole('button', { name: /record material receipt/i });
+      fireEvent.click(recordRcptBtn);
+
+      expect(screen.getByText(/record physical material receipt/i)).toBeDefined();
+
+      const saveRcptBtn = screen.getByRole('button', { name: /save material receipt/i });
+      fireEvent.click(saveRcptBtn);
+
+      await waitFor(() => {
+        expect(screen.getByText(/recorded against/i)).toBeDefined();
+      });
+    });
+
+    it('opens and previews official Goods Receipt Note (GRN) with signature blocks for printing', () => {
+      renderWithProviders(<InventoryPage />);
+
+      // Switch to GRNs tab
+      const grnTabBtn = screen.getByRole('tab', { name: /goods receipt notes/i });
+      fireEvent.click(grnTabBtn);
+
+      expect(screen.getByText('GRN-202609-0001')).toBeDefined();
+
+      const printBtn = screen.getByRole('button', { name: /print grn/i });
+      fireEvent.click(printBtn);
+
+      expect(screen.getByText(/celestium advanced heat treatment works/i)).toBeDefined();
+      expect(screen.getByText(/metallurgical qc inspector/i)).toBeDefined();
     });
   });
 

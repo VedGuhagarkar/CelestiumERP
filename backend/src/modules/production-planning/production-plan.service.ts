@@ -16,6 +16,7 @@ import { recipeRepository } from '../recipe/recipe.repository.js';
 import { specificationRepository } from '../specification/specification.repository.js';
 import { heatLotRepository } from '../traceability/heat-lot.repository.js';
 import { quarantineRepository } from '../quarantine/quarantine.repository.js';
+import { grnService } from '../grn/grn.service.js';
 import { auditService } from '../audit/audit.service.js';
 import { NotFoundError, BadRequestError } from '../../core/errors/app-error.js';
 
@@ -79,10 +80,12 @@ export class ProductionPlanService {
       );
     }
 
-    // 6. Check Material Availability & Quarantine Status
+    // 6. Check Material Availability & Quarantine Status (Authoritative Creation Phase)
     const materialStatus = await this.evaluateMaterialReadiness(
       tenantId,
+      item.id,
       item.itemCode,
+      recipe.id,
       dto.requiredHeatLotNumber,
       dto.plannedQuantity
     );
@@ -267,9 +270,11 @@ export class ProductionPlanService {
     if (toStatus === 'CONFIRMED' || toStatus === 'IN_PROGRESS') {
       const materialStatus = await this.evaluateMaterialReadiness(
         tenantId,
-        plan.item.itemCode,
-        plan.constraints.requiredHeatLotNumber,
-        plan.quantityTargets.plannedQuantity
+        plan.item?.itemId || '',
+        plan.item?.itemCode || '',
+        plan.recipe?.recipeId || '',
+        plan.constraints?.requiredHeatLotNumber,
+        plan.quantityTargets?.plannedQuantity || 0
       );
       plan.constraints.materialAvailability = materialStatus.status;
       plan.constraints.availableStockQuantity = materialStatus.availableStock;
@@ -319,9 +324,11 @@ export class ProductionPlanService {
     // 1. Recalculate Material Readiness
     const materialStatus = await this.evaluateMaterialReadiness(
       tenantId,
-      plan.item.itemCode,
-      plan.constraints.requiredHeatLotNumber,
-      plan.quantityTargets.plannedQuantity
+      plan.item?.itemId || '',
+      plan.item?.itemCode || '',
+      plan.recipe?.recipeId || '',
+      plan.constraints?.requiredHeatLotNumber,
+      plan.quantityTargets?.plannedQuantity || 0
     );
     plan.constraints.materialAvailability = materialStatus.status;
     plan.constraints.availableStockQuantity = materialStatus.availableStock;
@@ -359,20 +366,14 @@ export class ProductionPlanService {
 
   private async evaluateMaterialReadiness(
     tenantId: string,
+    itemId: string,
     itemCode: string,
+    recipeId: string,
     requiredHeatLotNumber?: string | null,
     plannedQuantity: number = 0
   ): Promise<{ status: MaterialAvailabilityStatus; availableStock: number }> {
-    let availableStock = 0;
-
+    // 0. Active quarantine check on required heat lot
     if (requiredHeatLotNumber) {
-      // Specific heat lot required
-      const heatLot = await heatLotRepository.findByHeatLotNumber(tenantId, requiredHeatLotNumber);
-      if (!heatLot || heatLot.isDeleted) {
-        return { status: 'PENDING_INWARD', availableStock: 0 };
-      }
-
-      // Check quarantine for this heat lot
       const activeQuarantine = await quarantineRepository.findActiveQuarantineForTarget(
         tenantId,
         'HEAT_LOT',
@@ -381,23 +382,58 @@ export class ProductionPlanService {
       if (activeQuarantine) {
         return { status: 'BLOCKED_QUARANTINE', availableStock: 0 };
       }
+    }
 
-      availableStock = Math.max(0, heatLot.currentQuantity - (heatLot.allocatedQuantity || 0));
-    } else {
-      // Find all available heat lots for this itemCode
-      const result = await heatLotRepository.searchHeatLots(
-        tenantId,
-        { itemCode },
-        { page: 1, limit: 50, sort: { createdAt: -1 } }
-      );
-      for (const hl of result.items) {
-        const activeQuarantine = await quarantineRepository.findActiveQuarantineForTarget(
+    let availableStock = 0;
+
+    // 1. Authoritative Creation Phase: Check certified GRN units ready for planning
+    if (itemId) {
+      try {
+        const grnUnits = await grnService.getAvailableUnitsForPlanning(tenantId, itemId, recipeId || undefined);
+        if (grnUnits && grnUnits.length > 0) {
+          if (requiredHeatLotNumber) {
+            const target = requiredHeatLotNumber.toUpperCase().trim();
+            const filtered = grnUnits.filter(
+              (u) =>
+                u.supplierHeatNumber === target ||
+                u.unitIdentifier === target ||
+                u.poNumber === target ||
+                u.grnNumber === target
+            );
+            availableStock = filtered.reduce((sum, u) => sum + u.quantity, 0);
+          } else {
+            availableStock = grnUnits.reduce((sum, u) => sum + u.quantity, 0);
+          }
+        }
+      } catch {
+        // Fallback
+      }
+    }
+
+    // 2. Fallback cross-check against heat lot repository if no GRN units found
+    if (availableStock === 0) {
+      if (requiredHeatLotNumber) {
+        // Specific heat lot required
+        const heatLot = await heatLotRepository.findByHeatLotNumber(tenantId, requiredHeatLotNumber);
+        if (heatLot && !heatLot.isDeleted) {
+          availableStock = Math.max(0, heatLot.currentQuantity - (heatLot.allocatedQuantity || 0));
+        }
+      } else {
+        // Find all available heat lots for this itemCode
+        const result = await heatLotRepository.searchHeatLots(
           tenantId,
-          'HEAT_LOT',
-          hl.heatLotNumber
+          { itemCode },
+          { page: 1, limit: 50, sort: { createdAt: -1 } }
         );
-        if (!activeQuarantine) {
-          availableStock += Math.max(0, hl.currentQuantity - (hl.allocatedQuantity || 0));
+        for (const hl of result.items) {
+          const activeQuarantine = await quarantineRepository.findActiveQuarantineForTarget(
+            tenantId,
+            'HEAT_LOT',
+            hl.heatLotNumber
+          );
+          if (!activeQuarantine) {
+            availableStock += Math.max(0, hl.currentQuantity - (hl.allocatedQuantity || 0));
+          }
         }
       }
     }

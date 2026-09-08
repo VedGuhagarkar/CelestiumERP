@@ -29,6 +29,15 @@ export const Permissions = {
   INVENTORY_UPDATE: 'INVENTORY_UPDATE',
   INVENTORY_MANAGE: 'INVENTORY_MANAGE',
 
+  // Creation Phase Domain (PO, Material Storage & GRN)
+  PO_CREATE: 'PO_CREATE',
+  PO_VIEW: 'PO_VIEW',
+  PO_UPDATE: 'PO_UPDATE',
+  STORAGE_RECORD: 'STORAGE_RECORD',
+  GRN_CREATE: 'GRN_CREATE',
+  GRN_VIEW: 'GRN_VIEW',
+  GRN_PRINT: 'GRN_PRINT',
+
   // Personnel & Employee Directory Domain
   EMPLOYEE_VIEW: 'EMPLOYEE_VIEW',
   EMPLOYEE_CREATE: 'EMPLOYEE_CREATE',
@@ -117,6 +126,15 @@ export const PERMISSION_CATALOG: Record<PermissionKey, PermissionDefinition> = {
   INVENTORY_VIEW: { key: 'INVENTORY_VIEW', domain: 'Inventory', sensitivity: PermissionSensitivity.STANDARD, description: 'View stock levels, heat lots, and MTR certificates' },
   INVENTORY_UPDATE: { key: 'INVENTORY_UPDATE', domain: 'Inventory', sensitivity: PermissionSensitivity.STANDARD, description: 'Record goods receipts, issues, and transfers' },
   INVENTORY_MANAGE: { key: 'INVENTORY_MANAGE', domain: 'Inventory', sensitivity: PermissionSensitivity.STANDARD, description: 'Perform supervisor stock adjustments and manage SKU master data' },
+
+  // Creation Phase
+  PO_CREATE: { key: 'PO_CREATE', domain: 'CreationPhase', sensitivity: PermissionSensitivity.STANDARD, description: 'Create Purchase Orders linking parts and recipes' },
+  PO_VIEW: { key: 'PO_VIEW', domain: 'CreationPhase', sensitivity: PermissionSensitivity.STANDARD, description: 'View Purchase Orders and receipt progress' },
+  PO_UPDATE: { key: 'PO_UPDATE', domain: 'CreationPhase', sensitivity: PermissionSensitivity.STANDARD, description: 'Update or cancel draft and open Purchase Orders' },
+  STORAGE_RECORD: { key: 'STORAGE_RECORD', domain: 'CreationPhase', sensitivity: PermissionSensitivity.STANDARD, description: 'Record received material intake and warehouse storage allocation' },
+  GRN_CREATE: { key: 'GRN_CREATE', domain: 'CreationPhase', sensitivity: PermissionSensitivity.STANDARD, description: 'Create Goods Receipt Notes and generate individual part units' },
+  GRN_VIEW: { key: 'GRN_VIEW', domain: 'CreationPhase', sensitivity: PermissionSensitivity.STANDARD, description: 'View Goods Receipt Notes and part unit genealogy' },
+  GRN_PRINT: { key: 'GRN_PRINT', domain: 'CreationPhase', sensitivity: PermissionSensitivity.STANDARD, description: 'View and print authoritative Goods Receipt Notes' },
 
   // Employees
   EMPLOYEE_VIEW: { key: 'EMPLOYEE_VIEW', domain: 'Employees', sensitivity: PermissionSensitivity.STANDARD, description: 'View personnel directory and certified skills' },
