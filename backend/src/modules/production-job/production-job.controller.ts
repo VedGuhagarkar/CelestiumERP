@@ -127,6 +127,23 @@ export class ProductionJobController extends BaseController {
     }
   };
 
+  public getBatchOrderProductionReadiness = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const readiness = await this.service.getBatchOrderProductionReadiness(
+        tenantId,
+        req.params.id as string
+      );
+      this.sendSuccess(res, readiness, 'Batch Order production readiness evaluated successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
   public createDirectJob = async (
     req: Request,
     res: Response,

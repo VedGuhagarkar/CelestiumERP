@@ -594,3 +594,45 @@ export interface QueryJobsDto {
   page?: number;
   limit?: number;
 }
+
+export interface IBatchOrderProductionReadiness {
+  isReadyForProduction: boolean;
+  jobId?: string;
+  boNumber?: string;
+  jobNumber?: string;
+  status?: string;
+  hasAuthoritativePo?: boolean;
+  hasAuthoritativeGrn?: boolean;
+  hasCustomer?: boolean;
+  hasPart?: boolean;
+  hasValidQuantity?: boolean;
+  hasValidWeight?: boolean;
+  hasRecipe?: boolean;
+  has15ProcessDetails?: boolean;
+  hasValidWorkflowState?: boolean;
+  missingFields: string[];
+  errors: string[];
+  validationErrors?: string[];
+  readinessSummary: string;
+}
+
+export const PRODUCTION_ONLY_FIELDS = [
+  'execution',
+  'actualStartTime',
+  'actualEndTime',
+  'temperatureLogs',
+  'furnaceCharge',
+  'cycleTimer',
+  'stageProgress',
+  'actualSoakMinutes',
+  'inspectionResults',
+  'actualHardnessValues',
+  'cOfCNumber',
+  'dispatchDetails',
+  'productionLogs',
+  'downtimeLog',
+  'loadedQuantity',
+  'completedQuantity',
+  'scrappedQuantity'
+] as const;
+

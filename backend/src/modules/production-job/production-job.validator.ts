@@ -131,9 +131,55 @@ export const createBatchOrderSchema: ValidationSchema = {
       dispatched: z.boolean().optional(),
       inspection: z.boolean().optional(),
       status: z.string().optional(),
-      workflowState: z.record(z.any()).optional()
+      workflowState: z.record(z.any()).optional(),
+      execution: z.any().optional(),
+      actualStartTime: z.any().optional(),
+      actualEndTime: z.any().optional(),
+      temperatureLogs: z.any().optional(),
+      furnaceCharge: z.any().optional(),
+      cycleTimer: z.any().optional(),
+      stageProgress: z.any().optional(),
+      actualSoakMinutes: z.any().optional(),
+      inspectionResults: z.any().optional(),
+      actualHardnessValues: z.any().optional(),
+      cOfCNumber: z.any().optional(),
+      dispatchDetails: z.any().optional(),
+      productionLogs: z.any().optional(),
+      downtimeLog: z.any().optional(),
+      loadedQuantity: z.any().optional(),
+      completedQuantity: z.any().optional(),
+      scrappedQuantity: z.any().optional()
     })
     .superRefine((data, ctx) => {
+      // Production Data Boundary Enforcement
+      const passedProductionFields = [
+        'execution',
+        'actualStartTime',
+        'actualEndTime',
+        'temperatureLogs',
+        'furnaceCharge',
+        'cycleTimer',
+        'stageProgress',
+        'actualSoakMinutes',
+        'inspectionResults',
+        'actualHardnessValues',
+        'cOfCNumber',
+        'dispatchDetails',
+        'productionLogs',
+        'downtimeLog',
+        'loadedQuantity',
+        'completedQuantity',
+        'scrappedQuantity'
+      ].filter((f) => (data as any)[f] !== undefined);
+
+      if (passedProductionFields.length > 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Production Data Boundary Violation: Fields belonging exclusively to the Production or Inspection phases (${passedProductionFields.join(', ')}) cannot be populated during the Planning Phase.`,
+          path: [passedProductionFields[0]]
+        });
+      }
+
       const qty = data.quantity !== undefined ? data.quantity : data.targetQuantity;
       if (qty === undefined || qty === null) {
         ctx.addIssue({
@@ -259,21 +305,40 @@ export const getBatchOrderGenealogySchema: ValidationSchema = {
   })
 };
 
+export const getBatchOrderProductionReadinessSchema: ValidationSchema = {
+  params: z.object({
+    id: z.string().trim().min(1, 'Batch Order ID or Number is required')
+  })
+};
+
+export const getProcessDetailsSchema: ValidationSchema = {
+  params: z.object({
+    id: z.string().trim().min(1, 'Batch Order ID is required')
+  })
+};
+
+export const updateProcessDetailsSchema: ValidationSchema = {
+  params: z.object({
+    id: z.string().trim().min(1, 'Batch Order ID is required')
+  }),
+  body: z.object({
+    processDetails: z.array(processDetailRowValidatorSchema).max(15, 'Maximum 15 process rows allowed').optional(),
+    rows: z.array(processDetailRowValidatorSchema).max(15, 'Maximum 15 process rows allowed').optional()
+  }).refine((data) => !!(data.processDetails || data.rows), {
+    message: 'Either processDetails or rows must be provided'
+  })
+};
+
 export const createDirectJobSchema: ValidationSchema = {
   body: z.object({
-    poId: z.string().trim().optional(),
-    grnId: z.string().trim().optional(),
-    customerId: z.string().trim().optional(),
-    itemId: z.string().trim().min(1, 'Item ID is required'),
-    recipeId: z.string().trim().optional(),
-    specificationId: z.string().trim().optional(),
-    targetQuantity: z.number().min(0.001, 'Target quantity must be greater than zero'),
+    planId: z.string().trim().optional(),
     priority: jobPriorityEnum.optional().default('NORMAL'),
     plannedStartDate: z.string().or(z.date()).optional(),
     targetCompletionDate: z.string().or(z.date()).optional(),
     assignedFurnaceId: z.string().trim().optional(),
     assignedOperatorId: z.string().trim().optional(),
-    shift: z.string().trim().optional(),
+    shift: shiftEnum.optional(),
+    targetQuantity: z.number().min(0.001, 'Target quantity must be greater than zero'),
     materialAllocations: z.array(z.any()).optional(),
     notes: z.string().trim().max(1000).optional()
   })
@@ -293,6 +358,13 @@ export const updateJobSchema: ValidationSchema = {
       assignedOperatorId: z.string().trim().optional(),
       shift: shiftEnum.optional(),
       notes: z.string().trim().max(500).optional(),
+      status: z.any().optional(),
+      workflowState: z.any().optional(),
+      inProduction: z.any().optional(),
+      waitingForInspection: z.any().optional(),
+      inInspection: z.any().optional(),
+      waitingForDispatch: z.any().optional(),
+      dispatched: z.any().optional(),
       poId: z.any().optional(),
       poNumber: z.any().optional(),
       grnId: z.any().optional(),
@@ -307,9 +379,74 @@ export const updateJobSchema: ValidationSchema = {
       weight: z.any().optional(),
       weightKg: z.any().optional(),
       boNumber: z.any().optional(),
-      genealogy: z.any().optional()
+      genealogy: z.any().optional(),
+      execution: z.any().optional(),
+      actualStartTime: z.any().optional(),
+      actualEndTime: z.any().optional(),
+      temperatureLogs: z.any().optional(),
+      furnaceCharge: z.any().optional(),
+      cycleTimer: z.any().optional(),
+      stageProgress: z.any().optional(),
+      actualSoakMinutes: z.any().optional(),
+      inspectionResults: z.any().optional(),
+      actualHardnessValues: z.any().optional(),
+      cOfCNumber: z.any().optional(),
+      dispatchDetails: z.any().optional(),
+      productionLogs: z.any().optional(),
+      downtimeLog: z.any().optional(),
+      loadedQuantity: z.any().optional(),
+      completedQuantity: z.any().optional(),
+      scrappedQuantity: z.any().optional()
     })
     .superRefine((data, ctx) => {
+      // 1. State Transition Authority Violation check
+      if (
+        data.status !== undefined ||
+        data.workflowState !== undefined ||
+        data.inProduction !== undefined ||
+        data.waitingForInspection !== undefined ||
+        data.inInspection !== undefined ||
+        data.waitingForDispatch !== undefined ||
+        data.dispatched !== undefined
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            'State Transition Authority Violation: Planning users cannot directly transition Batch Orders into downstream lifecycle states (IN_PROGRESS, WAITING_FOR_INSPECTION, IN_INSPECTION, WAITING_FOR_DISPATCH, DISPATCHED). Downstream phases control their own execution and transitions.',
+          path: ['status']
+        });
+      }
+
+      // 2. Production Data Boundary check
+      const passedProductionFields = [
+        'execution',
+        'actualStartTime',
+        'actualEndTime',
+        'temperatureLogs',
+        'furnaceCharge',
+        'cycleTimer',
+        'stageProgress',
+        'actualSoakMinutes',
+        'inspectionResults',
+        'actualHardnessValues',
+        'cOfCNumber',
+        'dispatchDetails',
+        'productionLogs',
+        'downtimeLog',
+        'loadedQuantity',
+        'completedQuantity',
+        'scrappedQuantity'
+      ].filter((f) => (data as any)[f] !== undefined);
+
+      if (passedProductionFields.length > 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Production Data Boundary Violation: Fields belonging exclusively to the Production or Inspection phases (${passedProductionFields.join(', ')}) cannot be populated during the Planning Phase.`,
+          path: [passedProductionFields[0]]
+        });
+      }
+
+      // 3. Immutability check
       if (
         data.poId !== undefined ||
         data.poNumber !== undefined ||
@@ -533,20 +670,5 @@ export const queryJobsSchema: ValidationSchema = {
 export const getJobByIdSchema: ValidationSchema = {
   params: z.object({
     id: z.string().trim().min(1, 'Job ID is required')
-  })
-};
-
-export const updateProcessDetailsSchema: ValidationSchema = {
-  params: z.object({
-    id: z.string().trim().min(1, 'Batch Order ID is required')
-  }),
-  body: z.object({
-    processDetails: z.array(processDetailRowValidatorSchema).max(15, 'Maximum 15 process rows allowed')
-  })
-};
-
-export const getProcessDetailsSchema: ValidationSchema = {
-  params: z.object({
-    id: z.string().trim().min(1, 'Batch Order ID is required')
   })
 };

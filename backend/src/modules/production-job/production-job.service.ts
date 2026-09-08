@@ -30,7 +30,9 @@ import {
   IJobRecipeSnapshot,
   IJobSpecificationSnapshot,
   IBatchOrderGenealogy,
-  IBatchOrderWorkflowState
+  IBatchOrderWorkflowState,
+  IBatchOrderProductionReadiness,
+  PRODUCTION_ONLY_FIELDS
 } from './production-job.types.js';
 import { customerRepository } from '../customer/customer.repository.js';
 import { itemRepository } from '../item/item.repository.js';
@@ -142,6 +144,17 @@ export class ProductionJobService {
     if (activeFlagsCount > 1) {
       throw new BadRequestError(
         `Mutual Exclusivity Violation: Exactly one BO workflow state flag must be true at any moment. Received ${activeFlagsCount} active flags.`
+      );
+    }
+
+    // Production Data Boundary Enforcement: Reject production-only fields in Planning
+    const passedProductionFields = (PRODUCTION_ONLY_FIELDS as readonly string[]).filter(
+      (f) => (dto as any)[f] !== undefined
+    );
+
+    if (passedProductionFields.length > 0) {
+      throw new BadRequestError(
+        `Production Data Boundary Violation: Fields belonging exclusively to the Production or Inspection phases (${passedProductionFields.join(', ')}) cannot be populated during the Planning Phase.`
       );
     }
 
@@ -1474,6 +1487,32 @@ export class ProductionJobService {
       );
     }
 
+    // State Transition Authority Enforcement
+    if (
+      (dto as any).status !== undefined ||
+      (dto as any).workflowState !== undefined ||
+      (dto as any).inProduction !== undefined ||
+      (dto as any).waitingForInspection !== undefined ||
+      (dto as any).inInspection !== undefined ||
+      (dto as any).waitingForDispatch !== undefined ||
+      (dto as any).dispatched !== undefined
+    ) {
+      throw new BadRequestError(
+        'State Transition Authority Violation: Planning users cannot directly transition Batch Orders into downstream lifecycle states (IN_PROGRESS, WAITING_FOR_INSPECTION, IN_INSPECTION, WAITING_FOR_DISPATCH, DISPATCHED). Downstream phases control their own execution and transitions.'
+      );
+    }
+
+    // Production Data Boundary Enforcement: Reject production-only fields in Planning
+    const passedProductionFields = (PRODUCTION_ONLY_FIELDS as readonly string[]).filter(
+      (f) => (dto as any)[f] !== undefined
+    );
+
+    if (passedProductionFields.length > 0) {
+      throw new BadRequestError(
+        `Production Data Boundary Violation: Fields belonging exclusively to the Production or Inspection phases (${passedProductionFields.join(', ')}) cannot be populated during the Planning Phase.`
+      );
+    }
+
     if (job.status !== 'DRAFT' && job.status !== 'APPROVED' && job.status !== 'SCHEDULED') {
       throw new BadRequestError(
         `Production Job '${job.jobNumber}' cannot be modified in status '${job.status}'. Modifications are strictly locked once production is in progress or completed.`
@@ -1837,9 +1876,9 @@ export class ProductionJobService {
       throw new NotFoundError(`Production Job with ID '${jobId}' not found`);
     }
 
-    if (job.status !== 'SCHEDULED' && job.status !== 'APPROVED') {
+    if (job.status !== 'SCHEDULED' && job.status !== 'APPROVED' && job.status !== 'WAITING_FOR_PRODUCTION') {
       throw new BadRequestError(
-        `Cannot start job '${job.jobNumber}' in status '${job.status}'. Expected 'SCHEDULED' or 'APPROVED'.`
+        `Cannot start job '${job.jobNumber}' in status '${job.status}'. Expected 'SCHEDULED', 'APPROVED', or 'WAITING_FOR_PRODUCTION'.`
       );
     }
 
@@ -1869,6 +1908,16 @@ export class ProductionJobService {
     const prevStatus = job.status;
 
     job.status = 'IN_PROGRESS';
+    job.workflowState = {
+      waitingForProduction: false,
+      inProduction: true,
+      waitingForInspection: false,
+      inInspection: false,
+      waitingForDispatch: false,
+      dispatched: false
+    };
+    (job as any).waitingForProduction = false;
+    (job as any).inProduction = true;
     job.timeline.actualStartDate = startTime;
     job.quantity.loadedQuantity = dto.loadedPieceCount;
 
@@ -2415,6 +2464,16 @@ export class ProductionJobService {
     const currentStatus = job.status;
     const targetStatus = dto.toStatus;
 
+    // State Transition Authority: Prevent phase skipping from WAITING_FOR_PRODUCTION
+    if (currentStatus === 'WAITING_FOR_PRODUCTION') {
+      const downstreamPhases = ['QUALITY_CHECK', 'STORAGE', 'READY_FOR_DISPATCH', 'DISPATCHED', 'COMPLETED'];
+      if (downstreamPhases.includes(targetStatus)) {
+        throw new BadRequestError(
+          `State Transition Authority Violation: Invalid lifecycle transition from '${currentStatus}' to '${targetStatus}'. Cannot skip the Production Phase to enter Inspection or Dispatch directly from Planning.`
+        );
+      }
+    }
+
     const allowedNext = ALLOWED_STATUS_TRANSITIONS[currentStatus] || [];
     if (!allowedNext.includes(targetStatus)) {
       throw new BadRequestError(
@@ -2423,6 +2482,19 @@ export class ProductionJobService {
     }
 
     job.status = targetStatus;
+
+    if (targetStatus === 'IN_PROGRESS') {
+      job.workflowState = {
+        waitingForProduction: false,
+        inProduction: true,
+        waitingForInspection: false,
+        inInspection: false,
+        waitingForDispatch: false,
+        dispatched: false
+      };
+      (job as any).waitingForProduction = false;
+      (job as any).inProduction = true;
+    }
     job.transitionHistory.push({
       fromStatus: currentStatus,
       toStatus: targetStatus,
@@ -2506,13 +2578,151 @@ export class ProductionJobService {
     return job;
   }
 
+  public validateProductionReadiness(job: any): IBatchOrderProductionReadiness {
+    const missingFields: string[] = [];
+    const validationErrors: string[] = [];
+
+    // 1. PO check
+    const hasPo = !!(job.poId || job.genealogy?.poId) && !!(job.poNumber || job.genealogy?.poNumber);
+    if (!hasPo) {
+      missingFields.push('Purchase Order (poId, poNumber)');
+      validationErrors.push('Missing authoritative Purchase Order reference.');
+    }
+
+    // 2. GRN check
+    const hasGrn = !!(job.grnId || job.genealogy?.grnId) && !!(job.grnNumber || job.genealogy?.grnNumber);
+    if (!hasGrn) {
+      missingFields.push('Goods Receipt Note (grnId, grnNumber)');
+      validationErrors.push('Missing authoritative Goods Receipt Note reference.');
+    }
+
+    // 3. Customer check
+    const customerName = job.customer?.customerName || (job as any).customerName;
+    const hasCustomer = !!customerName;
+    if (!hasCustomer) {
+      missingFields.push('Customer');
+      validationErrors.push('Missing authoritative Customer details.');
+    }
+
+    // 4. Part check
+    const hasPart = !!(job.item?.itemCode || (job as any).itemId) && !!(job.item?.materialGrade);
+    if (!hasPart) {
+      missingFields.push('Part (itemCode, materialGrade)');
+      validationErrors.push('Missing authoritative Part / Material Grade details.');
+    }
+
+    // 5. Quantity check
+    const qty = job.quantity?.targetQuantity ?? (job as any).targetQuantity;
+    const hasQty = typeof qty === 'number' && Number.isFinite(qty) && qty > 0;
+    if (!hasQty) {
+      missingFields.push('Quantity (targetQuantity > 0)');
+      validationErrors.push('Batch Order quantity must be a positive number greater than 0.');
+    }
+
+    // 6. Weight check
+    const weight = job.weightKg ?? (job as any).weight;
+    const hasWeight = typeof weight === 'number' && Number.isFinite(weight) && weight > 0;
+    if (!hasWeight) {
+      missingFields.push('Weight (weightKg > 0)');
+      validationErrors.push('Batch Order weight must be a positive number greater than 0.');
+    }
+
+    // 7. Recipe check
+    const hasRecipe = !!(job.recipeId || job.recipeSnapshot?.recipeCode);
+    if (!hasRecipe) {
+      missingFields.push('Recipe');
+      validationErrors.push('Missing Recipe specification snapshot.');
+    }
+
+    // 8. Process detail structure (15 fixed positions)
+    const processDetails = job.processDetails;
+    const has15Processes = Array.isArray(processDetails) && processDetails.length === 15;
+    if (!has15Processes) {
+      missingFields.push('Process Details Structure (15 standard positions)');
+      validationErrors.push(
+        `Process details table must contain exactly 15 sequential process positions (found: ${Array.isArray(processDetails) ? processDetails.length : 0}).`
+      );
+    } else {
+      // 9. Process sequential structure check
+      const invalidProcessRows = processDetails.filter(
+        (p: any, idx: number) => !p || (p.serialNumber !== idx + 1 && p.processNumber !== idx + 1)
+      );
+      if (invalidProcessRows.length > 0) {
+        validationErrors.push(
+          `Process details table contains ${invalidProcessRows.length} non-sequential process rows.`
+        );
+      }
+    }
+
+    // 10. Valid workflow state check
+    const status = job.status;
+    const isWaitingForProd = status === 'WAITING_FOR_PRODUCTION';
+    const isWfFlagWaiting = job.workflowState?.waitingForProduction === true || job.waitingForProduction === true;
+    if (!isWaitingForProd || !isWfFlagWaiting) {
+      if (!isWaitingForProd) {
+        validationErrors.push(`Job status is '${status}', expected 'WAITING_FOR_PRODUCTION'.`);
+      }
+      if (!isWfFlagWaiting) {
+        validationErrors.push("Workflow state flag 'waitingForProduction' must be true.");
+      }
+    }
+
+    const isReadyForProduction = missingFields.length === 0 && validationErrors.length === 0;
+
+    const readinessSummary = isReadyForProduction
+      ? 'Batch Order meets all planning requirements and is fully ready for Production execution.'
+      : `Batch Order is incomplete and not eligible for production. Missing: [${missingFields.join(', ')}]. Errors: [${validationErrors.join(', ')}]`;
+
+    return {
+      jobId: job.id || job._id?.toString(),
+      jobNumber: job.jobNumber,
+      boNumber: job.boNumber || job.jobNumber,
+      status: job.status,
+      isReadyForProduction,
+      hasAuthoritativePo: hasPo,
+      hasAuthoritativeGrn: hasGrn,
+      hasCustomer,
+      hasPart,
+      hasValidQuantity: hasQty,
+      hasValidWeight: hasWeight,
+      hasRecipe,
+      has15ProcessDetails: has15Processes,
+      hasValidWorkflowState: isWaitingForProd && isWfFlagWaiting,
+      missingFields,
+      errors: validationErrors,
+      validationErrors,
+      readinessSummary
+    };
+  }
+
+  public async getBatchOrderProductionReadiness(
+    tenantId: string,
+    jobId: string
+  ): Promise<IBatchOrderProductionReadiness> {
+    const job = await this.repo.findById(tenantId, jobId);
+    if (!job || job.isDeleted) {
+      throw new NotFoundError(`Batch Order with ID '${jobId}' not found`);
+    }
+
+    return this.validateProductionReadiness(job);
+  }
+
   public async getProductionQueue(
     tenantId: string,
     filters: any = {}
   ): Promise<any[]> {
     const activeJobs = await this.repo.findActiveQueueJobs(tenantId, filters);
 
-    const sorted = [...activeJobs].sort((a, b) => {
+    // Prevent Premature Visibility: Incomplete or invalid BOs must not appear in the production queue
+    const readyJobs = activeJobs.filter((job) => {
+      if (job.status === 'WAITING_FOR_PRODUCTION' || (job as any).boNumber) {
+        const readiness = this.validateProductionReadiness(job);
+        return readiness.isReadyForProduction;
+      }
+      return true;
+    });
+
+    const sorted = [...readyJobs].sort((a, b) => {
       const pA = PRIORITY_WEIGHTS[a.priority] || 4;
       const pB = PRIORITY_WEIGHTS[b.priority] || 4;
 
@@ -2527,17 +2737,27 @@ export class ProductionJobService {
       queuePosition: idx + 1,
       jobId: job.id,
       jobNumber: job.jobNumber,
+      boNumber: job.boNumber || job.jobNumber,
       planNumber: job.planNumber,
-      customerName: job.customer.customerName,
-      itemCode: job.item.itemCode,
-      itemName: job.item.itemName,
-      materialGrade: job.item.materialGrade,
-      targetQuantity: job.quantity.targetQuantity,
+      poId: job.poId || (job.genealogy as any)?.whichPo?.poId || (job.genealogy as any)?.poId || null,
+      poNumber: job.poNumber || (job.genealogy as any)?.whichPo?.poNumber || (job.genealogy as any)?.poNumber || null,
+      grnId: job.grnId || (job.genealogy as any)?.whichGrn?.grnId || (job.genealogy as any)?.grnId || null,
+      grnNumber: job.grnNumber || (job.genealogy as any)?.whichGrn?.grnNumber || (job.genealogy as any)?.grnNumber || null,
+      customerName: job.customer?.customerName || (job as any).customerName,
+      itemCode: job.item?.itemCode,
+      itemName: job.item?.itemName,
+      materialGrade: job.item?.materialGrade,
+      recipeId: (job as any).recipeId || job.recipeSnapshot?.recipeId || null,
+      recipeCode: job.recipeSnapshot?.recipeCode || null,
+      recipeName: (job.recipeSnapshot as any)?.name || (job.recipeSnapshot as any)?.recipeName || null,
+      weightKg: job.weightKg || null,
+      targetQuantity: job.quantity?.targetQuantity,
       priority: job.priority,
       status: job.status,
+      workflowState: job.workflowState || null,
       assignedFurnaceCode: job.equipmentAssignment?.furnaceCode || null,
       assignedOperatorName: job.operatorAssignment?.operatorName || null,
-      targetCompletionDate: job.timeline.targetCompletionDate
+      targetCompletionDate: job.timeline?.targetCompletionDate
     }));
   }
 

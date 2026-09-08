@@ -14,7 +14,8 @@ import {
   Lock,
   FileText,
   CheckCircle2,
-  ArrowRight
+  ArrowRight,
+  XCircle
 } from 'lucide-react';
 import { PageContainer } from '../layouts/PageContainer.js';
 import { PageHeader } from '../design-system/navigation/PageHeader.js';
@@ -236,6 +237,26 @@ export interface EligibleGrn {
   items?: any[];
 }
 
+export interface BatchOrderProductionReadiness {
+  isReadyForProduction: boolean;
+  jobId?: string;
+  boNumber?: string;
+  jobNumber?: string;
+  status?: string;
+  hasAuthoritativePo?: boolean;
+  hasAuthoritativeGrn?: boolean;
+  hasCustomer?: boolean;
+  hasPart?: boolean;
+  hasValidQuantity?: boolean;
+  hasValidWeight?: boolean;
+  hasRecipe?: boolean;
+  has15ProcessDetails?: boolean;
+  hasValidWorkflowState?: boolean;
+  missingFields: string[];
+  errors: string[];
+  readinessSummary: string;
+}
+
 export interface SerializedUnit {
   unitIdentifier: string;
   quantity: number;
@@ -370,6 +391,7 @@ export const JobsPage: React.FC = () => {
   // Production jobs queue state
   const [jobs, setJobs] = useState<ProductionJob[]>(DEFAULT_JOBS);
   const [selectedJob, setSelectedJob] = useState<ProductionJob | null>(null);
+  const [productionReadiness, setProductionReadiness] = useState<BatchOrderProductionReadiness | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -429,6 +451,7 @@ export const JobsPage: React.FC = () => {
   // Authoritative BO Record Selection (Fetches complete genealogy & hierarchy)
   const handleSelectJob = async (job: ProductionJob) => {
     setSelectedJob(job);
+    setProductionReadiness(null);
     const id = job._id || job.id || job.jobNumber;
     try {
       const res = await authenticatedFetch(`${env.API_BASE_URL}/batch-orders/${id}`);
@@ -440,6 +463,18 @@ export const JobsPage: React.FC = () => {
       }
     } catch {
       // Retain optimistic job record
+    }
+
+    try {
+      const readRes = await authenticatedFetch(`${env.API_BASE_URL}/production-jobs/${id}/production-readiness`);
+      if (readRes.ok) {
+        const readJson = await readRes.json();
+        if (readJson.data) {
+          setProductionReadiness(readJson.data);
+        }
+      }
+    } catch {
+      // Retain null / local evaluation fallback
     }
   };
 
@@ -1808,6 +1843,88 @@ export const JobsPage: React.FC = () => {
                     />
                   </div>
                 ))}
+              </div>
+            </AppCard>
+
+            {/* 4b. PLANNING-TO-PRODUCTION HANDOFF READINESS */}
+            <AppCard style={{ padding: '16px', background: 'rgba(16, 185, 129, 0.03)', border: (productionReadiness?.isReadyForProduction ?? (selectedJob.status === 'WAITING_FOR_PRODUCTION')) ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid rgba(245, 158, 11, 0.4)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <ShieldCheck size={18} color={(productionReadiness?.isReadyForProduction ?? (selectedJob.status === 'WAITING_FOR_PRODUCTION')) ? '#10b981' : '#f59e0b'} />
+                  <span style={{ fontSize: '13px', fontWeight: 800, color: '#ffffff' }}>
+                    PLANNING-TO-PRODUCTION HANDOFF
+                  </span>
+                </div>
+                <span
+                  style={{
+                    padding: '3px 10px',
+                    borderRadius: '999px',
+                    fontSize: '11px',
+                    fontWeight: 800,
+                    background: (productionReadiness?.isReadyForProduction ?? (selectedJob.status === 'WAITING_FOR_PRODUCTION'))
+                      ? 'rgba(16, 185, 129, 0.2)'
+                      : 'rgba(239, 68, 68, 0.2)',
+                    color: (productionReadiness?.isReadyForProduction ?? (selectedJob.status === 'WAITING_FOR_PRODUCTION'))
+                      ? '#10b981'
+                      : '#ef4444',
+                    border: (productionReadiness?.isReadyForProduction ?? (selectedJob.status === 'WAITING_FOR_PRODUCTION'))
+                      ? '1px solid #10b981'
+                      : '1px solid #ef4444'
+                  }}
+                >
+                  {(productionReadiness?.isReadyForProduction ?? (selectedJob.status === 'WAITING_FOR_PRODUCTION'))
+                    ? 'READY FOR PRODUCTION'
+                    : 'INCOMPLETE / BLOCKED'}
+                </span>
+              </div>
+
+              <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginBottom: '12px', lineHeight: '1.5' }}>
+                {(productionReadiness?.isReadyForProduction ?? (selectedJob.status === 'WAITING_FOR_PRODUCTION'))
+                  ? 'This Batch Order satisfies all required Planning information and is in WAITING FOR PRODUCTION status. Production operators can retrieve this record directly from the queue without manual transfer.'
+                  : 'This Batch Order is missing required source-defined planning information. Incomplete BOs are prevented from appearing in the active production queue.'}
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', fontSize: '11px' }}>
+                {[
+                  { label: 'Authoritative PO', valid: productionReadiness ? productionReadiness.hasAuthoritativePo : !!(selectedJob.poId || selectedJob.poNumber) },
+                  { label: 'Authoritative GRN', valid: productionReadiness ? productionReadiness.hasAuthoritativeGrn : !!(selectedJob.grnId || selectedJob.grnNumber) },
+                  { label: 'Customer Verification', valid: productionReadiness ? productionReadiness.hasCustomer : !!selectedJob.customer?.customerName },
+                  { label: 'Part & Material Grade', valid: productionReadiness ? productionReadiness.hasPart : !!(selectedJob.item?.itemCode && selectedJob.item?.materialGrade) },
+                  { label: 'Quantity (> 0)', valid: productionReadiness ? productionReadiness.hasValidQuantity : ((selectedJob.quantity?.targetQuantity || 0) > 0) },
+                  { label: 'Weight (> 0 kg)', valid: productionReadiness ? productionReadiness.hasValidWeight : ((selectedJob.weightKg || selectedJob.weight || 0) > 0) },
+                  { label: 'Recipe Snapshot', valid: productionReadiness ? productionReadiness.hasRecipe : !!(selectedJob.recipeSnapshot?.recipeCode) },
+                  { label: '15 Process Structure', valid: productionReadiness ? productionReadiness.has15ProcessDetails : (selectedJob.processDetails?.length === 15) },
+                  { label: 'Valid Initial State', valid: productionReadiness ? productionReadiness.hasValidWorkflowState : (selectedJob.status === 'WAITING_FOR_PRODUCTION') }
+                ].map((item, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '6px 8px',
+                      borderRadius: '4px',
+                      background: item.valid ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)',
+                      border: item.valid ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid rgba(239, 68, 68, 0.2)'
+                    }}
+                  >
+                    {item.valid ? (
+                      <CheckCircle2 size={13} color="#10b981" />
+                    ) : (
+                      <XCircle size={13} color="#ef4444" />
+                    )}
+                    <span style={{ color: item.valid ? '#e2e8f0' : '#f87171', fontWeight: 600 }}>
+                      {item.label}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ marginTop: '12px', padding: '8px 10px', borderRadius: '4px', background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.2)', fontSize: '10px', color: '#93c5fd', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Lock size={12} />
+                <span>
+                  <strong>Immutable Source Boundaries:</strong> PO → GRN → BO and Item → Recipe → BO relationships are permanently protected. Downstream phases control their own execution.
+                </span>
               </div>
             </AppCard>
 

@@ -11,6 +11,7 @@ import {
   updateProcessDetailsSchema,
   getProcessDetailsSchema,
   getBatchOrderGenealogySchema,
+  getBatchOrderProductionReadinessSchema,
   updateJobSchema,
   assignOperatorSchema,
   removeOperatorSchema,
@@ -98,6 +99,15 @@ productionJobRouter.get(
   asyncHandler(productionJobController.getBatchOrderGenealogy)
 );
 
+// 0h. Get Batch Order Production Readiness Evaluation
+productionJobRouter.get(
+  ['/batch-orders/:id/production-readiness', '/:id/production-readiness'],
+  authenticateJwt,
+  requireAnyPermission(PERMISSIONS.BATCH_ORDER_VIEW, PERMISSIONS.PRODUCTION_JOB_VIEW),
+  validateRequest(getBatchOrderProductionReadinessSchema),
+  asyncHandler(productionJobController.getBatchOrderProductionReadiness)
+);
+
 // 2. Convert Approved Production Plan to Executable Production Job
 productionJobRouter.post(
   '/convert-plan/:planId',
@@ -109,9 +119,13 @@ productionJobRouter.post(
 
 // 3. Get Prioritized Shop-Floor Production Queue
 productionJobRouter.get(
-  '/queue',
+  ['/queue', '/production-queue', '/batch-orders/queue'],
   authenticateJwt,
-  requirePermission(PERMISSIONS.PRODUCTION_JOB_VIEW),
+  requireAnyPermission(
+    PERMISSIONS.PRODUCTION_JOB_VIEW,
+    PERMISSIONS.BATCH_ORDER_VIEW,
+    PERMISSIONS.MACHINES_FURNACE_OPERATE
+  ),
   asyncHandler(productionJobController.getProductionQueue)
 );
 

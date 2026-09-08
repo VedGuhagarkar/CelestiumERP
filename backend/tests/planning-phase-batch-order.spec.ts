@@ -3346,6 +3346,586 @@ describe('Planning Phase — Authoritative PO -> GRN -> BO Workflow', () => {
       expect(viewByBoNumber.body.data.sourceInformation.quantity.targetQuantity).toBe(100);
     });
   });
+
+  // =========================================================================
+  // PROMPT 9: Planning-to-Production Handoff
+  // =========================================================================
+  describe('Prompt 9: Planning-to-Production Handoff', () => {
+    let jobStore: any[] = [];
+    let counter = 1;
+
+    beforeEach(() => {
+      jobStore = [];
+      counter = 1;
+
+      jest.spyOn(purchaseOrderRepository, 'findById').mockResolvedValue(mockPo as any);
+      jest.spyOn(grnRepository, 'findGrnById').mockResolvedValue(mockGrn as any);
+      jest.spyOn(itemRepository, 'findById').mockResolvedValue(mockItem as any);
+      jest.spyOn(recipeRepository, 'findById').mockResolvedValue(mockRecipe as any);
+      jest.spyOn(grnRepository, 'allocateUnit').mockResolvedValue({} as any);
+
+      jest.spyOn(productionJobRepository, 'generateNextBatchOrderNumber').mockImplementation(async () => {
+        return `BO-202609-00${counter++}`;
+      });
+
+      jest.spyOn(productionJobRepository, 'findByGrnId').mockImplementation(async (_tenant, grnId) => {
+        return jobStore.filter((j) => j.grnId === grnId) as any;
+      });
+
+      jest.spyOn(productionJobRepository, 'create').mockImplementation(async (_tenant, doc: any) => {
+        const idStr = `job_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+        const newJob = {
+          id: idStr,
+          _id: idStr,
+          ...doc,
+          save: async function () {
+            return this;
+          },
+          toJSON: function () {
+            return { ...this };
+          }
+        };
+        jobStore.push(newJob);
+        return newJob as any;
+      });
+
+      jest.spyOn(productionJobRepository, 'findById').mockImplementation(async (_tenant, id) => {
+        return (
+          jobStore.find(
+            (j) =>
+              j.id === id ||
+              j._id === id ||
+              j.jobNumber === id ||
+              j.boNumber === id ||
+              j.jobNumber?.toLowerCase() === id?.toLowerCase() ||
+              j.boNumber?.toLowerCase() === id?.toLowerCase()
+          ) || null
+        );
+      });
+
+      jest.spyOn(productionJobRepository, 'updateById').mockImplementation(async (_tenant, id, update: any) => {
+        const idx = jobStore.findIndex((j) => j.id === id || j.boNumber === id);
+        if (idx >= 0) {
+          jobStore[idx] = { ...jobStore[idx], ...update };
+          return {
+            ...jobStore[idx],
+            save: async function () { return this; },
+            toJSON: function () { return { ...this }; }
+          } as any;
+        }
+        return null;
+      });
+
+      jest.spyOn(productionJobRepository, 'findActiveQueueJobs').mockImplementation(async (_tenant, _filters) => {
+        return jobStore.filter(
+          (j) =>
+            !j.isDeleted &&
+            ['WAITING_FOR_PRODUCTION', 'DRAFT', 'APPROVED', 'SCHEDULED', 'IN_PROGRESS', 'PAUSED'].includes(j.status)
+        ) as any;
+      });
+
+      jest.spyOn(roleRepository, 'findRolesByCodes').mockImplementation(async (_tenantId, codes) => {
+        return codes.map((c) => {
+          const existing = DEFAULT_FACTORY_ROLES.find((r) => r.code === c);
+          if (existing) {
+            return { ...existing, id: `role_${c}`, status: 'active' };
+          }
+          if (c === 'PRODUCTION_SUPERVISOR') {
+            return {
+              id: 'role_prod_sup',
+              code: 'PRODUCTION_SUPERVISOR',
+              name: 'Production Supervisor',
+              isSystemRole: false,
+              status: 'active',
+              permissions: [
+                PERMISSIONS.PRODUCTION_JOB_VIEW,
+                PERMISSIONS.BATCH_ORDER_VIEW,
+                PERMISSIONS.PRODUCTION_JOB_CREATE,
+                PERMISSIONS.PRODUCTION_JOB_START,
+                PERMISSIONS.PRODUCTION_JOB_TRANSITION
+              ]
+            };
+          }
+          return {
+            id: `role_${c}`,
+            code: c,
+            name: c,
+            isSystemRole: false,
+            status: 'active',
+            permissions: []
+          };
+        }) as any;
+      });
+    });
+
+    // 1. BO Completion & Initial State
+    it('completed BO with all required Planning information must enter WAITING_FOR_PRODUCTION', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+
+      expect(res.status).toBe(201);
+      const bo = res.body.data;
+      expect(bo.status).toBe('WAITING_FOR_PRODUCTION');
+      expect(bo.workflowState.waitingForProduction).toBe(true);
+      expect(bo.workflowState.inProduction).toBe(false);
+      expect(bo.workflowState.waitingForInspection).toBe(false);
+      expect(bo.workflowState.inInspection).toBe(false);
+      expect(bo.workflowState.waitingForDispatch).toBe(false);
+      expect(bo.workflowState.dispatched).toBe(false);
+    });
+
+    // 2. Production Readiness Evaluation Endpoint
+    it('evaluates complete BO as ready for production with all requirement checks passing', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const createRes = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+
+      expect(createRes.status).toBe(201);
+      const boId = createRes.body.data.id;
+
+      const readinessRes = await request(app)
+        .get(`/api/v1/batch-orders/${boId}/production-readiness`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`);
+
+      expect(readinessRes.status).toBe(200);
+      const data = readinessRes.body.data;
+      expect(data.isReadyForProduction).toBe(true);
+      expect(data.hasAuthoritativePo).toBe(true);
+      expect(data.hasAuthoritativeGrn).toBe(true);
+      expect(data.hasCustomer).toBe(true);
+      expect(data.hasPart).toBe(true);
+      expect(data.hasValidQuantity).toBe(true);
+      expect(data.hasValidWeight).toBe(true);
+      expect(data.hasRecipe).toBe(true);
+      expect(data.has15ProcessDetails).toBe(true);
+      expect(data.hasValidWorkflowState).toBe(true);
+      expect(data.missingFields).toHaveLength(0);
+      expect(data.errors).toHaveLength(0);
+    });
+
+    // 3. Production Visibility without Manual Transfer
+    it('production users can retrieve waiting BO from the production queue without manual transfer', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+      const operatorToken = generateToken('usr_op', ['FURNACE_OPERATOR']);
+      const supervisorToken = generateToken('usr_sup', ['PRODUCTION_SUPERVISOR']);
+
+      const createRes = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 120,
+          weight: 60
+        });
+
+      expect(createRes.status).toBe(201);
+      const bo = createRes.body.data;
+
+      // Operator checks production queue
+      const queueResOp = await request(app)
+        .get('/api/v1/production-jobs/queue')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${operatorToken}`);
+
+      expect(queueResOp.status).toBe(200);
+      expect(Array.isArray(queueResOp.body.data)).toBe(true);
+
+      const foundInQueue = queueResOp.body.data.find(
+        (q: any) => q.jobId === bo.id || q.boNumber === bo.boNumber
+      );
+      expect(foundInQueue).toBeDefined();
+      expect(foundInQueue.boNumber).toBe(bo.boNumber);
+      expect(foundInQueue.status).toBe('WAITING_FOR_PRODUCTION');
+      expect(foundInQueue.poNumber).toBe(mockPo.poNumber);
+      expect(foundInQueue.grnNumber).toBe(mockGrn.grnNumber);
+      expect(foundInQueue.itemCode).toBe(mockItem.itemCode);
+      expect(foundInQueue.materialGrade).toBe(mockItem.materialGrade);
+      expect(foundInQueue.targetQuantity).toBe(120);
+      expect(foundInQueue.weightKg).toBe(60);
+
+      // Supervisor checks /batch-orders/queue alias
+      const queueResSup = await request(app)
+        .get('/api/v1/production-jobs/batch-orders/queue')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${supervisorToken}`);
+
+      expect(queueResSup.status).toBe(200);
+      const foundInAliasQueue = queueResSup.body.data.find(
+        (q: any) => q.jobId === bo.id || q.boNumber === bo.boNumber
+      );
+      expect(foundInAliasQueue).toBeDefined();
+    });
+
+    // 4. Prevent Premature Visibility
+    it('incomplete BOs must not appear in the production queue', async () => {
+      const operatorToken = generateToken('usr_op', ['FURNACE_OPERATOR']);
+
+      // Directly insert an incomplete job record into jobStore
+      const incompleteJob = {
+        id: `job_inc_${Date.now()}`,
+        _id: `job_inc_${Date.now()}`,
+        tenantId: testTenant,
+        jobNumber: `JOB-INC-${Date.now()}`,
+        boNumber: `BO-INC-${Date.now()}`,
+        status: 'WAITING_FOR_PRODUCTION',
+        workflowState: {
+          waitingForProduction: true,
+          inProduction: false,
+          waitingForInspection: false,
+          inInspection: false,
+          waitingForDispatch: false,
+          dispatched: false
+        },
+        waitingForProduction: true,
+        inProduction: false,
+        quantity: { targetQuantity: 0, loadedQuantity: 0, completedQuantity: 0, scrappedQuantity: 0 },
+        weightKg: 0,
+        processDetails: [],
+        timeline: {
+          plannedStartDate: new Date(),
+          targetCompletionDate: new Date(Date.now() + 86400000)
+        },
+        priority: 'NORMAL',
+        customer: { customerId: 'cust_unknown', customerCode: '', customerName: '' },
+        item: { itemId: 'item_unknown', itemCode: '', itemName: '', materialGrade: '', uom: 'PCS' },
+        save: async function () { return this; },
+        toJSON: function () { return { ...this }; }
+      };
+      jobStore.push(incompleteJob);
+
+      const queueRes = await request(app)
+        .get('/api/v1/production-jobs/queue')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${operatorToken}`);
+
+      expect(queueRes.status).toBe(200);
+      const found = queueRes.body.data.find((q: any) => q.jobId === incompleteJob.id);
+      expect(found).toBeUndefined();
+
+      // Verify readiness check returns isReadyForProduction: false
+      const readinessRes = await request(app)
+        .get(`/api/v1/batch-orders/${incompleteJob.id}/production-readiness`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${operatorToken}`);
+
+      expect(readinessRes.status).toBe(200);
+      expect(readinessRes.body.data.isReadyForProduction).toBe(false);
+      expect(readinessRes.body.data.missingFields.length).toBeGreaterThan(0);
+    });
+
+    // 5. Immutable Source Relationships
+    it('protects PO -> GRN -> BO and Item -> Recipe -> BO relationships from unauthorized modification', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const createRes = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+
+      expect(createRes.status).toBe(201);
+      const boId = createRes.body.data.id;
+
+      // Attempting to mutate poId
+      const resPo = await request(app)
+        .patch(`/api/v1/production-jobs/${boId}`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({ poId: 'po_hacked_id' });
+      expect([400, 422]).toContain(resPo.status);
+      expect(JSON.stringify(resPo.body)).toContain('Read-Only Source Data Violation');
+
+      // Attempting to mutate grnId
+      const resGrn = await request(app)
+        .patch(`/api/v1/production-jobs/${boId}`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({ grnId: 'grn_hacked_id' });
+      expect([400, 422]).toContain(resGrn.status);
+      expect(JSON.stringify(resGrn.body)).toContain('Read-Only Source Data Violation');
+
+      // Attempting to mutate itemId or recipeId
+      const resRecipe = await request(app)
+        .patch(`/api/v1/production-jobs/${boId}`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({ recipeId: 'rec_hacked_id' });
+      expect([400, 422]).toContain(resRecipe.status);
+      expect(JSON.stringify(resRecipe.body)).toContain('Read-Only Source Data Violation');
+
+      // Attempting to mutate customer or weight
+      const resWeight = await request(app)
+        .patch(`/api/v1/production-jobs/${boId}`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({ weightKg: 999 });
+      expect([400, 422]).toContain(resWeight.status);
+      expect(JSON.stringify(resWeight.body)).toContain('Read-Only Source Data Violation');
+    });
+
+    // 6. Production Data Boundary Enforcement
+    it('strictly rejects Planning functionality attempting to populate production-only fields', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      // Creation attempt with production telemetry
+      const resCreate = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50,
+          temperatureLogs: [{ time: new Date(), tempC: 850 }],
+          stageProgress: [{ stageIndex: 1, actualDurationMinutes: 120 }]
+        });
+
+      expect([400, 422]).toContain(resCreate.status);
+      expect(JSON.stringify(resCreate.body)).toContain('Production Data Boundary Violation');
+
+      // Creation of valid BO first
+      const validCreate = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+
+      expect(validCreate.status).toBe(201);
+      const boId = validCreate.body.data.id;
+
+      // Update attempt with inspection results
+      const resUpdate = await request(app)
+        .patch(`/api/v1/production-jobs/${boId}`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          inspectionResults: { passed: true, hardness: 50 },
+          cOfCNumber: 'COFC-99999'
+        });
+
+      expect([400, 422]).toContain(resUpdate.status);
+      expect(JSON.stringify(resUpdate.body)).toContain('Production Data Boundary Violation');
+    });
+
+    // 7. State Transition Authority - Prohibit Planners Directly Setting Downstream States
+    it('prohibits planning users from directly setting BO to downstream states via updateJob', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const createRes = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+
+      expect(createRes.status).toBe(201);
+      const boId = createRes.body.data.id;
+
+      // Direct status jump
+      const resStatus = await request(app)
+        .patch(`/api/v1/production-jobs/${boId}`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({ status: 'IN_PROGRESS' });
+
+      expect([400, 422]).toContain(resStatus.status);
+      expect(JSON.stringify(resStatus.body)).toContain('State Transition Authority Violation');
+
+      // Direct workflow flag jump
+      const resFlag = await request(app)
+        .patch(`/api/v1/production-jobs/${boId}`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({ waitingForInspection: true });
+
+      expect([400, 422]).toContain(resFlag.status);
+      expect(JSON.stringify(resFlag.body)).toContain('State Transition Authority Violation');
+    });
+
+    // 8. State Transition Authority - Prohibit Phase Skipping
+    it('prohibits phase skipping from WAITING_FOR_PRODUCTION directly to Inspection or Dispatch', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const createRes = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+
+      expect(createRes.status).toBe(201);
+      const boId = createRes.body.data.id;
+
+      // Attempt to skip to QUALITY_CHECK (Inspection)
+      const resSkipInspection = await request(app)
+        .post(`/api/v1/production-jobs/${boId}/transition`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          toStatus: 'QUALITY_CHECK',
+          reason: 'Attempting to skip furnace cycle'
+        });
+
+      expect(resSkipInspection.status).toBe(400);
+      expect(resSkipInspection.body.message).toContain('State Transition Authority Violation');
+
+      // Attempt to skip to DISPATCHED
+      const resSkipDispatch = await request(app)
+        .post(`/api/v1/production-jobs/${boId}/transition`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          toStatus: 'DISPATCHED',
+          reason: 'Attempting to skip all production and inspection'
+        });
+
+      expect(resSkipDispatch.status).toBe(400);
+      expect(resSkipDispatch.body.message).toContain('State Transition Authority Violation');
+    });
+
+    // 9. Legitimate Execution Start Updates Workflow State
+    it('updates workflowState and mutual exclusivity flags when transitioning to IN_PROGRESS', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+      const operatorToken = generateToken('usr_op', ['FURNACE_OPERATOR']);
+
+      const createRes = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+
+      expect(createRes.status).toBe(201);
+      const boId = createRes.body.data.id;
+
+      // Legitimate transition to IN_PROGRESS by shop-floor operator
+      const transRes = await request(app)
+        .post(`/api/v1/production-jobs/${boId}/transition`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${operatorToken}`)
+        .send({
+          toStatus: 'IN_PROGRESS',
+          reason: 'Furnace preheating completed, commencing soak.'
+        });
+
+      expect(transRes.status).toBe(200);
+      expect(transRes.body.data.status).toBe('IN_PROGRESS');
+      expect(transRes.body.data.workflowState.inProduction).toBe(true);
+      expect(transRes.body.data.workflowState.waitingForProduction).toBe(false);
+      expect(transRes.body.data.workflowState.waitingForInspection).toBe(false);
+    });
+
+    // 10. Security & RBAC Enforcement
+    it('readiness and queue endpoints enforce JWT authentication and RBAC boundaries', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+      const techToken = generateToken('usr_tech', ['MAINTENANCE_TECH']);
+
+      const createRes = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+
+      expect(createRes.status).toBe(201);
+      const boId = createRes.body.data.id;
+
+      // Unauthenticated readiness request -> 401
+      const unauthReadiness = await request(app)
+        .get(`/api/v1/batch-orders/${boId}/production-readiness`)
+        .set('x-tenant-id', testTenant);
+      expect(unauthReadiness.status).toBe(401);
+
+      // Unauthorized readiness request -> 403
+      const forbiddenReadiness = await request(app)
+        .get(`/api/v1/batch-orders/${boId}/production-readiness`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${techToken}`);
+      expect(forbiddenReadiness.status).toBe(403);
+
+      // Unauthenticated queue request -> 401
+      const unauthQueue = await request(app)
+        .get('/api/v1/production-jobs/queue')
+        .set('x-tenant-id', testTenant);
+      expect(unauthQueue.status).toBe(401);
+
+      // Unauthorized queue request -> 403
+      const forbiddenQueue = await request(app)
+        .get('/api/v1/production-jobs/queue')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${techToken}`);
+      expect(forbiddenQueue.status).toBe(403);
+    });
+  });
 });
 
 
