@@ -6,8 +6,29 @@ import {
   GRNDocument,
   GRNUnitDocument,
   IMaterialReceiptItem,
-  IGRNItem
+  IGRNItem,
+  IStorageMovement
 } from './grn.types.js';
+
+// 0. Storage Movement Schema (Movement History for putaway)
+const StorageMovementSchema = new Schema<IStorageMovement>(
+  {
+    movementId: { type: String, required: true },
+    itemId: { type: String, required: true },
+    itemCode: { type: String, required: true, uppercase: true, trim: true },
+    itemName: { type: String, required: true, trim: true },
+    quantity: { type: Number, required: true, min: 0.0001 },
+    uom: { type: String, required: true, trim: true },
+    sourceLocation: { type: String, required: true, default: 'INWARD_RECEIVING_DOCK' },
+    destinationWarehouseId: { type: String, required: true },
+    destinationWarehouseCode: { type: String, required: true, uppercase: true, trim: true },
+    destinationLocationCode: { type: String, required: true, uppercase: true, trim: true },
+    movedBy: { type: String, required: true },
+    movedAt: { type: Date, required: true, default: Date.now },
+    notes: { type: String }
+  },
+  { _id: false }
+);
 
 // 1. Material Receipt Item Schema
 const MaterialReceiptItemSchema = new Schema<IMaterialReceiptItem>(
@@ -22,6 +43,8 @@ const MaterialReceiptItemSchema = new Schema<IMaterialReceiptItem>(
     recipeCode: { type: String, required: true, uppercase: true, trim: true },
     recipeRevision: { type: Number, required: true },
     receivedQuantity: { type: Number, required: true, min: 0.0001 },
+    storedQuantity: { type: Number, default: 0, min: 0 },
+    remainingQuantity: { type: Number, min: 0 },
     uom: { type: String, required: true, trim: true },
     supplierHeatNumber: { type: String, required: true, uppercase: true, trim: true },
     supplierLotNumber: { type: String, uppercase: true, trim: true },
@@ -50,9 +73,13 @@ const MaterialReceiptSchema = createBaseSchema<MaterialReceiptDocument>({
   warehouseCode: { type: String, uppercase: true, trim: true },
   storageLocationCode: { type: String, uppercase: true, trim: true },
   items: { type: [MaterialReceiptItemSchema], required: true },
+  totalReceivedQuantity: { type: Number, min: 0 },
+  totalStoredQuantity: { type: Number, default: 0, min: 0 },
+  remainingQuantityToStore: { type: Number, min: 0 },
+  movementHistory: { type: [StorageMovementSchema], default: [] },
   status: {
     type: String,
-    enum: ['RECEIVED', 'STORED', 'GRN_CREATED'],
+    enum: ['RECEIVED', 'PARTIALLY_STORED', 'STORED', 'GRN_CREATED'],
     default: 'RECEIVED',
     index: true
   },

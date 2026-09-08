@@ -2,9 +2,25 @@ import { Document } from 'mongoose';
 import { UnitOfMeasure } from '../item/item.types.js';
 import { ProcessFamily } from '../recipe/recipe.types.js';
 
-export type MaterialReceiptStatus = 'RECEIVED' | 'STORED' | 'GRN_CREATED';
+export type MaterialReceiptStatus = 'RECEIVED' | 'PARTIALLY_STORED' | 'STORED' | 'GRN_CREATED';
 export type GRNStatus = 'ISSUED' | 'PRINTED' | 'AVAILABLE_FOR_PLANNING';
 export type GRNUnitStatus = 'AVAILABLE_FOR_PLANNING' | 'ALLOCATED_TO_PLAN' | 'IN_PRODUCTION' | 'CONSUMED';
+
+export interface IStorageMovement {
+  movementId: string;
+  itemId: string;
+  itemCode: string;
+  itemName: string;
+  quantity: number;
+  uom: UnitOfMeasure;
+  sourceLocation: string;
+  destinationWarehouseId: string;
+  destinationWarehouseCode: string;
+  destinationLocationCode: string;
+  movedBy: string;
+  movedAt: Date;
+  notes?: string;
+}
 
 export interface IMaterialReceiptItem {
   poLineItemId: string;
@@ -17,6 +33,8 @@ export interface IMaterialReceiptItem {
   recipeCode: string;
   recipeRevision: number;
   receivedQuantity: number;
+  storedQuantity?: number;
+  remainingQuantity?: number;
   uom: UnitOfMeasure;
   supplierHeatNumber: string;
   supplierLotNumber?: string;
@@ -43,6 +61,10 @@ export interface IMaterialReceipt {
   warehouseCode?: string;
   storageLocationCode?: string;
   items: IMaterialReceiptItem[];
+  totalReceivedQuantity?: number;
+  totalStoredQuantity?: number;
+  remainingQuantityToStore?: number;
+  movementHistory?: IStorageMovement[];
   status: MaterialReceiptStatus;
   storedAt?: Date;
   storedBy?: string;
@@ -170,6 +192,7 @@ export interface RecordMaterialReceiptDto {
 export interface StoreMaterialDto {
   warehouseId: string;
   storageLocationCode: string;
+  quantity?: number;
   storageNotes?: string;
 }
 

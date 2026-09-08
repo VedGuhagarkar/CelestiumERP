@@ -5,7 +5,9 @@ import {
   GRNDocument,
   GRNUnitDocument,
   QueryGrnDto,
-  QueryGrnUnitDto
+  QueryGrnUnitDto,
+  MaterialReceiptStatus,
+  IStorageMovement
 } from './grn.types.js';
 
 export interface IGRNRepository {
@@ -15,6 +17,14 @@ export interface IGRNRepository {
   findReceiptByNumber(tenantId: string, receiptNumber: string): Promise<MaterialReceiptDocument | null>;
   findReceiptByIdempotencyKey(tenantId: string, idempotencyKey: string): Promise<MaterialReceiptDocument | null>;
   updateReceipt(tenantId: string, id: string, data: Partial<MaterialReceiptDocument>): Promise<MaterialReceiptDocument | null>;
+  atomicStoreReceipt(
+    tenantId: string,
+    receiptId: string,
+    expectedStatuses: MaterialReceiptStatus[],
+    updateData: Partial<MaterialReceiptDocument> & Record<string, any>,
+    newMovement: IStorageMovement,
+    requiredAvailableQuantity?: number
+  ): Promise<MaterialReceiptDocument | null>;
   generateNextReceiptNumber(tenantId: string): Promise<string>;
   queryReceipts(tenantId: string, query: { poId?: string; status?: string; search?: string }): Promise<MaterialReceiptDocument[]>;
 
@@ -69,6 +79,44 @@ export class GRNRepository implements IGRNRepository {
 
   public async updateReceipt(tenantId: string, id: string, data: Partial<MaterialReceiptDocument>): Promise<MaterialReceiptDocument | null> {
     return this.receiptModel.findOneAndUpdate({ tenantId, _id: id, isDeleted: false }, { $set: data }, { new: true }).exec();
+  }
+
+  public async atomicStoreReceipt(
+    tenantId: string,
+    receiptId: string,
+    expectedStatuses: MaterialReceiptStatus[],
+    updateData: Partial<MaterialReceiptDocument> & Record<string, any>,
+    newMovement: IStorageMovement,
+    requiredAvailableQuantity?: number
+  ): Promise<MaterialReceiptDocument | null> {
+    if (!mongoose.Types.ObjectId.isValid(receiptId)) {
+      return null;
+    }
+
+    const filter: FilterQuery<MaterialReceiptDocument> = {
+      tenantId,
+      _id: receiptId,
+      status: { $in: expectedStatuses },
+      isDeleted: false
+    };
+
+    if (requiredAvailableQuantity !== undefined && requiredAvailableQuantity > 0) {
+      filter.$or = [
+        { remainingQuantityToStore: { $gte: requiredAvailableQuantity } },
+        { remainingQuantityToStore: { $exists: false } }
+      ];
+    }
+
+    return this.receiptModel
+      .findOneAndUpdate(
+        filter,
+        {
+          $set: updateData,
+          $push: { movementHistory: newMovement }
+        },
+        { new: true }
+      )
+      .exec();
   }
 
   public async generateNextReceiptNumber(tenantId: string): Promise<string> {

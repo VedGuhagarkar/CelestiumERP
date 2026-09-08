@@ -34,6 +34,7 @@ export const storeMaterialSchema: ValidationSchema = {
   body: z.object({
     warehouseId: z.string().trim().min(1, 'Warehouse ID is required'),
     storageLocationCode: z.string().trim().min(1, 'Storage location code (bay/bin) is required').max(100),
+    quantity: z.number().positive('Storage quantity must be greater than zero').optional(),
     storageNotes: z.string().trim().max(500).optional()
   })
 };

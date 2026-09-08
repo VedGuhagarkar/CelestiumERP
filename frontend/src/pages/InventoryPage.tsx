@@ -133,9 +133,14 @@ export interface MaterialReceipt {
   poNumber: string;
   supplierName: string;
   supplierChallanNumber: string;
+  supplierChallanDate?: string;
   supplierInvoiceNumber?: string;
   vehicleNumber?: string;
-  status: 'RECEIVED' | 'STORED' | 'GRN_CREATED';
+  carrierVehicle?: string;
+  warehouseId?: string;
+  warehouseCode?: string;
+  storageLocationCode?: string;
+  status: 'RECEIVED' | 'PARTIALLY_STORED' | 'STORED' | 'GRN_CREATED';
   storageLocation?: {
     warehouseId: string;
     warehouseName: string;
@@ -143,7 +148,14 @@ export interface MaterialReceipt {
     locationBin: string;
     storedAt?: string;
   };
-  receivedItems: ReceivedItem[];
+  items?: any[];
+  receivedItems?: ReceivedItem[];
+  totalReceivedQuantity?: number;
+  totalStoredQuantity?: number;
+  remainingQuantityToStore?: number;
+  movementHistory?: any[];
+  storedAt?: string;
+  storedBy?: string;
   createdAt?: string;
 }
 
@@ -425,11 +437,41 @@ export const InventoryPage: React.FC = () => {
   const [rcptPackagesCount, setRcptPackagesCount] = useState(10);
   const [rcptConditionRemarks, setRcptConditionRemarks] = useState('Bundled steel bars in prime condition, clean ends.');
 
-  // Form states - Warehouse Storage Putaway
+  // Form states - Warehouse Storage Putaway (Creation Step 3)
+  const [availableWarehouses, setAvailableWarehouses] = useState<any[]>([
+    { id: 'wh_main_01', code: 'WH-MAIN-01', name: 'Main Plant Thermal Processing Warehouse', status: 'ACTIVE' },
+    { id: 'wh_aero_01', code: 'WH-AERO-01', name: 'Aerospace Raw Bar Storage Facility', status: 'ACTIVE' }
+  ]);
+  const [availableLocations, setAvailableLocations] = useState<any[]>([
+    { id: 'loc_01', warehouseId: 'wh_main_01', warehouseCode: 'WH-MAIN-01', locationCode: 'BAY-01-A', zone: 'Raw Material Yard', bay: 'Bay 1', status: 'ACTIVE' },
+    { id: 'loc_02', warehouseId: 'wh_main_01', warehouseCode: 'WH-MAIN-01', locationCode: 'BAY-02-B', zone: 'WIP Stage', bay: 'Bay 2', status: 'ACTIVE' },
+    { id: 'loc_03', warehouseId: 'wh_aero_01', warehouseCode: 'WH-AERO-01', locationCode: 'BAY-AERO-01', zone: 'Aerospace Raw Bay', bay: 'Bay 1', status: 'ACTIVE' }
+  ]);
   const [selectedReceiptForStorage, setSelectedReceiptForStorage] = useState<MaterialReceipt | null>(null);
-  const [storageWarehouseName, setStorageWarehouseName] = useState('Main Plant Thermal Processing Warehouse');
-  const [storageLocationBay, setStorageLocationBay] = useState('Bay 1 - Inward Raw Bar Stock Bay');
-  const [storageLocationBin, setStorageLocationBin] = useState('BIN-A1-04');
+  const [storageWarehouseId, setStorageWarehouseId] = useState<string>('wh_main_01');
+  const [storageLocationCode, setStorageLocationCode] = useState<string>('BAY-01-A');
+  const [storagePutawayQty, setStoragePutawayQty] = useState<number>(5000);
+  const [storagePutawayNotes, setStoragePutawayNotes] = useState<string>('');
+
+  const openStorageModalForReceipt = (r: MaterialReceipt) => {
+    setSelectedReceiptForStorage(r);
+    const totalRec = r.totalReceivedQuantity ?? (r.items || r.receivedItems)?.reduce((s: number, i: any) => s + (i.receivedQuantity || 0), 0) ?? 0;
+    const totalSt = r.totalStoredQuantity ?? (r.items || r.receivedItems)?.reduce((s: number, i: any) => s + (i.storedQuantity || 0), 0) ?? 0;
+    const remaining = r.remainingQuantityToStore !== undefined ? r.remainingQuantityToStore : Math.max(0, totalRec - totalSt);
+    setStoragePutawayQty(remaining > 0 ? remaining : totalRec);
+    setStoragePutawayNotes('');
+
+    if (availableWarehouses.length > 0) {
+      const firstWh = availableWarehouses[0];
+      const whId = firstWh.id || firstWh._id || 'wh_main_01';
+      setStorageWarehouseId(whId);
+      const matchedLocs = availableLocations.filter((l) => (l.warehouseId === whId || l.warehouseCode === firstWh.code));
+      if (matchedLocs.length > 0) {
+        setStorageLocationCode(matchedLocs[0].locationCode || matchedLocs[0].code || 'BAY-01-A');
+      }
+    }
+    setIsAssignStorageModalOpen(true);
+  };
 
   // Form states - Create GRN
   const [selectedReceiptForGrn, setSelectedReceiptForGrn] = useState<MaterialReceipt | null>(null);
@@ -447,13 +489,15 @@ export const InventoryPage: React.FC = () => {
   const fetchCreationPhaseData = async () => {
     setIsLoading(true);
     try {
-      const [resPO, resReceipt, resGRN, resUnits, resItems, resRecipes] = await Promise.all([
+      const [resPO, resReceipt, resGRN, resUnits, resItems, resRecipes, resWarehouses, resLocations] = await Promise.all([
         authenticatedFetch(`${env.API_BASE_URL}/purchase-orders`).catch(() => null),
         authenticatedFetch(`${env.API_BASE_URL}/grn/material-receipts`).catch(() => null),
         authenticatedFetch(`${env.API_BASE_URL}/grn`).catch(() => null),
         authenticatedFetch(`${env.API_BASE_URL}/grn/units/traceable`).catch(() => null),
         authenticatedFetch(`${env.API_BASE_URL}/items`).catch(() => null),
-        authenticatedFetch(`${env.API_BASE_URL}/recipes`).catch(() => null)
+        authenticatedFetch(`${env.API_BASE_URL}/recipes`).catch(() => null),
+        authenticatedFetch(`${env.API_BASE_URL}/warehouses?status=ACTIVE`).catch(() => null),
+        authenticatedFetch(`${env.API_BASE_URL}/warehouses/locations?status=ACTIVE`).catch(() => null)
       ]);
 
       if (resPO && resPO.ok) {
@@ -479,6 +523,14 @@ export const InventoryPage: React.FC = () => {
       if (resRecipes && resRecipes.ok) {
         const json = await resRecipes.json();
         if (json.data && Array.isArray(json.data) && json.data.length > 0) setRecipes(json.data);
+      }
+      if (resWarehouses && resWarehouses.ok) {
+        const json = await resWarehouses.json();
+        if (json.data && Array.isArray(json.data) && json.data.length > 0) setAvailableWarehouses(json.data);
+      }
+      if (resLocations && resLocations.ok) {
+        const json = await resLocations.json();
+        if (json.data && Array.isArray(json.data) && json.data.length > 0) setAvailableLocations(json.data);
       }
     } catch {
       // Keep defaults
@@ -634,7 +686,7 @@ export const InventoryPage: React.FC = () => {
         carrierVehicle: rcptVehicleNumber,
         items: [
           {
-            poLineItemId: poItem?.poLineItemId || poItem?.lineItemId || 'poi_01',
+            poLineItemId: (poItem as any)?.poLineItemId || (poItem as any)?.lineItemId || poItem?.poItemId || 'poi_01',
             itemId: poItem?.itemId || 'itm_01',
             receivedQuantity: Number(rcptReceivedQty),
             supplierHeatNumber: rcptSupplierHeatNumber,
@@ -702,19 +754,26 @@ export const InventoryPage: React.FC = () => {
   const handleAssignStorage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedReceiptForStorage) return;
+    if (!canRecordStorage) {
+      setFeedback({
+        type: 'error',
+        message: 'Access Denied: You do not possess the INVENTORY_STORAGE_RECORD permission required to store material.'
+      });
+      return;
+    }
     setIsSubmitting(true);
     setFeedback(null);
 
     try {
       const receiptId = selectedReceiptForStorage.id || selectedReceiptForStorage._id;
       const payload = {
-        warehouseId: 'WH-MAIN-01',
-        warehouseName: storageWarehouseName,
-        locationBay: storageLocationBay,
-        locationBin: storageLocationBin
+        warehouseId: storageWarehouseId,
+        storageLocationCode: storageLocationCode.trim().toUpperCase(),
+        quantity: Number(storagePutawayQty),
+        storageNotes: storagePutawayNotes.trim() || undefined
       };
 
-      const res = await authenticatedFetch(`${env.API_BASE_URL}/grn/material-receipts/${receiptId}/storage`, {
+      const res = await authenticatedFetch(`${env.API_BASE_URL}/grn/receipts/${receiptId}/store`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -725,17 +784,20 @@ export const InventoryPage: React.FC = () => {
         throw new Error(err.message || `Failed to assign storage location (Status ${res.status})`);
       }
 
+      const updated = await res.json();
+      const updatedReceipt = updated.data || updated;
+
       setMaterialReceipts((prev) =>
         prev.map((r) =>
           (r.id || r._id) === receiptId
-            ? { ...r, status: 'STORED', storageLocation: { ...payload, storedAt: new Date().toISOString() } }
+            ? { ...r, ...updatedReceipt }
             : r
         )
       );
 
       setFeedback({
         type: 'success',
-        message: `Receipt ${selectedReceiptForStorage.receiptNumber} stored in ${storageLocationBay} (${storageLocationBin}). Ready for GRN creation!`
+        message: `Receipt ${selectedReceiptForStorage.receiptNumber} (${storagePutawayQty} units) stored in ${storageLocationCode}. ${updatedReceipt.status === 'STORED' ? 'Ready for GRN creation!' : 'Partial putaway saved.'}`
       });
       setIsAssignStorageModalOpen(false);
       fetchCreationPhaseData();
@@ -819,7 +881,8 @@ export const InventoryPage: React.FC = () => {
       r.receiptNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
       r.poNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
       r.supplierName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      r.receivedItems.some((i) => i.supplierHeatNumber.toLowerCase().includes(searchQuery.toLowerCase()))
+      (r.receivedItems && r.receivedItems.some((i) => i.supplierHeatNumber?.toLowerCase().includes(searchQuery.toLowerCase()))) ||
+      (r.items && r.items.some((i) => (i.supplierHeatNumber || i.heatNumber)?.toLowerCase().includes(searchQuery.toLowerCase())))
   );
 
   const filteredGrns = grns.filter(
@@ -1217,7 +1280,7 @@ export const InventoryPage: React.FC = () => {
                   </tr>
                 ) : (
                   filteredReceipts.map((r) => {
-                    const item = r.receivedItems[0];
+                    const item = (r.items || r.receivedItems || [])[0];
                     return (
                       <tr key={r.id || r._id} style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
                         <td style={{ padding: '14px 16px', fontWeight: 700, color: 'var(--color-primary)' }}>
@@ -1238,7 +1301,18 @@ export const InventoryPage: React.FC = () => {
                           {item?.receivedQuantity?.toLocaleString()} {item?.uom}
                         </td>
                         <td style={{ padding: '14px 16px' }}>
-                          {r.storageLocation ? (
+                          {r.storageLocationCode ? (
+                            <div>
+                              <div style={{ fontWeight: 600, color: 'var(--color-success)' }}>
+                                {r.warehouseCode ? `${r.warehouseCode} / ` : ''}{r.storageLocationCode}
+                              </div>
+                              <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
+                                {r.remainingQuantityToStore !== undefined && r.remainingQuantityToStore > 0
+                                  ? `Stored: ${r.totalStoredQuantity || 0} | Pending: ${r.remainingQuantityToStore}`
+                                  : 'Authoritative Location'}
+                              </div>
+                            </div>
+                          ) : r.storageLocation ? (
                             <div>
                               <div style={{ fontWeight: 600, color: 'var(--color-success)' }}>{r.storageLocation.locationBay}</div>
                               <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>Bin: {r.storageLocation.locationBin}</div>
@@ -1249,25 +1323,30 @@ export const InventoryPage: React.FC = () => {
                         </td>
                         <td style={{ padding: '14px 16px' }}>
                           <StatusBadge
-                            variant={r.status === 'STORED' ? 'success' : r.status === 'GRN_CREATED' ? 'info' : 'warning'}
+                            variant={
+                              r.status === 'STORED'
+                                ? 'success'
+                                : r.status === 'PARTIALLY_STORED'
+                                ? 'warning'
+                                : r.status === 'GRN_CREATED'
+                                ? 'info'
+                                : 'neutral'
+                            }
                             status={r.status}
                           />
                         </td>
                         <td style={{ padding: '14px 16px', textAlign: 'right' }}>
                           <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                            {r.status === 'RECEIVED' ? (
+                            {r.status === 'RECEIVED' || r.status === 'PARTIALLY_STORED' ? (
                               <ActionButton
                                 variant="primary"
                                 size="sm"
                                 leftIcon={<Warehouse size={14} />}
-                                onClick={() => {
-                                  setSelectedReceiptForStorage(r);
-                                  setIsAssignStorageModalOpen(true);
-                                }}
+                                onClick={() => openStorageModalForReceipt(r)}
                               >
-                                Store
+                                {r.status === 'PARTIALLY_STORED' ? 'Continue Putaway' : 'Store'}
                               </ActionButton>
-                            ) : (
+                            ) : r.status === 'STORED' ? (
                               <ActionButton
                                 variant="primary"
                                 size="sm"
@@ -1279,6 +1358,8 @@ export const InventoryPage: React.FC = () => {
                               >
                                 Create GRN
                               </ActionButton>
+                            ) : (
+                              <span style={{ fontSize: '12px', color: 'var(--color-text-tertiary)', fontWeight: 600 }}>GRN Issued</span>
                             )}
                           </div>
                         </td>
@@ -1906,64 +1987,223 @@ export const InventoryPage: React.FC = () => {
         </form>
       </AppDialog>
 
-      {/* --- MODAL 3: WAREHOUSE STORAGE ASSIGNMENT --- */}
+      {/* --- MODAL 3: WAREHOUSE STORAGE ASSIGNMENT & PUTAWAY --- */}
       <AppDialog
         isOpen={isAssignStorageModalOpen}
         onClose={() => setIsAssignStorageModalOpen(false)}
-        title="Assign Warehouse Storage (Step 3 of Creation Phase)"
-        size="md"
+        title="Authoritative Warehouse Storage Putaway (Step 3 of Creation Phase)"
+        size="lg"
       >
-        <form onSubmit={handleAssignStorage} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <AppAlert variant="info" title="Physical Storage Location Assignment">
-            Material must be physically placed into an authorized warehouse bay & bin before a Goods Receipt Note can be issued.
-          </AppAlert>
+        {selectedReceiptForStorage && (() => {
+          const item = (selectedReceiptForStorage.items || selectedReceiptForStorage.receivedItems || [])[0];
+          const totalRec = selectedReceiptForStorage.totalReceivedQuantity ?? (selectedReceiptForStorage.items || selectedReceiptForStorage.receivedItems)?.reduce((s: number, i: any) => s + (i.receivedQuantity || 0), 0) ?? 0;
+          const totalSt = selectedReceiptForStorage.totalStoredQuantity ?? (selectedReceiptForStorage.items || selectedReceiptForStorage.receivedItems)?.reduce((s: number, i: any) => s + (i.storedQuantity || 0), 0) ?? 0;
+          const remainingQty = selectedReceiptForStorage.remainingQuantityToStore !== undefined
+            ? selectedReceiptForStorage.remainingQuantityToStore
+            : Math.max(0, totalRec - totalSt);
 
-          <div>
-            <strong>Receipt:</strong> {selectedReceiptForStorage?.receiptNumber} ({selectedReceiptForStorage?.poNumber})
-          </div>
+          const currentWh = availableWarehouses.find((w) => (w.id === storageWarehouseId || w._id === storageWarehouseId || w.code === storageWarehouseId));
+          const whIdForFilter = currentWh ? (currentWh.id || currentWh._id) : storageWarehouseId;
+          const filteredLocations = availableLocations.filter(
+            (l) => l.warehouseId === whIdForFilter || (currentWh && l.warehouseCode === currentWh.code)
+          );
 
-          <AppSelect
-            label="Target Warehouse"
-            required
-            value={storageWarehouseName}
-            onChange={(e) => setStorageWarehouseName(e.target.value)}
-            options={[
-              { value: 'Main Plant Thermal Processing Warehouse', label: 'Main Plant Thermal Processing Warehouse (WH-MAIN-01)' },
-              { value: 'Aerospace Raw Bar Storage Facility', label: 'Aerospace Raw Bar Storage Facility (WH-AERO-01)' }
-            ]}
-          />
+          const isFullPutaway = storagePutawayQty >= remainingQty;
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-            <AppSelect
-              label="Warehouse Storage Bay"
-              required
-              value={storageLocationBay}
-              onChange={(e) => setStorageLocationBay(e.target.value)}
-              options={[
-                { value: 'Bay 1 - Inward Raw Bar Stock Bay', label: 'Bay 1 - Inward Raw Bar Stock Bay' },
-                { value: 'Bay 2 - Pit Carburizing Raw Material Bay', label: 'Bay 2 - Pit Carburizing Raw Material Bay' },
-                { value: 'Bay 3 - Sealed Quench Staging Bay', label: 'Bay 3 - Sealed Quench Staging Bay' }
-              ]}
-            />
+          return (
+            <form onSubmit={handleAssignStorage} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <AppAlert variant="info" title="Physical Warehouse Putaway & Authoritative Traceability">
+                Received raw material must be verified and put away into an authorized active warehouse location before a Goods Receipt Note (GRN) can be issued.
+              </AppAlert>
 
-            <AppInput
-              label="Storage Bin / Rack Location"
-              required
-              value={storageLocationBin}
-              onChange={(e) => setStorageLocationBin(e.target.value)}
-              placeholder="e.g. BIN-A1-04"
-            />
-          </div>
+              {/* 1. Incoming Material & PO Authoritative Identification (Read-Only) */}
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                  gap: '12px',
+                  backgroundColor: 'var(--color-surface-subtle, #f8fafc)',
+                  border: '1px solid var(--color-border)',
+                  borderRadius: '8px',
+                  padding: '14px'
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', textTransform: 'uppercase', fontWeight: 600 }}>
+                    Receipt Number
+                  </div>
+                  <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--color-primary)' }}>
+                    {selectedReceiptForStorage.receiptNumber}
+                  </div>
+                </div>
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '12px' }}>
-            <AppButton variant="secondary" onClick={() => setIsAssignStorageModalOpen(false)}>
-              Cancel
-            </AppButton>
-            <AppButton variant="primary" type="submit" isLoading={isSubmitting} leftIcon={<Warehouse size={16} />}>
-              Confirm Warehouse Putaway
-            </AppButton>
-          </div>
-        </form>
+                <div>
+                  <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', textTransform: 'uppercase', fontWeight: 600 }}>
+                    Purchase Order
+                  </div>
+                  <div style={{ fontSize: '14px', fontWeight: 700 }}>
+                    {selectedReceiptForStorage.poNumber}
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
+                    {selectedReceiptForStorage.supplierName}
+                  </div>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', textTransform: 'uppercase', fontWeight: 600 }}>
+                    Supplier Challan
+                  </div>
+                  <div style={{ fontSize: '13px', fontWeight: 600 }}>
+                    {selectedReceiptForStorage.supplierChallanNumber}
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
+                    {selectedReceiptForStorage.carrierVehicle || selectedReceiptForStorage.vehicleNumber ? `Vehicle: ${selectedReceiptForStorage.carrierVehicle || selectedReceiptForStorage.vehicleNumber}` : 'Direct Delivery'}
+                  </div>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', textTransform: 'uppercase', fontWeight: 600 }}>
+                    Item / Heat Lot Lineage
+                  </div>
+                  <div style={{ fontSize: '13px', fontWeight: 700 }}>
+                    {item?.itemCode || 'RAW-ALLOY'}
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
+                    Heat #{item?.supplierHeatNumber || 'N/A'} {item?.mtrNumber || item?.millTestCertificateNumber ? `| MTR: ${item?.mtrNumber || item?.millTestCertificateNumber}` : ''}
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. Authoritative Quantity Summary */}
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(3, 1fr)',
+                  gap: '12px',
+                  backgroundColor: 'var(--color-surface, #ffffff)',
+                  border: '1px solid var(--color-border)',
+                  borderRadius: '8px',
+                  padding: '12px'
+                }}
+              >
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>Total Received</div>
+                  <div style={{ fontSize: '18px', fontWeight: 700 }}>
+                    {totalRec.toLocaleString()} <span style={{ fontSize: '12px', fontWeight: 400 }}>{item?.uom || 'units'}</span>
+                  </div>
+                </div>
+                <div style={{ textAlign: 'center', borderLeft: '1px solid var(--color-border)', borderRight: '1px solid var(--color-border)' }}>
+                  <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>Already Put Away</div>
+                  <div style={{ fontSize: '18px', fontWeight: 700, color: totalSt > 0 ? 'var(--color-success)' : 'inherit' }}>
+                    {totalSt.toLocaleString()} <span style={{ fontSize: '12px', fontWeight: 400 }}>{item?.uom || 'units'}</span>
+                  </div>
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>Remaining to Put Away</div>
+                  <div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--color-warning)' }}>
+                    {remainingQty.toLocaleString()} <span style={{ fontSize: '12px', fontWeight: 400 }}>{item?.uom || 'units'}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 3. Warehouse & Location Selection */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+                <AppSelect
+                  label="Target Warehouse Facility"
+                  required
+                  disabled={!canRecordStorage}
+                  value={storageWarehouseId}
+                  onChange={(e) => {
+                    const newWhId = e.target.value;
+                    setStorageWarehouseId(newWhId);
+                    const matchingWh = availableWarehouses.find((w) => (w.id === newWhId || w._id === newWhId || w.code === newWhId));
+                    const locs = availableLocations.filter((l) => l.warehouseId === newWhId || (matchingWh && l.warehouseCode === matchingWh.code));
+                    if (locs.length > 0) {
+                      setStorageLocationCode(locs[0].locationCode || locs[0].code || '');
+                    }
+                  }}
+                  options={availableWarehouses.map((w) => ({
+                    value: w.id || w._id,
+                    label: `${w.code} — ${w.name}`
+                  }))}
+                />
+
+                {filteredLocations.length > 0 ? (
+                  <AppSelect
+                    label="Authoritative Storage Bay / Bin"
+                    required
+                    disabled={!canRecordStorage}
+                    value={storageLocationCode}
+                    onChange={(e) => setStorageLocationCode(e.target.value)}
+                    options={filteredLocations.map((l) => ({
+                      value: l.locationCode || l.code,
+                      label: `${l.locationCode || l.code} — ${l.zone} (${l.bay || 'General'})`
+                    }))}
+                  />
+                ) : (
+                  <AppInput
+                    label="Storage Location Code (Bay / Bin)"
+                    required
+                    disabled={!canRecordStorage}
+                    value={storageLocationCode}
+                    onChange={(e) => setStorageLocationCode(e.target.value.toUpperCase())}
+                    placeholder="e.g. BAY-01-A"
+                  />
+                )}
+              </div>
+
+              {/* 4. Storage Quantity & Confirmation */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', alignItems: 'center' }}>
+                <AppInput
+                  label={`Putaway Quantity (${item?.uom || 'units'})`}
+                  type="number"
+                  required
+                  disabled={!canRecordStorage}
+                  min={0.0001}
+                  max={remainingQty}
+                  step="any"
+                  value={storagePutawayQty}
+                  onChange={(e) => setStoragePutawayQty(Number(e.target.value))}
+                />
+
+                <div style={{ paddingTop: '8px' }}>
+                  {isFullPutaway ? (
+                    <div style={{ padding: '8px 12px', borderRadius: '6px', backgroundColor: 'rgba(16, 185, 129, 0.1)', color: '#059669', fontSize: '12px', fontWeight: 600 }}>
+                      ✓ Complete Putaway: Status will become <strong>STORED</strong> (ready for GRN)
+                    </div>
+                  ) : (
+                    <div style={{ padding: '8px 12px', borderRadius: '6px', backgroundColor: 'rgba(245, 158, 11, 0.1)', color: '#d97706', fontSize: '12px', fontWeight: 600 }}>
+                      ⚠️ Partial Putaway: Status will become <strong>PARTIALLY_STORED</strong> (Remaining: {(remainingQty - storagePutawayQty).toLocaleString()} {item?.uom})
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <AppInput
+                label="Putaway Movement Notes & Inspection Remarks"
+                disabled={!canRecordStorage}
+                value={storagePutawayNotes}
+                onChange={(e) => setStoragePutawayNotes(e.target.value)}
+                placeholder="e.g. Stored in Bay 1 Rack A2, bundle tags verified, fork lift operator sign-off."
+              />
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '12px' }}>
+                <AppButton variant="secondary" onClick={() => setIsAssignStorageModalOpen(false)}>
+                  Cancel
+                </AppButton>
+                <AppButton
+                  variant="primary"
+                  type="submit"
+                  disabled={!canRecordStorage || storagePutawayQty <= 0 || storagePutawayQty > remainingQty}
+                  isLoading={isSubmitting}
+                  leftIcon={<Warehouse size={16} />}
+                >
+                  Confirm Authoritative Putaway
+                </AppButton>
+              </div>
+            </form>
+          );
+        })()}
       </AppDialog>
 
       {/* --- MODAL 4: CREATE GOODS RECEIPT NOTE (GRN) --- */}
