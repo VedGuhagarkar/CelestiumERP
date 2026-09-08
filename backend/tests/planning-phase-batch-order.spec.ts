@@ -187,11 +187,37 @@ describe('Planning Phase — Authoritative PO -> GRN -> BO Workflow', () => {
       expect(res.body.data[0].completedGrnCount).toBe(1);
     });
 
-    it('should strictly return only completed GRNs belonging to the selected PO', async () => {
+    it('should return empty list when PO has no completed GRNs', async () => {
       const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+      jest.spyOn(purchaseOrderRepository, 'findById').mockResolvedValue(mockPo as any);
+      jest.spyOn(grnRepository, 'findGrnsByPoId').mockResolvedValue([]);
+
+      const res = await request(app)
+        .get(`/api/v1/planning/pos/${mockPo.id}/grns`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data).toEqual([]);
+    });
+
+    it('should strictly return only completed GRNs belonging to the selected PO when PO has multiple GRNs', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+      const secondGrn = {
+        ...mockGrn,
+        id: 'grn_502',
+        _id: 'grn_502',
+        grnNumber: 'GRN-202609-0502',
+        supplierChallanNumber: 'CH-9989',
+        status: 'AVAILABLE_FOR_PLANNING',
+        units: []
+      };
+
       jest.spyOn(purchaseOrderRepository, 'findById').mockResolvedValue(mockPo as any);
       jest.spyOn(grnRepository, 'findGrnsByPoId').mockResolvedValue([
         mockGrn,
+        secondGrn,
         { ...mockGrn, id: 'grn_draft', grnNumber: 'GRN-DRAFT-01', status: 'DRAFT', items: [] }
       ] as any);
 
@@ -202,15 +228,61 @@ describe('Planning Phase — Authoritative PO -> GRN -> BO Workflow', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      // Only COMPLETED/AVAILABLE_FOR_PLANNING GRN with items is returned
-      expect(res.body.data).toHaveLength(1);
-      expect(res.body.data[0].grnNumber).toBe('GRN-202609-0501');
-      expect(res.body.data[0].poNumber).toBe('PO-2026-00101');
+      // Only the 2 completed GRNs belonging to this PO are returned (DRAFT is excluded)
+      expect(res.body.data).toHaveLength(2);
+      expect(res.body.data.map((g: any) => g.grnNumber)).toEqual(['GRN-202609-0501', 'GRN-202609-0502']);
+      expect(res.body.data.every((g: any) => g.poId === mockPo.id)).toBe(true);
+      expect(res.body.data.every((g: any) => g.readOnly === true)).toBe(true);
     });
 
-    it('should return eligible received parts with available units for a selected completed GRN', async () => {
+    it('should return eligible received parts with multiple materials and serialized units for a GRN', async () => {
       const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
-      jest.spyOn(grnRepository, 'findGrnById').mockResolvedValue(mockGrn as any);
+      const multiPartGrn = {
+        ...mockGrn,
+        items: [
+          mockGrn.items[0],
+          {
+            itemId: 'item_in718',
+            itemCode: 'MAT-IN-718',
+            itemName: 'Inconel 718 Bar',
+            materialGrade: 'Inconel 718',
+            receivedQuantity: 50,
+            acceptedQuantity: 50,
+            uom: 'KG',
+            heatNumber: 'HEAT-IN-4455',
+            recipeId: 'rec_in_01',
+            recipeCode: 'REC-IN718-AGE'
+          }
+        ],
+        units: [
+          mockGrn.units[0],
+          mockGrn.units[1],
+          {
+            unitIdentifier: 'UNIT-IN-001',
+            status: 'AVAILABLE_FOR_PLANNING',
+            itemId: 'item_in718',
+            heatNumber: 'HEAT-IN-4455',
+            quantity: 50,
+            uom: 'KG'
+          }
+        ]
+      };
+
+      jest.spyOn(grnRepository, 'findGrnById').mockResolvedValue(multiPartGrn as any);
+      jest.spyOn(grnRepository, 'findUnitsByGrnId').mockResolvedValue(multiPartGrn.units as any);
+      jest.spyOn(recipeRepository, 'findById').mockImplementation(async (_tenant, id) => {
+        if (id === 'rec_ti_01') return mockRecipe as any;
+        return {
+          id: 'rec_in_01',
+          recipeCode: 'REC-IN718-AGE',
+          name: 'Inconel 718 Age Hardening',
+          processFamily: 'VACUUM_HEAT_TREATMENT',
+          status: 'APPROVED',
+          stages: [
+            { sequence: 1, stageName: 'Preheat', targetTemperatureC: 620, soakTimeMinutes: 60 }
+          ]
+        } as any;
+      });
 
       const res = await request(app)
         .get(`/api/v1/planning/grns/${mockGrn.id}/parts`)
@@ -219,10 +291,66 @@ describe('Planning Phase — Authoritative PO -> GRN -> BO Workflow', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      expect(res.body.data).toHaveLength(1);
+      expect(res.body.data).toHaveLength(2);
+
+      // Part 1: Ti Grade 5
       expect(res.body.data[0].itemCode).toBe('MAT-TI-6AL4V');
       expect(res.body.data[0].availableUnitsCount).toBe(2);
-      expect(res.body.data[0].recipeCode).toBe('REC-TI-AGING');
+      expect(res.body.data[0].boundRecipe.recipeCode).toBe('REC-TI-AGING');
+      expect(res.body.data[0].boundRecipe.stages).toHaveLength(1);
+      expect(res.body.data[0].canCreateBatchOrder).toBe(true);
+
+      // Part 2: Inconel 718
+      expect(res.body.data[1].itemCode).toBe('MAT-IN-718');
+      expect(res.body.data[1].availableUnitsCount).toBe(1);
+      expect(res.body.data[1].boundRecipe.recipeCode).toBe('REC-IN718-AGE');
+      expect(res.body.data[1].canCreateBatchOrder).toBe(true);
+    });
+
+    it('should reject parts query if GRN is incomplete (e.g. IN_INSPECTION)', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+      jest.spyOn(grnRepository, 'findGrnById').mockResolvedValue({
+        ...mockGrn,
+        id: 'grn_inspecting',
+        status: 'IN_INSPECTION'
+      } as any);
+
+      const res = await request(app)
+        .get(`/api/v1/planning/grns/grn_inspecting/parts`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`);
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('has not completed the Creation Phase');
+    });
+
+    it('should reject BO creation if GRN has not completed Creation Phase', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      jest.spyOn(purchaseOrderRepository, 'findById').mockResolvedValue(mockPo as any);
+      jest.spyOn(grnRepository, 'findGrnById').mockResolvedValue({
+        ...mockGrn,
+        status: 'IN_INSPECTION'
+      } as any);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          targetQuantity: 100,
+          plannedStartDate: '2026-09-10T08:00:00.000Z',
+          targetCompletionDate: '2026-09-10T16:00:00.000Z'
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('has not completed the Creation Phase');
     });
   });
 

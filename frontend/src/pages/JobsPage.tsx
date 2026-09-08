@@ -9,7 +9,10 @@ import {
   ChevronRight,
   PlayCircle,
   GitMerge,
-  PackageCheck
+  PackageCheck,
+  ShieldCheck,
+  Lock,
+  FileText
 } from 'lucide-react';
 import { PageContainer } from '../layouts/PageContainer.js';
 import { PageHeader } from '../design-system/navigation/PageHeader.js';
@@ -22,10 +25,11 @@ import { AppInput } from '../design-system/forms/AppInput.js';
 import { AppSelect } from '../design-system/forms/AppSelect.js';
 import { AppAlert } from '../design-system/feedback/AppAlert.js';
 import { StatusBadge } from '../design-system/feedback/StatusBadge.js';
+import { usePermission } from '../hooks/usePermission.js';
 import { env } from '../config/env.config.js';
 import { authenticatedFetch } from '../utils/apiAuth.js';
 
-interface ProductionJob {
+export interface ProductionJob {
   _id?: string;
   id?: string;
   jobNumber: string;
@@ -35,7 +39,7 @@ interface ProductionJob {
   poNumber?: string;
   grnId?: string;
   grnNumber?: string;
-  customer: {
+  customer?: {
     customerId?: string;
     customerCode: string;
     customerName: string;
@@ -81,6 +85,7 @@ interface ProductionJob {
       targetTemperatureC: number;
       targetDurationMinutes?: number;
       soakTimeMinutes?: number;
+      soakCriteria?: string;
     }[];
   };
   equipmentAssignment?: {
@@ -103,7 +108,7 @@ interface ProductionJob {
   }[];
 }
 
-interface EligiblePo {
+export interface EligiblePo {
   id: string;
   poNumber: string;
   supplierName: string;
@@ -111,9 +116,10 @@ interface EligiblePo {
   status: string;
   itemCount: number;
   completedGrnCount: number;
+  grns?: any[];
 }
 
-interface EligibleGrn {
+export interface EligibleGrn {
   id: string;
   grnNumber: string;
   poId: string;
@@ -125,10 +131,30 @@ interface EligibleGrn {
   warehouseCode?: string;
   storageLocationCode?: string;
   totalUnits?: number;
+  availableUnitsCount?: number;
+  hasAvailableMaterial?: boolean;
+  isCreationComplete?: boolean;
+  readOnly?: boolean;
   items?: any[];
 }
 
-interface EligiblePart {
+export interface SerializedUnit {
+  unitIdentifier: string;
+  quantity: number;
+  uom: string;
+  status: string;
+  heatNumber?: string;
+}
+
+export interface RecipeStage {
+  sequence: number;
+  stageName: string;
+  targetTemperatureC: number;
+  soakTimeMinutes: number;
+  soakCriteria?: string;
+}
+
+export interface EligiblePart {
   itemId: string;
   itemCode: string;
   itemName: string;
@@ -136,11 +162,24 @@ interface EligiblePart {
   processFamily?: string;
   recipeId?: string;
   recipeCode?: string;
+  recipeName?: string;
+  recipeRevision?: number;
   acceptedQuantity: number;
   availableQuantity: number;
   availableUnitsCount: number;
+  canCreateBatchOrder?: boolean;
   uom: string;
   supplierHeatNumber?: string;
+  readOnly?: boolean;
+  boundRecipe?: {
+    recipeId: string;
+    recipeCode: string;
+    recipeName?: string;
+    processFamily?: string;
+    stages?: RecipeStage[];
+  };
+  recipeDetails?: any;
+  availableUnits?: SerializedUnit[];
 }
 
 const DEFAULT_JOBS: ProductionJob[] = [
@@ -219,6 +258,16 @@ const DEFAULT_JOBS: ProductionJob[] = [
 ];
 
 export const JobsPage: React.FC = () => {
+  // Authorization Gate (Backend also enforces 403)
+  const { hasAnyPermission } = usePermission();
+  const canCreateBatchOrder = hasAnyPermission([
+    'production:batch_order:create',
+    'BATCH_ORDER_CREATE',
+    'production:job:create',
+    'PRODUCTION_JOB_CREATE'
+  ]);
+
+  // Production jobs queue state
   const [jobs, setJobs] = useState<ProductionJob[]>(DEFAULT_JOBS);
   const [selectedJob, setSelectedJob] = useState<ProductionJob | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
@@ -227,19 +276,22 @@ export const JobsPage: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  // Authoritative Planning Phase Wizard State
+  // Authoritative Planning Phase Wizard & Workspace State
   const [isNewJobOpen, setIsNewJobOpen] = useState(false);
   const [planningStep, setPlanningStep] = useState<1 | 2 | 3 | 4>(1);
 
-  // Planning Selection Lineage
+  // Planning Selection Lineage (PO → GRN → Parts)
   const [eligiblePos, setEligiblePos] = useState<EligiblePo[]>([]);
   const [selectedPo, setSelectedPo] = useState<EligiblePo | null>(null);
+  const [poSearch, setPoSearch] = useState<string>('');
 
   const [eligibleGrns, setEligibleGrns] = useState<EligibleGrn[]>([]);
   const [selectedGrn, setSelectedGrn] = useState<EligibleGrn | null>(null);
+  const [isLoadingGrns, setIsLoadingGrns] = useState(false);
 
   const [eligibleParts, setEligibleParts] = useState<EligiblePart[]>([]);
   const [selectedPart, setSelectedPart] = useState<EligiblePart | null>(null);
+  const [isLoadingParts, setIsLoadingParts] = useState(false);
 
   // Batch Order Configuration State
   const [targetQuantity, setTargetQuantity] = useState<number>(100);
@@ -280,7 +332,7 @@ export const JobsPage: React.FC = () => {
         }
       }
     } catch {
-      // Fallback fallback
+      // Fallback
     }
 
     // Default seed eligible POs from completed creation phase
@@ -312,6 +364,7 @@ export const JobsPage: React.FC = () => {
     setSelectedGrn(null);
     setSelectedPart(null);
     setPlanningStep(2);
+    setIsLoadingGrns(true);
 
     try {
       const res = await authenticatedFetch(`${env.API_BASE_URL}/planning/pos/${po.id}/grns`);
@@ -319,17 +372,20 @@ export const JobsPage: React.FC = () => {
         const json = await res.json();
         if (Array.isArray(json.data) && json.data.length > 0) {
           setEligibleGrns(json.data);
+          setIsLoadingGrns(false);
           return;
         }
       }
     } catch {
       // Fallback
+    } finally {
+      setIsLoadingGrns(false);
     }
 
     // Fallback completed GRN belonging strictly to this PO
     setEligibleGrns([
       {
-        id: `grn_${po.poNumber.toLowerCase()}_01`,
+        id: `grn_${po.poNumber.toLowerCase().replace(/[^a-z0-9]/g, '_')}_01`,
         grnNumber: `GRN-202609-${po.poNumber.slice(-4)}`,
         poId: po.id,
         poNumber: po.poNumber,
@@ -339,7 +395,11 @@ export const JobsPage: React.FC = () => {
         supplierChallanNumber: 'DC-8891-X',
         warehouseCode: 'WH-MAIN',
         storageLocationCode: 'BAY-1',
-        totalUnits: 150
+        totalUnits: 150,
+        availableUnitsCount: 150,
+        hasAvailableMaterial: true,
+        isCreationComplete: true,
+        readOnly: true
       }
     ]);
   };
@@ -349,6 +409,7 @@ export const JobsPage: React.FC = () => {
     setSelectedGrn(grn);
     setSelectedPart(null);
     setPlanningStep(3);
+    setIsLoadingParts(true);
 
     try {
       const res = await authenticatedFetch(`${env.API_BASE_URL}/planning/grns/${grn.id}/parts`);
@@ -356,14 +417,17 @@ export const JobsPage: React.FC = () => {
         const json = await res.json();
         if (Array.isArray(json.data) && json.data.length > 0) {
           setEligibleParts(json.data);
+          setIsLoadingParts(false);
           return;
         }
       }
     } catch {
       // Fallback
+    } finally {
+      setIsLoadingParts(false);
     }
 
-    // Fallback parts received on GRN
+    // Fallback parts received on GRN with authoritative recipe details
     setEligibleParts([
       {
         itemId: 'item_ti64',
@@ -373,23 +437,41 @@ export const JobsPage: React.FC = () => {
         processFamily: 'VACUUM_HEAT_TREATMENT',
         recipeId: 'rec_ti_aging',
         recipeCode: 'REC-TI-AGING',
+        recipeName: 'Titanium Solution & Aging Cycle',
         acceptedQuantity: 150,
         availableQuantity: 150,
-        availableUnitsCount: 150,
+        availableUnitsCount: 2,
+        canCreateBatchOrder: true,
         uom: 'KG',
-        supplierHeatNumber: 'HEAT-TI-9912'
+        supplierHeatNumber: 'HEAT-TI-9912',
+        readOnly: true,
+        boundRecipe: {
+          recipeId: 'rec_ti_aging',
+          recipeCode: 'REC-TI-AGING',
+          recipeName: 'Titanium Solution & Aging Cycle',
+          processFamily: 'VACUUM_HEAT_TREATMENT',
+          stages: [
+            { sequence: 1, stageName: 'Preheat Ramp', targetTemperatureC: 650, soakTimeMinutes: 45, soakCriteria: 'SURFACE_TC_REACHED' },
+            { sequence: 2, stageName: 'Solution Treat Soak', targetTemperatureC: 950, soakTimeMinutes: 120, soakCriteria: 'LOAD_THERMOCOUPLE_REACHED' }
+          ]
+        },
+        availableUnits: [
+          { unitIdentifier: 'UNIT-TI-001', quantity: 75, uom: 'KG', status: 'AVAILABLE_FOR_PLANNING', heatNumber: 'HEAT-TI-9912' },
+          { unitIdentifier: 'UNIT-TI-002', quantity: 75, uom: 'KG', status: 'AVAILABLE_FOR_PLANNING', heatNumber: 'HEAT-TI-9912' }
+        ]
       }
     ]);
   };
 
-  // 4. Select Received Part & Configure Batch Order
-  const handleSelectPart = (part: EligiblePart) => {
+  // 4. Select Received Part & Open Batch Order Creation Form
+  const handleInitiateBatchOrderCreation = (part: EligiblePart) => {
     setSelectedPart(part);
     setTargetQuantity(part.availableQuantity || part.acceptedQuantity || 100);
     setPlanningStep(4);
+    setIsNewJobOpen(true);
   };
 
-  // Reset dialog state
+  // Reset modal state for wizard
   const handleOpenNewJobDialog = () => {
     setPlanningStep(1);
     setSelectedPo(null);
@@ -410,7 +492,7 @@ export const JobsPage: React.FC = () => {
       const targetPoId = selectedPo?.id || 'po_aero_101';
       const targetGrnId = selectedGrn?.id || 'grn_aero_501';
       const targetItemId = selectedPart?.itemId || 'item_ti64';
-      const targetRecipeId = selectedPart?.recipeId || 'rec_ti_aging';
+      const targetRecipeId = selectedPart?.recipeId || selectedPart?.boundRecipe?.recipeId || 'rec_ti_aging';
 
       const payload = {
         poId: targetPoId,
@@ -431,7 +513,7 @@ export const JobsPage: React.FC = () => {
       });
 
       if (!res.ok) {
-        // Try fallback route /production-jobs/create-batch-order or /production-jobs
+        // Fallback route /production-jobs
         const fallbackRes = await authenticatedFetch(`${env.API_BASE_URL}/production-jobs`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -450,6 +532,9 @@ export const JobsPage: React.FC = () => {
       });
       setIsNewJobOpen(false);
       fetchJobs();
+      if (selectedGrn) {
+        handleSelectGrn(selectedGrn);
+      }
     } catch (err: any) {
       setFeedback({ type: 'error', message: err.message || 'Failed to create Batch Order' });
     } finally {
@@ -501,7 +586,17 @@ export const JobsPage: React.FC = () => {
 
   useEffect(() => {
     fetchJobs();
+    fetchEligiblePos();
   }, []);
+
+  const filteredPos = eligiblePos.filter((po) => {
+    const q = poSearch.toLowerCase();
+    return (
+      po.poNumber.toLowerCase().includes(q) ||
+      po.supplierName.toLowerCase().includes(q) ||
+      po.status.toLowerCase().includes(q)
+    );
+  });
 
   const filteredJobs = jobs.filter((job) => {
     const matchesStatus = statusFilter === 'ALL' || job.status === statusFilter;
@@ -535,8 +630,8 @@ export const JobsPage: React.FC = () => {
         subtitle="Authoritative PO → GRN → BO manufacturing planning, recipe snapshotting, and process execution"
         actions={
           <div style={{ display: 'flex', gap: '10px' }}>
-            <AppButton variant="secondary" onClick={fetchJobs} leftIcon={<RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />}>
-              Refresh
+            <AppButton variant="secondary" onClick={() => { fetchJobs(); fetchEligiblePos(); }} leftIcon={<RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />}>
+              Refresh Records
             </AppButton>
             <AppButton
               variant="primary"
@@ -558,6 +653,350 @@ export const JobsPage: React.FC = () => {
         </div>
       )}
 
+      {!canCreateBatchOrder && (
+        <div style={{ marginBottom: '20px' }}>
+          <AppAlert variant="warning" title="Authorization Notice: Read-Only Planning Mode">
+            You are logged in with read-only planning permissions. Creating new Batch Orders requires the <strong>BATCH_ORDER_CREATE</strong> permission or a Plant Manager role.
+          </AppAlert>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* SECTION 1: DEDICATED PO & GRN PLANNING WORKSPACE (PO → GRN → PART → BO)   */}
+      {/* ========================================================================= */}
+      <AppCard style={{ marginBottom: '28px', padding: '20px', border: '1px solid rgba(56, 189, 248, 0.25)', background: 'linear-gradient(180deg, rgba(15, 23, 42, 0.6) 0%, rgba(30, 41, 59, 0.4) 100%)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px', borderBottom: '1px solid var(--color-border-subtle)', paddingBottom: '14px' }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '28px', height: '28px', borderRadius: '6px', background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8' }}>
+                <GitMerge size={18} />
+              </span>
+              <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 800, color: '#ffffff', letterSpacing: '-0.01em' }}>
+                PO & GRN Planning Workspace
+              </h2>
+            </div>
+            <p style={{ margin: '4px 0 0 36px', fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+              Identify completed Creation Phase Purchase Orders and verified Goods Receipt Notes to allocate material and create Batch Orders.
+            </p>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '4px 10px', borderRadius: 'var(--radius-sm)', background: 'rgba(52, 211, 153, 0.12)', color: '#34d399', fontSize: '11px', fontWeight: 700, border: '1px solid rgba(52, 211, 153, 0.25)' }}>
+              <ShieldCheck size={13} />
+              Read-Only Creation Records
+            </span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '4px 10px', borderRadius: 'var(--radius-sm)', background: 'rgba(56, 189, 248, 0.12)', color: '#38bdf8', fontSize: '11px', fontWeight: 700, border: '1px solid rgba(56, 189, 248, 0.25)' }}>
+              <Lock size={13} />
+              Strict PO → GRN → BO Hierarchy
+            </span>
+          </div>
+        </div>
+
+        {/* 3-Column Interactive Master-Detail Planning Grid */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '16px', alignItems: 'start' }}>
+          
+          {/* PANEL 1: Eligible Purchase Orders */}
+          <div style={{ background: 'rgba(255, 255, 255, 0.02)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border-subtle)', padding: '14px', display: 'flex', flexDirection: 'column', height: '540px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <div>
+                <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--color-primary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>STEP 1: CREATION PHASE</span>
+                <div style={{ fontSize: '14px', fontWeight: 700, color: '#ffffff' }}>Eligible Purchase Orders</div>
+              </div>
+              <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '10px', background: 'rgba(255, 255, 255, 0.06)', color: 'var(--color-text-secondary)', fontWeight: 600 }}>
+                {filteredPos.length} Available
+              </span>
+            </div>
+
+            <div style={{ position: 'relative', marginBottom: '10px' }}>
+              <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)' }} />
+              <input
+                type="text"
+                placeholder="Filter POs by number or supplier..."
+                value={poSearch}
+                onChange={(e) => setPoSearch(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '7px 10px 7px 32px',
+                  borderRadius: 'var(--radius-sm)',
+                  background: 'rgba(0, 0, 0, 0.25)',
+                  border: '1px solid var(--color-border-subtle)',
+                  color: '#ffffff',
+                  fontSize: '12px',
+                  outline: 'none'
+                }}
+              />
+            </div>
+
+            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {filteredPos.length === 0 ? (
+                <div style={{ padding: '30px 16px', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '12px' }}>
+                  No Purchase Orders with completed Creation Phase records match criteria.
+                </div>
+              ) : (
+                filteredPos.map((po) => {
+                  const isSelected = selectedPo?.id === po.id;
+                  return (
+                    <div
+                      key={po.id}
+                      onClick={() => handleSelectPo(po)}
+                      style={{
+                        padding: '12px',
+                        borderRadius: 'var(--radius-md)',
+                        cursor: 'pointer',
+                        background: isSelected ? 'rgba(56, 189, 248, 0.12)' : 'rgba(255, 255, 255, 0.03)',
+                        border: isSelected ? '1px solid #38bdf8' : '1px solid var(--color-border-subtle)',
+                        transition: 'all 0.15s ease',
+                        boxShadow: isSelected ? '0 0 12px rgba(56, 189, 248, 0.15)' : 'none'
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontWeight: 700, color: isSelected ? '#38bdf8' : '#ffffff', fontSize: '13px' }}>
+                          {po.poNumber}
+                        </span>
+                        <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 6px', borderRadius: '4px', background: 'rgba(52, 211, 153, 0.15)', color: '#34d399' }}>
+                          {po.status}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
+                        {po.supplierName}
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px', fontSize: '11px', color: 'var(--color-text-muted)' }}>
+                        <span>Ordered: {new Date(po.orderDate).toLocaleDateString()}</span>
+                        <span style={{ fontWeight: 600, color: '#93c5fd' }}>
+                          {po.completedGrnCount} Completed GRN{po.completedGrnCount !== 1 ? 's' : ''}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* PANEL 2: Completed GRNs strictly belonging to Selected PO */}
+          <div style={{ background: 'rgba(255, 255, 255, 0.02)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border-subtle)', padding: '14px', display: 'flex', flexDirection: 'column', height: '540px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <div>
+                <span style={{ fontSize: '11px', fontWeight: 700, color: '#34d399', textTransform: 'uppercase', letterSpacing: '0.05em' }}>STEP 2: VERIFIED RECEIPT</span>
+                <div style={{ fontSize: '14px', fontWeight: 700, color: '#ffffff' }}>Completed Goods Receipts (GRN)</div>
+              </div>
+              {selectedPo && (
+                <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '10px', background: 'rgba(56, 189, 248, 0.12)', color: '#38bdf8', fontWeight: 600 }}>
+                  For {selectedPo.poNumber}
+                </span>
+              )}
+            </div>
+
+            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {!selectedPo ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', padding: '24px', textAlign: 'center', color: 'var(--color-text-muted)', gap: '10px' }}>
+                  <FileText size={32} style={{ opacity: 0.4 }} />
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text-secondary)' }}>No Purchase Order Selected</div>
+                  <div style={{ fontSize: '11px', maxWidth: '240px' }}>Select an authoritative PO on the left to view verified GRNs eligible for batch planning.</div>
+                </div>
+              ) : isLoadingGrns ? (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--color-text-secondary)', fontSize: '12px', gap: '8px' }}>
+                  <RefreshCw size={16} className="animate-spin" /> Fetching completed GRNs...
+                </div>
+              ) : eligibleGrns.length === 0 ? (
+                <div style={{ padding: '30px 16px', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '12px' }}>
+                  No completed GRNs found belonging to {selectedPo.poNumber}.
+                </div>
+              ) : (
+                eligibleGrns.map((grn) => {
+                  const isSelected = selectedGrn?.id === grn.id;
+                  return (
+                    <div
+                      key={grn.id}
+                      onClick={() => handleSelectGrn(grn)}
+                      style={{
+                        padding: '12px',
+                        borderRadius: 'var(--radius-md)',
+                        cursor: 'pointer',
+                        background: isSelected ? 'rgba(52, 211, 153, 0.12)' : 'rgba(255, 255, 255, 0.03)',
+                        border: isSelected ? '1px solid #34d399' : '1px solid var(--color-border-subtle)',
+                        transition: 'all 0.15s ease',
+                        boxShadow: isSelected ? '0 0 12px rgba(52, 211, 153, 0.15)' : 'none'
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontWeight: 700, color: isSelected ? '#34d399' : '#ffffff', fontSize: '13px' }}>
+                          {grn.grnNumber}
+                        </span>
+                        <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 6px', borderRadius: '4px', background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8' }}>
+                          {grn.status}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginTop: '4px' }}>
+                        Challan: <strong style={{ color: '#ffffff' }}>{grn.supplierChallanNumber || 'DC-CERT'}</strong> | Bay: <strong style={{ color: '#ffffff' }}>{grn.storageLocationCode || 'WH-MAIN'}</strong>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px', fontSize: '11px' }}>
+                        <span style={{ color: 'var(--color-text-muted)' }}>Date: {new Date(grn.grnDate).toLocaleDateString()}</span>
+                        <span style={{ fontWeight: 700, color: '#34d399' }}>
+                          {grn.availableUnitsCount ?? grn.totalUnits ?? 0} Available Units
+                        </span>
+                      </div>
+                      <div style={{ marginTop: '6px', paddingTop: '6px', borderTop: '1px solid rgba(255, 255, 255, 0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '10px', color: 'var(--color-text-muted)' }}>
+                        <span>Parent PO: {selectedPo.poNumber}</span>
+                        <span style={{ color: '#6ee7b7' }}>Read-Only Record ✓</span>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* PANEL 3: Received Material / Part Selection & Authoritative Recipe Visibility */}
+          <div style={{ background: 'rgba(255, 255, 255, 0.02)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border-subtle)', padding: '14px', display: 'flex', flexDirection: 'column', height: '540px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <div>
+                <span style={{ fontSize: '11px', fontWeight: 700, color: '#f59e0b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>STEP 3: RECIPE & BATCH ORDER</span>
+                <div style={{ fontSize: '14px', fontWeight: 700, color: '#ffffff' }}>Received Parts & Bound Recipe</div>
+              </div>
+              {selectedGrn && (
+                <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '10px', background: 'rgba(245, 158, 11, 0.12)', color: '#f59e0b', fontWeight: 600 }}>
+                  On {selectedGrn.grnNumber}
+                </span>
+              )}
+            </div>
+
+            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {!selectedGrn ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', padding: '24px', textAlign: 'center', color: 'var(--color-text-muted)', gap: '10px' }}>
+                  <Layers size={32} style={{ opacity: 0.4 }} />
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text-secondary)' }}>No Goods Receipt Note Selected</div>
+                  <div style={{ fontSize: '11px', maxWidth: '240px' }}>Select a verified GRN in the middle panel to view its received materials, serialized units, and authoritative recipes.</div>
+                </div>
+              ) : isLoadingParts ? (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--color-text-secondary)', fontSize: '12px', gap: '8px' }}>
+                  <RefreshCw size={16} className="animate-spin" /> Inspecting received material and bound recipes...
+                </div>
+              ) : eligibleParts.length === 0 ? (
+                <div style={{ padding: '30px 16px', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '12px' }}>
+                  No unallocated material parts found on {selectedGrn.grnNumber}.
+                </div>
+              ) : (
+                eligibleParts.map((part) => {
+                  const hasAvailable = (part.availableQuantity ?? 0) > 0;
+                  const recipeObj = part.boundRecipe || part.recipeDetails;
+
+                  return (
+                    <div
+                      key={part.itemId}
+                      style={{
+                        padding: '14px',
+                        borderRadius: 'var(--radius-md)',
+                        background: 'rgba(255, 255, 255, 0.03)',
+                        border: '1px solid var(--color-border-subtle)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '10px'
+                      }}
+                    >
+                      {/* Part Identity */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div>
+                          <div style={{ fontSize: '14px', fontWeight: 700, color: '#ffffff' }}>Part: {part.itemName}</div>
+                          <div style={{ fontSize: '11px', color: '#38bdf8', marginTop: '2px' }}>
+                            Code: {part.itemCode} | Grade: <strong style={{ color: '#ffffff' }}>{part.materialGrade}</strong>
+                          </div>
+                          <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>
+                            Heat Cert: {part.supplierHeatNumber || 'HEAT-VERIFIED'}
+                          </div>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <div style={{ fontSize: '14px', fontWeight: 800, color: hasAvailable ? '#34d399' : '#94a3b8' }}>
+                            {part.availableQuantity} {part.uom}
+                          </div>
+                          <div style={{ fontSize: '10px', color: 'var(--color-text-muted)' }}>
+                            Accepted: {part.acceptedQuantity} {part.uom}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Serialized Unallocated Units */}
+                      {part.availableUnits && part.availableUnits.length > 0 && (
+                        <div style={{ background: 'rgba(0, 0, 0, 0.25)', padding: '8px', borderRadius: '6px' }}>
+                          <div style={{ fontSize: '10px', fontWeight: 700, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', marginBottom: '4px' }}>
+                            Unallocated Units ({part.availableUnits.length})
+                          </div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                            {part.availableUnits.slice(0, 4).map((u) => (
+                              <span key={u.unitIdentifier} style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', background: 'rgba(255, 255, 255, 0.05)', color: '#e2e8f0', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
+                                {u.unitIdentifier} ({u.quantity} {u.uom})
+                              </span>
+                            ))}
+                            {part.availableUnits.length > 4 && (
+                              <span style={{ fontSize: '10px', padding: '2px 6px', color: 'var(--color-text-muted)' }}>
+                                +{part.availableUnits.length - 4} more
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Authoritative Recipe Visibility Box */}
+                      <div style={{ background: 'rgba(245, 158, 11, 0.06)', border: '1px solid rgba(245, 158, 11, 0.25)', borderRadius: '6px', padding: '10px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                          <span style={{ fontSize: '11px', fontWeight: 700, color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <Flame size={12} /> Bound Recipe: {part.recipeCode || recipeObj?.recipeCode || 'Standard Metallurgical Recipe'}
+                          </span>
+                          <span style={{ fontSize: '9px', fontWeight: 700, padding: '2px 5px', borderRadius: '3px', background: 'rgba(245, 158, 11, 0.2)', color: '#fbbf24' }}>
+                            FROZEN SNAPSHOT
+                          </span>
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
+                          Process: {part.processFamily || recipeObj?.processFamily || 'VACUUM_HEAT_TREATMENT'}
+                        </div>
+
+                        {recipeObj?.stages && recipeObj.stages.length > 0 && (
+                          <div style={{ marginTop: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            {recipeObj.stages.map((stg: RecipeStage, idx: number) => (
+                              <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#e2e8f0', background: 'rgba(0, 0, 0, 0.2)', padding: '3px 6px', borderRadius: '4px' }}>
+                                <span>{stg.sequence || idx + 1}. {stg.stageName}</span>
+                                <span style={{ fontWeight: 700, color: '#f59e0b' }}>{stg.targetTemperatureC}°C ({stg.soakTimeMinutes} min)</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <div style={{ marginTop: '6px', fontSize: '10px', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
+                          * Recipe is bound to the material grade. Arbitrary substitution is locked.
+                        </div>
+                      </div>
+
+                      {/* Action to create BO from valid material/part */}
+                      <div>
+                        {hasAvailable ? (
+                          <AppButton
+                            variant="primary"
+                            size="sm"
+                            style={{ width: '100%' }}
+                            leftIcon={<GitMerge size={14} />}
+                            disabled={!canCreateBatchOrder}
+                            onClick={() => handleInitiateBatchOrderCreation(part)}
+                          >
+                            {canCreateBatchOrder ? 'Create Batch Order (BO)' : 'Batch Order Permission Required'}
+                          </AppButton>
+                        ) : (
+                          <div style={{ padding: '8px', textAlign: 'center', borderRadius: 'var(--radius-sm)', background: 'rgba(255, 255, 255, 0.04)', color: 'var(--color-text-muted)', fontSize: '11px', fontWeight: 600 }}>
+                            Cannot Create BO: All received material has already been allocated to batch orders.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+        </div>
+      </AppCard>
+
+      {/* ========================================================================= */}
+      {/* SECTION 2: PRODUCTION BATCH ORDERS & PROCESS QUEUE                        */}
+      {/* ========================================================================= */}
       {/* Summary KPI Ribbon */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '24px' }}>
         <AppCard>
@@ -675,7 +1114,7 @@ export const JobsPage: React.FC = () => {
               {filteredJobs.length === 0 ? (
                 <tr>
                   <td colSpan={7} style={{ padding: '40px', textAlign: 'center', color: 'var(--color-text-secondary)' }}>
-                    No batch orders found matching active criteria. Click "Plan New Batch Order" to initiate planning from completed GRNs.
+                    No batch orders found matching active criteria. Use the PO & GRN Planning Workspace above to create a Batch Order.
                   </td>
                 </tr>
               ) : (
@@ -895,7 +1334,9 @@ export const JobsPage: React.FC = () => {
         )}
       </AppDrawer>
 
-      {/* Authoritative 4-Step Planning Phase Wizard Modal */}
+      {/* ========================================================================= */}
+      {/* AUTHORITATIVE PLANNING PHASE WIZARD / BATCH ORDER CREATION MODAL          */}
+      {/* ========================================================================= */}
       <AppDialog
         isOpen={isNewJobOpen}
         onClose={() => setIsNewJobOpen(false)}
@@ -917,6 +1358,7 @@ export const JobsPage: React.FC = () => {
                 type="submit"
                 form="create-job-form"
                 isLoading={isSubmitting}
+                disabled={!canCreateBatchOrder}
                 leftIcon={<GitMerge size={16} />}
               >
                 Schedule Production Job (Create Batch Order)
@@ -961,7 +1403,7 @@ export const JobsPage: React.FC = () => {
                   eligiblePos.map((po) => (
                     <div
                       key={po.id}
-                      onClick={() => handleSelectPo(po)}
+                      onClick={() => { handleSelectPo(po); setPlanningStep(2); }}
                       style={{
                         padding: '12px 16px',
                         borderRadius: 'var(--radius-md)',
@@ -1006,7 +1448,7 @@ export const JobsPage: React.FC = () => {
                   eligibleGrns.map((grn) => (
                     <div
                       key={grn.id}
-                      onClick={() => handleSelectGrn(grn)}
+                      onClick={() => { handleSelectGrn(grn); setPlanningStep(3); }}
                       style={{
                         padding: '12px 16px',
                         borderRadius: 'var(--radius-md)',
@@ -1053,7 +1495,7 @@ export const JobsPage: React.FC = () => {
                   eligibleParts.map((part) => (
                     <div
                       key={part.itemId}
-                      onClick={() => handleSelectPart(part)}
+                      onClick={() => { setSelectedPart(part); setTargetQuantity(part.availableQuantity || part.acceptedQuantity || 100); setPlanningStep(4); }}
                       style={{
                         padding: '12px 16px',
                         borderRadius: 'var(--radius-md)',
@@ -1069,7 +1511,7 @@ export const JobsPage: React.FC = () => {
                       <div>
                         <div style={{ fontWeight: 700, color: '#ffffff', fontSize: '14px' }}>{part.itemName}</div>
                         <div style={{ fontSize: '12px', color: '#38bdf8', marginTop: '2px' }}>
-                          Grade: {part.materialGrade} | Recipe: {part.recipeCode || 'Standard Metallurgical Recipe'}
+                          Grade: {part.materialGrade} | Recipe: {part.recipeCode || part.boundRecipe?.recipeCode || 'Standard Metallurgical Recipe'}
                         </div>
                         <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>
                           Heat Number: {part.supplierHeatNumber || 'CERT-HEAT-LOT'}
@@ -1110,7 +1552,7 @@ export const JobsPage: React.FC = () => {
                   <span style={{ fontWeight: 700, color: '#fca5a5' }}>New Batch Order (BO)</span>
                 </div>
                 <div style={{ color: 'var(--color-text-secondary)', marginTop: '4px' }}>
-                  Bound Recipe: <strong style={{ color: '#ffffff' }}>{selectedPart.recipeCode || 'REC-TI-AGING'}</strong> (Frozen process structure will be snapshotted).
+                  Bound Recipe: <strong style={{ color: '#ffffff' }}>{selectedPart.recipeCode || selectedPart.boundRecipe?.recipeCode || 'REC-TI-AGING'}</strong> (Frozen process structure will be snapshotted).
                 </div>
               </div>
 

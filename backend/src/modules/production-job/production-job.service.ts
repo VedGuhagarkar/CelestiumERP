@@ -473,24 +473,43 @@ export class ProductionJobService {
         (g.items?.length ?? 0) > 0
     );
 
-    return eligibleGrns.map((g) => ({
-      id: g.id,
-      grnNumber: g.grnNumber,
-      poId: po.id,
-      poNumber: po.poNumber,
-      status: g.status,
-      grnDate: g.grnDate,
-      supplierName: g.supplierName,
-      supplierChallanNumber: g.supplierChallanNumber,
-      warehouseCode: g.warehouseCode,
-      storageLocationCode: g.storageLocationCode,
-      items: g.items,
-      totalUnits: g.totalUnitsGenerated || g.units?.length || 0
-    }));
+    const enrichedGrns = await Promise.all(
+      eligibleGrns.map(async (g) => {
+        let availableUnitsCount = 0;
+        try {
+          const units = await grnRepository.findUnitsByGrnId(tenantId, g.id);
+          availableUnitsCount = (units || []).filter((u) => u.status === 'AVAILABLE_FOR_PLANNING').length;
+        } catch {
+          availableUnitsCount = g.totalUnitsGenerated || (g.units?.length ?? 0);
+        }
+
+        return {
+          id: g.id,
+          grnNumber: g.grnNumber,
+          poId: po.id,
+          poNumber: po.poNumber,
+          status: g.status,
+          grnDate: g.grnDate,
+          supplierName: g.supplierName,
+          supplierChallanNumber: g.supplierChallanNumber,
+          warehouseCode: g.warehouseCode,
+          storageLocationCode: g.storageLocationCode,
+          items: g.items,
+          totalUnits: g.totalUnitsGenerated || g.units?.length || 0,
+          availableUnitsCount,
+          hasAvailableMaterial: availableUnitsCount > 0,
+          isCreationComplete: true,
+          readOnly: true
+        };
+      })
+    );
+
+    return enrichedGrns;
   }
 
   /**
    * 5. Planning Query: Get parts available for planning on a specific GRN
+   * Enriches parts with unallocated serialized units and authoritative bound recipe
    */
   public async getEligiblePartsForGRN(tenantId: string, grnId: string): Promise<any[]> {
     const grn = await grnRepository.findGrnById(tenantId, grnId);
@@ -508,32 +527,76 @@ export class ProductionJobService {
     const units = await grnRepository.findUnitsByGrnId(tenantId, grn.id);
     const existingJobs = await this.repo.findByGrnId(tenantId, grn.id);
 
-    return (grn.items || []).map((item) => {
-      const itemUnits = units.filter(
-        (u) => (u.itemId === item.itemId || u.itemCode === item.itemCode) && u.status === 'AVAILABLE_FOR_PLANNING'
-      );
-      const allocatedQty = existingJobs
-        .filter((j) => j.item.itemId === item.itemId && j.status !== 'CANCELLED')
-        .reduce((sum, j) => sum + (j.quantity?.targetQuantity || 0), 0);
+    const parts = await Promise.all(
+      (grn.items || []).map(async (item) => {
+        const itemUnits = (units || []).filter(
+          (u) => (u.itemId === item.itemId || u.itemCode === item.itemCode) && u.status === 'AVAILABLE_FOR_PLANNING'
+        );
+        const allocatedQty = (existingJobs || [])
+          .filter((j) => j.item.itemId === item.itemId && j.status !== 'CANCELLED')
+          .reduce((sum, j) => sum + (j.quantity?.targetQuantity || 0), 0);
 
-      const availableQuantity = Math.max(0, item.acceptedQuantity - allocatedQty);
+        const availableQuantity = Math.max(0, item.acceptedQuantity - allocatedQty);
 
-      return {
-        itemId: item.itemId,
-        itemCode: item.itemCode,
-        itemName: item.itemName,
-        materialGrade: item.materialGrade,
-        processFamily: item.processFamily,
-        recipeId: item.recipeId,
-        recipeCode: item.recipeCode,
-        recipeRevision: item.recipeRevision,
-        acceptedQuantity: item.acceptedQuantity,
-        availableQuantity,
-        availableUnitsCount: itemUnits.length,
-        uom: item.uom,
-        supplierHeatNumber: item.supplierHeatNumber
-      };
-    });
+        // Fetch authoritative bound recipe details
+        let recipeDetails: any = null;
+        if (item.recipeId) {
+          try {
+            const recipeDoc = await recipeRepository.findById(tenantId, item.recipeId);
+            if (recipeDoc && !recipeDoc.isDeleted) {
+              recipeDetails = {
+                recipeId: recipeDoc.id,
+                recipeCode: recipeDoc.recipeCode,
+                recipeName: recipeDoc.name,
+                processFamily: recipeDoc.processFamily,
+                applicableMaterialGrades: recipeDoc.applicableMaterialGrades,
+                stages: (recipeDoc.stages || []).map((stg: any) => ({
+                  sequence: stg.sequence || stg.stageSequence || 1,
+                  stageName: stg.stageName,
+                  targetTemperatureC: stg.targetTemperatureC,
+                  soakTimeMinutes: stg.soakTimeMinutes || stg.targetDurationMinutes || 60,
+                  soakCriteria: stg.soakCriteria || 'LOAD_THERMOCOUPLE_REACHED'
+                }))
+              };
+            }
+          } catch {
+            // Recipe fetch fallback handled below
+          }
+        }
+
+        const serializedUnits = itemUnits.map((u) => ({
+          unitIdentifier: u.unitIdentifier,
+          quantity: u.quantity,
+          uom: u.uom,
+          status: u.status,
+          heatNumber: u.supplierHeatNumber || (u as any).heatNumber || item.supplierHeatNumber
+        }));
+
+        return {
+          itemId: item.itemId,
+          itemCode: item.itemCode,
+          itemName: item.itemName,
+          materialGrade: item.materialGrade,
+          processFamily: item.processFamily || recipeDetails?.processFamily,
+          recipeId: item.recipeId,
+          recipeCode: item.recipeCode,
+          recipeName: recipeDetails?.recipeName || item.recipeCode,
+          recipeRevision: item.recipeRevision,
+          recipeDetails,
+          boundRecipe: recipeDetails,
+          acceptedQuantity: item.acceptedQuantity,
+          availableQuantity,
+          availableUnitsCount: itemUnits.length,
+          availableUnits: serializedUnits,
+          canCreateBatchOrder: availableQuantity > 0 && itemUnits.length > 0,
+          uom: item.uom,
+          supplierHeatNumber: item.supplierHeatNumber,
+          readOnly: true
+        };
+      })
+    );
+
+    return parts;
   }
 
   public async updateJob(

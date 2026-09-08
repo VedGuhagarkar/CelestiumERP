@@ -297,6 +297,138 @@ describe('End-to-End Manufacturing ERP Interaction Suite', () => {
         expect(screen.getByText(/cycle stage successfully advanced/i)).toBeDefined();
       });
     });
+
+    it('interacts with the dedicated PO & GRN Planning Workspace on-page', async () => {
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/planning/eligible-pos')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              success: true,
+              data: [
+                {
+                  id: 'po_test_101',
+                  poNumber: 'PO-2026-00101',
+                  supplierName: 'Titanium Alloys Global Ltd',
+                  orderDate: '2026-09-01',
+                  status: 'RECEIVED',
+                  itemCount: 1,
+                  completedGrnCount: 1
+                }
+              ]
+            })
+          });
+        }
+        if (url.includes('/planning/pos/')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              success: true,
+              data: [
+                {
+                  id: 'grn_test_501',
+                  grnNumber: 'GRN-202609-0501',
+                  poId: 'po_test_101',
+                  poNumber: 'PO-2026-00101',
+                  status: 'AVAILABLE_FOR_PLANNING',
+                  supplierName: 'Titanium Alloys Global Ltd',
+                  supplierChallanNumber: 'DC-8891-X',
+                  warehouseCode: 'WH-MAIN',
+                  storageLocationCode: 'BAY-1',
+                  totalUnits: 150,
+                  availableUnitsCount: 150
+                }
+              ]
+            })
+          });
+        }
+        if (url.includes('/planning/grns/')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              success: true,
+              data: [
+                {
+                  itemId: 'item_ti64',
+                  itemCode: 'MAT-TI-6AL4V',
+                  itemName: 'Titanium Grade 5 Round Bar',
+                  materialGrade: 'Ti-6Al-4V',
+                  recipeId: 'rec_ti_aging',
+                  recipeCode: 'REC-TI-AGING',
+                  recipeName: 'Titanium Solution & Aging Cycle',
+                  processFamily: 'VACUUM_HEAT_TREATMENT',
+                  acceptedQuantity: 150,
+                  availableQuantity: 150,
+                  availableUnitsCount: 2,
+                  uom: 'KG',
+                  supplierHeatNumber: 'HEAT-TI-9912',
+                  boundRecipe: {
+                    recipeId: 'rec_ti_aging',
+                    recipeCode: 'REC-TI-AGING',
+                    recipeName: 'Titanium Solution & Aging Cycle',
+                    stages: [
+                      { sequence: 1, stageName: 'Preheat Ramp', targetTemperatureC: 650, soakTimeMinutes: 45 },
+                      { sequence: 2, stageName: 'Solution Treat Soak', targetTemperatureC: 950, soakTimeMinutes: 120 }
+                    ]
+                  },
+                  availableUnits: [
+                    { unitIdentifier: 'UNIT-TI-001', quantity: 75, uom: 'KG', status: 'AVAILABLE_FOR_PLANNING' },
+                    { unitIdentifier: 'UNIT-TI-002', quantity: 75, uom: 'KG', status: 'AVAILABLE_FOR_PLANNING' }
+                  ]
+                }
+              ]
+            })
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ success: true, data: [] })
+        });
+      });
+
+      renderWithProviders(<JobsPage />);
+
+      // Verify Planning Workspace exists
+      expect(screen.getByText('PO & GRN Planning Workspace')).toBeDefined();
+      expect(screen.getByText(/Read-Only Creation Records/i)).toBeDefined();
+      expect(screen.getByText(/Strict PO → GRN → BO Hierarchy/i)).toBeDefined();
+
+      // Step 1: Click PO card in Workspace
+      await waitFor(() => {
+        expect(screen.getAllByText('PO-2026-00101').length).toBeGreaterThan(0);
+      });
+      const poItems = screen.getAllByText('PO-2026-00101');
+      fireEvent.click(poItems[0]);
+
+      // Step 2: GRN card appears in Panel 2 with read-only badges
+      await waitFor(() => {
+        expect(screen.getAllByText('GRN-202609-0501').length).toBeGreaterThan(0);
+      });
+      const grnItems = screen.getAllByText('GRN-202609-0501');
+      fireEvent.click(grnItems[0]);
+
+      // Step 3: Material Part and Recipe stages appear in Panel 3
+      await waitFor(() => {
+        expect(screen.getByText(/Part: Titanium Grade 5 Round Bar/i)).toBeDefined();
+        expect(screen.getByText(/Bound Recipe: REC-TI-AGING/i)).toBeDefined();
+        expect(screen.getByText(/Solution Treat Soak/i)).toBeDefined();
+        expect(screen.getByText(/FROZEN SNAPSHOT/i)).toBeDefined();
+      });
+
+      // Step 4: Click Create Batch Order (BO) action button
+      const createBoBtn = screen.getByRole('button', { name: /create batch order \(bo\)/i });
+      fireEvent.click(createBoBtn);
+
+      // Verify modal opens pre-filled at configuration step
+      await waitFor(() => {
+        expect(screen.getByText(/ESTABLISHED PLANNING HIERARCHY/i)).toBeDefined();
+        expect(screen.getByRole('button', { name: /schedule production job/i })).toBeDefined();
+      });
+    });
   });
 
   describe('4. Furnace Fleet & Pyrometry Telemetry', () => {
