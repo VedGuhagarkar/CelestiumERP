@@ -66,6 +66,14 @@ export class ProductionJobService {
     actor: IActorContext,
     dto: CreateBatchOrderDto
   ): Promise<ProductionJobDocument> {
+    // 0. Idempotency replay check
+    if (dto.idempotencyKey) {
+      const existingJob = await this.repo.findByIdempotencyKey(tenantId, dto.idempotencyKey);
+      if (existingJob) {
+        return existingJob;
+      }
+    }
+
     if (!dto.poId) {
       throw new BadRequestError('Purchase Order reference (poId) is required for Batch Order creation.');
     }
@@ -130,10 +138,10 @@ export class ProductionJobService {
       throw new NotFoundError(`Item with ID '${grnItem.itemId}' not found in Item Master.`);
     }
 
-    // 4. Verify Recipe exists and belongs to the Item
+    // 4. Verify Recipe exists and corresponds to the BO Item
     const targetRecipeId = dto.recipeId || grnItem.recipeId;
     if (!targetRecipeId) {
-      throw new BadRequestError(`No recipe is bound to item '${grnItem.itemCode}' on GRN '${grn.grnNumber}'.`);
+      throw new BadRequestError('Recipe is required. Every BO must reference a Recipe.');
     }
 
     const recipe = await recipeRepository.findById(tenantId, targetRecipeId);
@@ -147,12 +155,26 @@ export class ProductionJobService {
       );
     }
 
-    // Validate Recipe belongs to Item
+    // Enforce Recipe.item === BO.item
+    const recipeItemId = (recipe as any).itemId || (recipe as any).item;
+    const isItemIdMatched =
+      !recipeItemId ||
+      String(recipeItemId) === String(item.id) ||
+      String(recipeItemId) === String(item._id) ||
+      String(recipeItemId) === String(item.itemCode);
+
+    if (recipeItemId && !isItemIdMatched) {
+      throw new BadRequestError(
+        `Recipe Mismatch Violation: Recipe '${recipe.recipeCode}' belongs to another Item ('${recipeItemId}') and does not correspond to BO Item '${item.itemCode}'. Recipe.item must match BO.item.`
+      );
+    }
+
+    // Validate Recipe material grade compatibility
     const itemGrade = item.materialGrade || grnItem.materialGrade;
     const isGradeCompatible =
       recipe.applicableMaterialGrades &&
       recipe.applicableMaterialGrades.some((g: string) => g.toUpperCase().trim() === itemGrade.toUpperCase().trim());
-    const isLineageBound = recipe.id === grnItem.recipeId || recipe.recipeCode === grnItem.recipeCode;
+    const isLineageBound = String(recipe.id) === String(grnItem.recipeId) || recipe.recipeCode === grnItem.recipeCode;
 
     if (!isGradeCompatible && !isLineageBound) {
       throw new BadRequestError(
@@ -161,20 +183,44 @@ export class ProductionJobService {
     }
 
     // 5. Validate Quantity
-    if (!dto.targetQuantity || dto.targetQuantity <= 0) {
-      throw new BadRequestError('Batch Order target quantity must be greater than zero.');
+    const requestedQuantity = dto.quantity !== undefined ? dto.quantity : dto.targetQuantity;
+    if (requestedQuantity === undefined || requestedQuantity === null) {
+      throw new BadRequestError('Batch Order quantity is required.');
     }
-    if (dto.targetQuantity > grnItem.acceptedQuantity) {
+    if (requestedQuantity <= 0) {
+      throw new BadRequestError('Batch Order quantity must be greater than zero.');
+    }
+    const maxReceivedQuantity =
+      grnItem.receivedQuantity !== undefined ? grnItem.receivedQuantity : grnItem.acceptedQuantity;
+    if (requestedQuantity > maxReceivedQuantity) {
       throw new BadRequestError(
-        `Requested target quantity [${dto.targetQuantity}] exceeds GRN accepted quantity [${grnItem.acceptedQuantity}].`
+        `Requested quantity [${requestedQuantity}] exceeds GRN received quantity [${maxReceivedQuantity}].`
       );
     }
 
-    // 6. Generate Batch Order Number and Hierarchy References
-    const boNumber = await this.repo.generateNextBatchOrderNumber(tenantId);
-    const jobNumber = boNumber;
+    // 6. Validate Weight (required, kg, non-negative)
+    const requestedWeight = dto.weight !== undefined ? dto.weight : dto.weightKg;
+    if (requestedWeight === undefined || requestedWeight === null) {
+      throw new BadRequestError('Batch Order weight in kilograms is required.');
+    }
+    if (requestedWeight < 0) {
+      throw new BadRequestError('Batch Order weight must not be negative.');
+    }
 
-    // 7. Create Process Structure Snapshots
+    // 7. Validate Due Date
+    let dueDate: Date | null = null;
+    if (dto.dueDate) {
+      dueDate = new Date(dto.dueDate);
+      if (isNaN(dueDate.getTime())) {
+        throw new BadRequestError('Invalid due date provided.');
+      }
+    } else if (dto.targetCompletionDate) {
+      dueDate = new Date(dto.targetCompletionDate);
+    } else {
+      dueDate = new Date(Date.now() + 7 * 24 * 3600000);
+    }
+
+    // 8. Process Structure Snapshots
     const recipeSnapshot: IJobRecipeSnapshot = {
       recipeId: recipe.id,
       recipeCode: recipe.recipeCode,
@@ -216,7 +262,7 @@ export class ProductionJobService {
       }
     }
 
-    // 8. Equipment & Operator Assignments
+    // 9. Equipment & Operator Assignments
     let equipmentAssignment = {};
     if (dto.assignedFurnaceId) {
       const furnace = await furnaceCapacityRepository.findFurnaceById(tenantId, dto.assignedFurnaceId);
@@ -243,7 +289,7 @@ export class ProductionJobService {
       }
     }
 
-    // 9. Allocate GRN Units
+    // 10. Allocate GRN Units
     const grnUnits = await grnRepository.findUnitsByGrnId(tenantId, grn.id);
     const eligibleUnits = grnUnits.filter(
       (u) =>
@@ -251,16 +297,7 @@ export class ProductionJobService {
         u.status === 'AVAILABLE_FOR_PLANNING'
     );
 
-    const unitsToAllocate = eligibleUnits.slice(0, Math.ceil(dto.targetQuantity));
-    for (const unit of unitsToAllocate) {
-      await grnRepository.allocateUnit(
-        tenantId,
-        unit.unitIdentifier,
-        boNumber,
-        boNumber,
-        boNumber
-      );
-    }
+    const unitsToAllocate = eligibleUnits.slice(0, Math.ceil(requestedQuantity));
 
     const materialAllocations = unitsToAllocate.map((u) => ({
       reservationId: u.unitIdentifier,
@@ -271,82 +308,129 @@ export class ProductionJobService {
       uom: u.uom
     }));
 
-    const customerName = (po as any).supplierName || (po as any).vendorName || 'Valued Customer';
-    const customerCode = (po as any).supplierCode || 'CUST-DEFAULT';
+    // Authoritative Customer Derivation from GRN / PO
+    const customerName = grn.supplierName || (po as any).supplierName || (po as any).vendorName || 'Valued Customer';
+    const customerCode = grn.supplierCode || (po as any).supplierCode || 'CUST-DEFAULT';
+    const customerId = (po as any).customerId || grn.poId || po.id;
 
     const plannedStartDate = dto.plannedStartDate ? new Date(dto.plannedStartDate) : new Date();
     const targetCompletionDate = dto.targetCompletionDate
       ? new Date(dto.targetCompletionDate)
       : new Date(Date.now() + 24 * 3600000);
 
-    // 10. Create Batch Order Document in WAITING_FOR_PRODUCTION state
-    const job = await this.repo.create(tenantId, {
-      jobNumber,
-      boNumber,
-      batchOrderNumber: boNumber,
-      poId: po.id,
-      poNumber: po.poNumber,
-      grnId: grn.id,
-      grnNumber: grn.grnNumber,
-      customer: {
-        customerId: (po as any).customerId || po.id,
-        customerCode,
-        customerName
-      },
-      item: {
-        itemId: item.id,
-        itemCode: item.itemCode,
-        itemName: item.name || grnItem.itemName,
-        materialGrade: itemGrade,
-        uom: item.uom || grnItem.uom || 'PCS'
-      },
-      quantity: {
-        targetQuantity: dto.targetQuantity,
-        loadedQuantity: 0,
-        completedQuantity: 0,
-        scrappedQuantity: 0
-      },
-      status: 'WAITING_FOR_PRODUCTION',
-      priority: dto.priority || 'NORMAL',
-      recipeSnapshot,
-      specificationSnapshot: specSnapshot,
-      materialAllocations: materialAllocations.length > 0 ? materialAllocations : [
-        {
-          heatLotId: null,
-          heatLotNumber: grnItem.supplierHeatNumber || null,
-          supplierHeatNumber: grnItem.supplierHeatNumber || null,
-          allocatedQuantity: dto.targetQuantity,
-          uom: grnItem.uom
-        }
-      ],
-      equipmentAssignment,
-      operatorAssignment,
-      timeline: {
-        plannedStartDate,
-        targetCompletionDate
-      },
-      execution: {
-        stageProgress: [],
-        downtimeLog: [],
-        productionLogs: []
-      },
-      transitionHistory: [
-        {
-          fromStatus: 'WAITING_FOR_PRODUCTION',
-          toStatus: 'WAITING_FOR_PRODUCTION',
-          timestamp: new Date(),
-          performedBy: {
-            userId: actor.userId,
-            email: actor.email,
-            role: actor.role
+    // 11. Create Batch Order Document with Concurrency Safety and Retry
+    let retries = 5;
+    let job: ProductionJobDocument | null = null;
+    let boNumber = '';
+
+    while (retries > 0) {
+      boNumber = await this.repo.generateNextBatchOrderNumber(tenantId);
+      const jobNumber = boNumber;
+
+      try {
+        job = await this.repo.create(tenantId, {
+          jobNumber,
+          boNumber,
+          batchOrderNumber: boNumber,
+          poId: po.id,
+          poNumber: po.poNumber,
+          grnId: grn.id,
+          grnNumber: grn.grnNumber,
+          customer: {
+            customerId,
+            customerCode,
+            customerName
           },
-          reason: `Authoritative PO -> GRN -> BO Creation (${po.poNumber} -> ${grn.grnNumber} -> ${boNumber})`
+          item: {
+            itemId: item.id,
+            itemCode: item.itemCode,
+            itemName: item.name || grnItem.itemName,
+            materialGrade: itemGrade,
+            uom: item.uom || grnItem.uom || 'PCS'
+          },
+          quantity: {
+            targetQuantity: requestedQuantity,
+            loadedQuantity: 0,
+            completedQuantity: 0,
+            scrappedQuantity: 0
+          },
+          weightKg: requestedWeight,
+          weight: requestedWeight,
+          dueDate,
+          status: 'WAITING_FOR_PRODUCTION',
+          priority: dto.priority || 'NORMAL',
+          recipeSnapshot,
+          specificationSnapshot: specSnapshot,
+          materialAllocations:
+            materialAllocations.length > 0
+              ? materialAllocations
+              : [
+                  {
+                    heatLotId: null,
+                    heatLotNumber: grnItem.supplierHeatNumber || null,
+                    supplierHeatNumber: grnItem.supplierHeatNumber || null,
+                    allocatedQuantity: requestedQuantity,
+                    uom: grnItem.uom
+                  }
+                ],
+          equipmentAssignment,
+          operatorAssignment,
+          timeline: {
+            plannedStartDate,
+            targetCompletionDate,
+            dueDate
+          },
+          execution: {
+            stageProgress: [],
+            downtimeLog: [],
+            productionLogs: []
+          },
+          transitionHistory: [
+            {
+              fromStatus: 'WAITING_FOR_PRODUCTION',
+              toStatus: 'WAITING_FOR_PRODUCTION',
+              timestamp: new Date(),
+              performedBy: {
+                userId: actor.userId,
+                email: actor.email,
+                role: actor.role
+              },
+              reason: `Authoritative PO -> GRN -> BO Creation (${po.poNumber} -> ${grn.grnNumber} -> ${boNumber})`
+            }
+          ],
+          assignmentHistory: [],
+          notes: dto.notes || null,
+          idempotencyKey: dto.idempotencyKey || null
+        });
+        break;
+      } catch (err: any) {
+        if (
+          (err.code === 11000 ||
+            err.message?.includes('duplicate key') ||
+            err.message?.includes('E11000')) &&
+          retries > 1
+        ) {
+          retries--;
+          continue;
         }
-      ],
-      assignmentHistory: [],
-      notes: dto.notes || null,
-      idempotencyKey: dto.idempotencyKey || null
-    });
+        throw err;
+      }
+    }
+
+    if (!job) {
+      throw new BadRequestError('Failed to allocate Batch Order due to concurrent contention. Please retry.');
+    }
+
+    // Allocate GRN units with the generated boNumber
+    for (const unit of unitsToAllocate) {
+      await grnRepository.allocateUnit(
+        tenantId,
+        unit.unitIdentifier,
+        boNumber,
+        boNumber,
+        boNumber
+      );
+    }
 
     await auditService.record(tenantId, {
       actorId: actor.userId,

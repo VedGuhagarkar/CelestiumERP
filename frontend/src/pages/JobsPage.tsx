@@ -295,6 +295,10 @@ export const JobsPage: React.FC = () => {
 
   // Batch Order Configuration State
   const [targetQuantity, setTargetQuantity] = useState<number>(100);
+  const [weightKg, setWeightKg] = useState<number>(50);
+  const [dueDate, setDueDate] = useState<string>(
+    new Date(Date.now() + 7 * 24 * 3600000).toISOString().split('T')[0]
+  );
   const [priority, setPriority] = useState<'NORMAL' | 'HIGH' | 'URGENT' | 'AOG_CRITICAL'>('HIGH');
   const [plannedStartDate, setPlannedStartDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [targetCompletionDate, setTargetCompletionDate] = useState<string>(
@@ -499,7 +503,11 @@ export const JobsPage: React.FC = () => {
         grnId: targetGrnId,
         itemId: targetItemId,
         recipeId: targetRecipeId,
+        quantity: Number(targetQuantity),
         targetQuantity: Number(targetQuantity),
+        weight: Number(weightKg),
+        weightKg: Number(weightKg),
+        dueDate: dueDate ? new Date(dueDate).toISOString() : undefined,
         priority,
         plannedStartDate: new Date(plannedStartDate).toISOString(),
         targetCompletionDate: new Date(targetCompletionDate).toISOString(),
@@ -1577,6 +1585,26 @@ export const JobsPage: React.FC = () => {
                     { value: 'URGENT', label: 'Urgent' },
                     { value: 'AOG_CRITICAL', label: 'AOG Critical (Defense / Flight Grounded)' }
                   ]}
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <AppInput
+                  label="Batch Weight (kg) *"
+                  type="number"
+                  min={0}
+                  step="any"
+                  value={weightKg}
+                  onChange={(e) => setWeightKg(Number(e.target.value))}
+                  required
+                />
+
+                <AppInput
+                  label="Authoritative Due Date *"
+                  type="date"
+                  value={dueDate}
+                  onChange={(e) => setDueDate(e.target.value)}
+                  required
                 />
               </div>
 

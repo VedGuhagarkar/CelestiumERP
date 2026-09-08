@@ -247,6 +247,7 @@ describe('Production Job Domain & 12-Stage Lifecycle State Machine', () => {
           recipeId: 'rec_001',
           specificationId: 'spec_001',
           targetQuantity: 500,
+          weight: 250,
           priority: 'NORMAL',
           plannedStartDate: '2026-09-01T08:00:00.000Z',
           targetCompletionDate: '2026-09-01T16:00:00.000Z',
@@ -285,6 +286,7 @@ describe('Production Job Domain & 12-Stage Lifecycle State Machine', () => {
           recipeId: 'rec_001',
           specificationId: 'spec_001',
           targetQuantity: 500,
+          weight: 250,
           plannedStartDate: '2026-09-01T08:00:00.000Z',
           targetCompletionDate: '2026-09-01T16:00:00.000Z'
         });

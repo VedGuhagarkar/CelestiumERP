@@ -93,7 +93,7 @@ export class ProductionJobRepository
           { jobNumber: { $regex: `^${prefix}` } }
         ]
       })
-      .sort({ createdAt: -1 })
+      .sort({ boNumber: -1, jobNumber: -1, createdAt: -1 })
       .exec();
 
     if (!latest) {

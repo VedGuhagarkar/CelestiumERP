@@ -382,7 +382,7 @@ describe('Pyrometry & Calibration Subsystem (AMS 2750G / CQI-9)', () => {
       const approvedSat = createMockCalibration({
         calibrationType: 'SAT_TEST',
         status: 'APPROVED',
-        expiryDate: new Date('2026-09-01')
+        expiryDate: new Date('2026-10-01')
       });
       const validChannel = createMockChannel({ expiresAt: new Date('2027-06-01'), isCalibrated: true });
 

@@ -102,7 +102,8 @@ const jobTimelineSchema = new Schema(
     plannedStartDate: { type: Date, required: true },
     targetCompletionDate: { type: Date, required: true },
     actualStartDate: { type: Date, default: null },
-    actualCompletionDate: { type: Date, default: null }
+    actualCompletionDate: { type: Date, default: null },
+    dueDate: { type: Date, default: null }
   },
   { _id: false }
 );
@@ -324,6 +325,8 @@ const productionJobSchema = createBaseSchema<ProductionJobDocument>({
   customer: { type: jobCustomerSchema, required: true },
   item: { type: jobItemSchema, required: true },
   quantity: { type: jobQuantitySchema, required: true },
+  weightKg: { type: Number, default: 0, min: 0 },
+  weight: { type: Number, default: 0, min: 0 },
   status: {
     type: String,
     enum: [
@@ -371,6 +374,7 @@ productionJobSchema.index({ tenantId: 1, status: 1 });
 productionJobSchema.index({ tenantId: 1, priority: 1, 'timeline.targetCompletionDate': 1 });
 productionJobSchema.index({ tenantId: 1, 'item.itemCode': 1 });
 productionJobSchema.index({ tenantId: 1, 'equipmentAssignment.furnaceId': 1 });
+productionJobSchema.index({ tenantId: 1, idempotencyKey: 1 }, { sparse: true });
 
 export const ProductionJobModel =
   mongoose.models.ProductionJob ||

@@ -292,6 +292,9 @@ export interface IProductionJob {
     completedQuantity: number;
     scrappedQuantity: number;
   };
+  weightKg?: number;
+  weight?: number;
+  dueDate?: Date | null;
   status: JobStatus;
   priority: JobPriority;
   recipeSnapshot: IJobRecipeSnapshot;
@@ -304,6 +307,7 @@ export interface IProductionJob {
     targetCompletionDate: Date;
     actualStartDate?: Date | null;
     actualCompletionDate?: Date | null;
+    dueDate?: Date | null;
   };
   execution?: IJobExecution;
   transitionHistory: IJobStateTransition[];
@@ -326,7 +330,11 @@ export interface CreateBatchOrderDto {
   itemId: string;
   recipeId?: string;
   specificationId?: string;
-  targetQuantity: number;
+  targetQuantity?: number;
+  quantity?: number;
+  weight?: number;
+  weightKg?: number;
+  dueDate?: string | Date;
   priority?: JobPriority;
   plannedStartDate?: string | Date;
   targetCompletionDate?: string | Date;

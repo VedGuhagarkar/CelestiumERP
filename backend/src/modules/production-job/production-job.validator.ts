@@ -49,22 +49,58 @@ const productionLogTypeEnum = z.enum([
 ]);
 
 export const createBatchOrderSchema: ValidationSchema = {
-  body: z.object({
-    poId: z.string().trim().min(1, 'Purchase Order ID (poId) is required'),
-    grnId: z.string().trim().min(1, 'Goods Receipt Note ID (grnId) is required'),
-    itemId: z.string().trim().min(1, 'Part / Item ID (itemId) is required'),
-    recipeId: z.string().trim().optional(),
-    specificationId: z.string().trim().optional(),
-    targetQuantity: z.number().min(0.001, 'Target quantity must be greater than zero'),
-    priority: jobPriorityEnum.optional().default('NORMAL'),
-    plannedStartDate: z.string().or(z.date()).optional(),
-    targetCompletionDate: z.string().or(z.date()).optional(),
-    assignedFurnaceId: z.string().trim().optional(),
-    assignedOperatorId: z.string().trim().optional(),
-    shift: z.string().trim().optional(),
-    notes: z.string().trim().max(1000).optional(),
-    idempotencyKey: z.string().trim().optional()
-  })
+  body: z
+    .object({
+      poId: z.string().trim().min(1, 'Purchase Order ID (poId) is required'),
+      grnId: z.string().trim().min(1, 'Goods Receipt Note ID (grnId) is required'),
+      itemId: z.string().trim().min(1, 'Part / Item ID (itemId) is required'),
+      recipeId: z.string().trim().min(1, 'Recipe ID (recipeId) is required').optional(),
+      specificationId: z.string().trim().optional(),
+      targetQuantity: z.number().optional(),
+      quantity: z.number().optional(),
+      weight: z.number().optional(),
+      weightKg: z.number().optional(),
+      dueDate: z.string().or(z.date()).optional(),
+      priority: jobPriorityEnum.optional().default('NORMAL'),
+      plannedStartDate: z.string().or(z.date()).optional(),
+      targetCompletionDate: z.string().or(z.date()).optional(),
+      assignedFurnaceId: z.string().trim().optional(),
+      assignedOperatorId: z.string().trim().optional(),
+      shift: z.string().trim().optional(),
+      notes: z.string().trim().max(1000).optional(),
+      idempotencyKey: z.string().trim().optional()
+    })
+    .superRefine((data, ctx) => {
+      const qty = data.quantity !== undefined ? data.quantity : data.targetQuantity;
+      if (qty === undefined || qty === null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Batch Order quantity is required',
+          path: ['quantity']
+        });
+      } else if (qty <= 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Batch Order quantity must be greater than zero',
+          path: ['quantity']
+        });
+      }
+
+      const w = data.weight !== undefined ? data.weight : data.weightKg;
+      if (w === undefined || w === null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Batch Order weight in kilograms is required',
+          path: ['weight']
+        });
+      } else if (w < 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Batch Order weight must not be negative',
+          path: ['weight']
+        });
+      }
+    })
 };
 
 export const createDirectJobSchema: ValidationSchema = {

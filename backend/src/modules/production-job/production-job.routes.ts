@@ -59,18 +59,9 @@ productionJobRouter.get(
 productionJobRouter.post(
   ['/', '/batch-orders', '/create-batch-order'],
   authenticateJwt,
-  requireAnyPermission(PERMISSIONS.BATCH_ORDER_CREATE, PERMISSIONS.PRODUCTION_JOB_CREATE),
+  requirePermission(PERMISSIONS.BATCH_ORDER_CREATE),
   validateRequest(createBatchOrderSchema),
   asyncHandler(productionJobController.createBatchOrder)
-);
-
-// 1. Create Direct Production Job / Batch Order
-productionJobRouter.post(
-  '/',
-  authenticateJwt,
-  requireAnyPermission(PERMISSIONS.BATCH_ORDER_CREATE, PERMISSIONS.PRODUCTION_JOB_CREATE),
-  validateRequest(createDirectJobSchema),
-  asyncHandler(productionJobController.createDirectJob)
 );
 
 // 2. Convert Approved Production Plan to Executable Production Job

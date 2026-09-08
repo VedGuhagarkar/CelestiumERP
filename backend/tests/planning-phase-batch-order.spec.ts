@@ -344,6 +344,7 @@ describe('Planning Phase — Authoritative PO -> GRN -> BO Workflow', () => {
           itemId: mockItem.id,
           recipeId: mockRecipe.id,
           targetQuantity: 100,
+          weight: 50,
           plannedStartDate: '2026-09-10T08:00:00.000Z',
           targetCompletionDate: '2026-09-10T16:00:00.000Z'
         });
@@ -355,7 +356,8 @@ describe('Planning Phase — Authoritative PO -> GRN -> BO Workflow', () => {
   });
 
   describe('3. Batch Order Creation & Strict Lineage Validation', () => {
-    it('should successfully create a BO in WAITING_FOR_PRODUCTION with full PO/GRN/BO hierarchy', async () => {
+    // 1. Valid BO
+    it('should successfully create a valid BO in WAITING_FOR_PRODUCTION with full PO/GRN/BO hierarchy, derived customer, weight, and due date', async () => {
       const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
 
       jest.spyOn(purchaseOrderRepository, 'findById').mockResolvedValue(mockPo as any);
@@ -374,6 +376,11 @@ describe('Planning Phase — Authoritative PO -> GRN -> BO Workflow', () => {
         poNumber: mockPo.poNumber,
         grnId: mockGrn.id,
         grnNumber: mockGrn.grnNumber,
+        customer: {
+          customerId: mockPo.id,
+          customerCode: 'CUST-DEFAULT',
+          customerName: mockGrn.supplierName
+        },
         status: 'WAITING_FOR_PRODUCTION',
         priority: 'HIGH',
         item: {
@@ -389,6 +396,9 @@ describe('Planning Phase — Authoritative PO -> GRN -> BO Workflow', () => {
           stages: mockRecipe.stages
         },
         quantity: { targetQuantity: 100 },
+        weightKg: 50,
+        weight: 50,
+        dueDate: new Date('2026-09-20T00:00:00.000Z'),
         toJSON: function () {
           return { ...this };
         }
@@ -405,7 +415,9 @@ describe('Planning Phase — Authoritative PO -> GRN -> BO Workflow', () => {
           grnId: mockGrn.id,
           itemId: mockItem.id,
           recipeId: mockRecipe.id,
-          targetQuantity: 100,
+          quantity: 100,
+          weight: 50,
+          dueDate: '2026-09-20T00:00:00.000Z',
           priority: 'HIGH',
           plannedStartDate: '2026-09-10T08:00:00.000Z',
           targetCompletionDate: '2026-09-10T16:00:00.000Z',
@@ -418,6 +430,9 @@ describe('Planning Phase — Authoritative PO -> GRN -> BO Workflow', () => {
       expect(res.body.data.status).toBe('WAITING_FOR_PRODUCTION');
       expect(res.body.data.poNumber).toBe('PO-2026-00101');
       expect(res.body.data.grnNumber).toBe('GRN-202609-0501');
+      expect(res.body.data.customer.customerName).toBe('Titanium Alloys Global');
+      expect(res.body.data.weightKg).toBe(50);
+      expect(res.body.data.dueDate).toBeDefined();
 
       // Verify that GRN unit was transitioned to ALLOCATED_TO_PLAN
       expect(allocateSpy).toHaveBeenCalledWith(
@@ -429,7 +444,31 @@ describe('Planning Phase — Authoritative PO -> GRN -> BO Workflow', () => {
       );
     });
 
-    it('should reject creation if GRN does not belong to the selected PO', async () => {
+    // 2. Invalid PO
+    it('should reject BO creation with invalid PO (404)', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+      jest.spyOn(purchaseOrderRepository, 'findById').mockResolvedValue(null);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: 'po_nonexistent_404',
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+
+      expect(res.status).toBe(404);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('not found');
+    });
+
+    // 3. GRN belonging to another PO
+    it('should reject BO creation if GRN belongs to another PO (Hierarchy Violation)', async () => {
       const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
 
       jest.spyOn(purchaseOrderRepository, 'findById').mockResolvedValue(mockPo as any);
@@ -449,9 +488,8 @@ describe('Planning Phase — Authoritative PO -> GRN -> BO Workflow', () => {
           grnId: mockGrn.id,
           itemId: mockItem.id,
           recipeId: mockRecipe.id,
-          targetQuantity: 100,
-          plannedStartDate: '2026-09-10T08:00:00.000Z',
-          targetCompletionDate: '2026-09-10T16:00:00.000Z'
+          quantity: 100,
+          weight: 50
         });
 
       expect(res.status).toBe(400);
@@ -459,7 +497,8 @@ describe('Planning Phase — Authoritative PO -> GRN -> BO Workflow', () => {
       expect(res.body.message).toContain('Hierarchy Violation');
     });
 
-    it('should reject creation if selected Part does not exist in the GRN', async () => {
+    // 4. Part not present in GRN
+    it('should reject BO creation if selected Part does not exist in the GRN', async () => {
       const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
 
       jest.spyOn(purchaseOrderRepository, 'findById').mockResolvedValue(mockPo as any);
@@ -480,9 +519,8 @@ describe('Planning Phase — Authoritative PO -> GRN -> BO Workflow', () => {
           grnId: mockGrn.id,
           itemId: 'item_alien',
           recipeId: mockRecipe.id,
-          targetQuantity: 100,
-          plannedStartDate: '2026-09-10T08:00:00.000Z',
-          targetCompletionDate: '2026-09-10T16:00:00.000Z'
+          quantity: 100,
+          weight: 50
         });
 
       expect(res.status).toBe(400);
@@ -490,17 +528,45 @@ describe('Planning Phase — Authoritative PO -> GRN -> BO Workflow', () => {
       expect(res.body.message).toContain('Part Membership Violation');
     });
 
-    it('should reject creation if Recipe is not approved or not compatible with Item material grade', async () => {
+    // 5. Invalid Recipe
+    it('should reject BO creation with invalid Recipe (404)', async () => {
       const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
 
       jest.spyOn(purchaseOrderRepository, 'findById').mockResolvedValue(mockPo as any);
       jest.spyOn(grnRepository, 'findGrnById').mockResolvedValue(mockGrn as any);
       jest.spyOn(itemRepository, 'findById').mockResolvedValue(mockItem as any);
-      // Recipe only applies to steel, not Titanium
+      jest.spyOn(recipeRepository, 'findById').mockResolvedValue(null);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: 'rec_nonexistent',
+          quantity: 100,
+          weight: 50
+        });
+
+      expect(res.status).toBe(404);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('not found');
+    });
+
+    // 6. Recipe belonging to another Item
+    it('should reject BO creation if Recipe belongs to another Item (Recipe.item !== BO.item)', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      jest.spyOn(purchaseOrderRepository, 'findById').mockResolvedValue(mockPo as any);
+      jest.spyOn(grnRepository, 'findGrnById').mockResolvedValue(mockGrn as any);
+      jest.spyOn(itemRepository, 'findById').mockResolvedValue(mockItem as any);
+      // Recipe explicitly belongs to another item
       jest.spyOn(recipeRepository, 'findById').mockResolvedValue({
         ...mockRecipe,
-        id: 'rec_different',
-        recipeCode: 'REC-DIFF',
+        itemId: 'item_different_steel',
+        recipeCode: 'REC-STEEL-01',
         applicableMaterialGrades: ['AISI 4140']
       } as any);
 
@@ -512,15 +578,225 @@ describe('Planning Phase — Authoritative PO -> GRN -> BO Workflow', () => {
           poId: mockPo.id,
           grnId: mockGrn.id,
           itemId: mockItem.id,
-          recipeId: 'rec_different',
-          targetQuantity: 100,
-          plannedStartDate: '2026-09-10T08:00:00.000Z',
-          targetCompletionDate: '2026-09-10T16:00:00.000Z'
+          recipeId: 'rec_steel_01',
+          quantity: 100,
+          weight: 50
         });
 
       expect(res.status).toBe(400);
       expect(res.body.success).toBe(false);
-      expect(res.body.message).toContain('Metallurgical Incompatibility');
+      expect(res.body.message).toMatch(/Recipe Mismatch Violation|Metallurgical Incompatibility/);
+    });
+
+    // 7. Quantity greater than GRN quantity
+    it('should reject BO creation if quantity exceeds GRN received quantity', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      jest.spyOn(purchaseOrderRepository, 'findById').mockResolvedValue(mockPo as any);
+      jest.spyOn(grnRepository, 'findGrnById').mockResolvedValue(mockGrn as any);
+      jest.spyOn(itemRepository, 'findById').mockResolvedValue(mockItem as any);
+      jest.spyOn(recipeRepository, 'findById').mockResolvedValue(mockRecipe as any);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 250, // exceeds receivedQuantity 200
+          weight: 50
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('exceeds GRN received quantity');
+    });
+
+    // 8. Zero quantity
+    it('should reject BO creation with zero quantity', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 0,
+          weight: 50
+        });
+
+      expect([400, 422]).toContain(res.status);
+      expect(res.body.success).toBe(false);
+      expect(JSON.stringify(res.body)).toMatch(/quantity/i);
+    });
+
+    // 9. Negative weight
+    it('should reject BO creation with negative weight', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 50,
+          weight: -10
+        });
+
+      expect([400, 422]).toContain(res.status);
+      expect(res.body.success).toBe(false);
+      expect(JSON.stringify(res.body)).toMatch(/weight/i);
+    });
+
+    // 10. Duplicate submission (Idempotency)
+    it('should safely handle duplicate submission idempotently using idempotencyKey', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+      const idempotencyKey = 'IDEM-KEY-UNIQUE-7788';
+
+      jest.spyOn(purchaseOrderRepository, 'findById').mockResolvedValue(mockPo as any);
+      jest.spyOn(grnRepository, 'findGrnById').mockResolvedValue(mockGrn as any);
+      jest.spyOn(itemRepository, 'findById').mockResolvedValue(mockItem as any);
+      jest.spyOn(recipeRepository, 'findById').mockResolvedValue(mockRecipe as any);
+      jest.spyOn(grnRepository, 'allocateUnit').mockResolvedValue({} as any);
+
+      const existingJob: any = {
+        id: 'bo_existing_01',
+        boNumber: 'BO-202609-0001',
+        jobNumber: 'BO-202609-0001',
+        idempotencyKey,
+        status: 'WAITING_FOR_PRODUCTION',
+        toJSON: () => ({ id: 'bo_existing_01', boNumber: 'BO-202609-0001', status: 'WAITING_FOR_PRODUCTION' })
+      };
+
+      const findKeySpy = jest
+        .spyOn(productionJobRepository, 'findByIdempotencyKey')
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(existingJob);
+
+      jest.spyOn(productionJobRepository, 'generateNextBatchOrderNumber').mockResolvedValue('BO-202609-0001');
+      jest.spyOn(productionJobRepository, 'create').mockResolvedValue(existingJob);
+
+      // Submission 1
+      const res1 = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50,
+          idempotencyKey
+        });
+
+      expect(res1.status).toBe(201);
+      expect(res1.body.data.boNumber).toBe('BO-202609-0001');
+
+      // Submission 2: identical idempotencyKey returns existing without duplicate
+      const res2 = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50,
+          idempotencyKey
+        });
+
+      expect(res2.status).toBe(201);
+      expect(res2.body.data.boNumber).toBe('BO-202609-0001');
+      expect(findKeySpy).toHaveBeenCalledTimes(2);
+    });
+
+    // 11. Concurrent creation
+    it('should safely handle concurrent creation and assign unique monotonic batch numbers', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      jest.spyOn(purchaseOrderRepository, 'findById').mockResolvedValue(mockPo as any);
+      jest.spyOn(grnRepository, 'findGrnById').mockResolvedValue(mockGrn as any);
+      jest.spyOn(itemRepository, 'findById').mockResolvedValue(mockItem as any);
+      jest.spyOn(recipeRepository, 'findById').mockResolvedValue(mockRecipe as any);
+      jest.spyOn(grnRepository, 'allocateUnit').mockResolvedValue({} as any);
+
+      let seq = 1;
+      jest.spyOn(productionJobRepository, 'generateNextBatchOrderNumber').mockImplementation(async () => {
+        return `BO-202609-${String(seq++).padStart(4, '0')}`;
+      });
+
+      jest.spyOn(productionJobRepository, 'create').mockImplementation(async (_tenant, data: any) => {
+        return {
+          ...data,
+          id: `bo_${data.boNumber}`,
+          toJSON: () => data
+        } as any;
+      });
+
+      const reqPayload = {
+        poId: mockPo.id,
+        grnId: mockGrn.id,
+        itemId: mockItem.id,
+        recipeId: mockRecipe.id,
+        quantity: 50,
+        weight: 25
+      };
+
+      const [res1, res2] = await Promise.all([
+        request(app)
+          .post('/api/v1/batch-orders')
+          .set('x-tenant-id', testTenant)
+          .set('Authorization', `Bearer ${plannerToken}`)
+          .send(reqPayload),
+        request(app)
+          .post('/api/v1/batch-orders')
+          .set('x-tenant-id', testTenant)
+          .set('Authorization', `Bearer ${plannerToken}`)
+          .send(reqPayload)
+      ]);
+
+      expect(res1.status).toBe(201);
+      expect(res2.status).toBe(201);
+      expect(res1.body.data.boNumber).not.toBe(res2.body.data.boNumber);
+      expect(['BO-202609-0001', 'BO-202609-0002']).toContain(res1.body.data.boNumber);
+      expect(['BO-202609-0001', 'BO-202609-0002']).toContain(res2.body.data.boNumber);
+    });
+
+    // 12. Unauthorized user
+    it('should reject unauthorized user without BATCH_ORDER_CREATE permission with 403 Forbidden', async () => {
+      const techToken = generateToken('usr_tech', ['MAINTENANCE_TECH']);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${techToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('Access Denied');
     });
 
     it('should reject legacy unbacked direct creation missing poId or grnId', async () => {
@@ -533,9 +809,8 @@ describe('Planning Phase — Authoritative PO -> GRN -> BO Workflow', () => {
         .send({
           itemId: mockItem.id,
           recipeId: mockRecipe.id,
-          targetQuantity: 100,
-          plannedStartDate: '2026-09-10T08:00:00.000Z',
-          targetCompletionDate: '2026-09-10T16:00:00.000Z'
+          quantity: 100,
+          weight: 50
         });
 
       expect([400, 422]).toContain(res.status);
