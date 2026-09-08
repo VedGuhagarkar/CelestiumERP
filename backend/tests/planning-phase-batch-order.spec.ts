@@ -9,7 +9,7 @@ import { grnRepository } from '../src/modules/grn/grn.repository.js';
 import { itemRepository } from '../src/modules/item/item.repository.js';
 import { recipeRepository } from '../src/modules/recipe/recipe.repository.js';
 import { auditService } from '../src/modules/audit/audit.service.js';
-import { DEFAULT_FACTORY_ROLES } from '../src/modules/rbac/rbac.constants.js';
+import { DEFAULT_FACTORY_ROLES, PERMISSIONS } from '../src/modules/rbac/rbac.constants.js';
 import { roleRepository } from '../src/modules/rbac/role.repository.js';
 import { userRepository } from '../src/modules/auth/user.repository.js';
 import { workforceCapacityRepository } from '../src/modules/workforce-capacity/workforce-capacity.repository.js';
@@ -2609,5 +2609,743 @@ describe('Planning Phase — Authoritative PO -> GRN -> BO Workflow', () => {
       expect(resAfter.body.data[0].canCreateBatchOrder).toBe(true);
     });
   });
+
+  describe('8. Batch Order Record View and Planning Traceability', () => {
+    let jobStore: any[] = [];
+    let counter = 1;
+
+    const mockPo2 = {
+      id: 'po_202',
+      _id: 'po_202',
+      poNumber: 'PO-2026-00202',
+      supplierName: 'Superalloy Industries Inc.',
+      status: 'PARTIALLY_RECEIVED',
+      orderDate: new Date('2026-09-03'),
+      items: [
+        {
+          itemId: 'item_in718',
+          itemCode: 'MAT-INCONEL-718',
+          itemName: 'Inconel 718 Bar',
+          materialGrade: 'Inconel 718',
+          orderedQuantity: 150,
+          uom: 'KG'
+        }
+      ]
+    };
+
+    const mockGrn2 = {
+      id: 'grn_602',
+      _id: 'grn_602',
+      grnNumber: 'GRN-202609-0602',
+      poId: 'po_202',
+      poNumber: 'PO-2026-00202',
+      supplierName: 'Superalloy Industries Inc.',
+      supplierChallanNumber: 'CH-7711',
+      warehouseCode: 'WH-EAST',
+      storageLocationCode: 'BAY-04',
+      status: 'AVAILABLE_FOR_PLANNING',
+      grnDate: new Date('2026-09-04'),
+      totalUnitsGenerated: 1,
+      items: [
+        {
+          itemId: 'item_in718',
+          itemCode: 'MAT-INCONEL-718',
+          itemName: 'Inconel 718 Bar',
+          materialGrade: 'Inconel 718',
+          receivedQuantity: 150,
+          acceptedQuantity: 150,
+          uom: 'KG',
+          heatNumber: 'HEAT-IN-4481',
+          recipeId: 'rec_in_02',
+          recipeCode: 'REC-IN-AGING'
+        }
+      ],
+      units: [
+        {
+          unitIdentifier: 'UNIT-IN-001',
+          status: 'AVAILABLE_FOR_PLANNING',
+          itemId: 'item_in718',
+          heatNumber: 'HEAT-IN-4481',
+          quantity: 150,
+          uom: 'KG'
+        }
+      ]
+    };
+
+    const mockItem2 = {
+      id: 'item_in718',
+      _id: 'item_in718',
+      itemCode: 'MAT-INCONEL-718',
+      itemName: 'Inconel 718 Bar',
+      materialGrade: 'Inconel 718',
+      uom: 'KG',
+      status: 'ACTIVE'
+    };
+
+    const mockRecipe2 = {
+      id: 'rec_in_02',
+      _id: 'rec_in_02',
+      recipeCode: 'REC-IN-AGING',
+      revision: 2,
+      name: 'Inconel 718 Solution & Age Cycle',
+      processFamily: 'VACUUM_HEAT_TREATMENT',
+      status: 'APPROVED',
+      applicableMaterialGrades: ['Inconel 718'],
+      stages: [
+        {
+          sequence: 1,
+          stageName: 'Solution Anneal',
+          targetTemperatureC: 980,
+          temperatureToleranceMinusC: 5,
+          temperatureTolerancePlusC: 5,
+          soakTimeMinutes: 60,
+          soakCriteria: 'LOAD_THERMOCOUPLE_REACHED'
+        }
+      ]
+    };
+
+    beforeEach(() => {
+      jobStore = [];
+      counter = 1;
+
+      jest.spyOn(purchaseOrderRepository, 'findById').mockImplementation(async (_tenant, poId) => {
+        if (poId === mockPo2.id || poId === mockPo2.poNumber) return mockPo2 as any;
+        return mockPo as any;
+      });
+
+      jest.spyOn(grnRepository, 'findGrnById').mockImplementation(async (_tenant, grnId) => {
+        if (grnId === mockGrn2.id || grnId === mockGrn2.grnNumber) return mockGrn2 as any;
+        return mockGrn as any;
+      });
+
+      jest.spyOn(itemRepository, 'findById').mockImplementation(async (_tenant, itemId) => {
+        if (itemId === mockItem2.id || itemId === mockItem2.itemCode) return mockItem2 as any;
+        return mockItem as any;
+      });
+
+      jest.spyOn(recipeRepository, 'findById').mockImplementation(async (_tenant, recipeId) => {
+        if (recipeId === mockRecipe2.id || recipeId === mockRecipe2.recipeCode) return mockRecipe2 as any;
+        return mockRecipe as any;
+      });
+
+      jest.spyOn(grnRepository, 'allocateUnit').mockResolvedValue({} as any);
+
+      jest.spyOn(productionJobRepository, 'generateNextBatchOrderNumber').mockImplementation(async () => {
+        return `BO-202609-00${counter++}`;
+      });
+
+      jest.spyOn(productionJobRepository, 'findByGrnId').mockImplementation(async (_tenant, grnId) => {
+        return jobStore.filter((j) => j.grnId === grnId) as any;
+      });
+
+      jest.spyOn(productionJobRepository, 'create').mockImplementation(async (_tenant, doc: any) => {
+        const idStr = `job_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+        const newJob = {
+          id: idStr,
+          _id: idStr,
+          ...doc,
+          save: async function () {
+            return this;
+          },
+          toJSON: function () {
+            return { ...this };
+          }
+        };
+        jobStore.push(newJob);
+        return newJob as any;
+      });
+
+      jest.spyOn(productionJobRepository, 'findById').mockImplementation(async (_tenant, id) => {
+        return (
+          jobStore.find(
+            (j) =>
+              j.id === id ||
+              j._id === id ||
+              j.jobNumber === id ||
+              j.boNumber === id ||
+              j.jobNumber?.toLowerCase() === id?.toLowerCase() ||
+              j.boNumber?.toLowerCase() === id?.toLowerCase()
+          ) || null
+        );
+      });
+
+      jest.spyOn(roleRepository, 'findRolesByCodes').mockImplementation(async (_tenantId, codes) => {
+        return codes.map((c) => {
+          const existing = DEFAULT_FACTORY_ROLES.find((r) => r.code === c);
+          if (existing) {
+            return { ...existing, id: `role_${c}`, status: 'active' };
+          }
+          if (c === 'BATCH_ORDER_VIEWER') {
+            return {
+              id: 'role_bo_viewer',
+              code: 'BATCH_ORDER_VIEWER',
+              name: 'Batch Order Viewer',
+              isSystemRole: false,
+              status: 'active',
+              permissions: [PERMISSIONS.BATCH_ORDER_VIEW]
+            };
+          }
+          return {
+            id: `role_${c}`,
+            code: c,
+            name: c,
+            isSystemRole: false,
+            status: 'active',
+            permissions: []
+          };
+        }) as any;
+      });
+    });
+
+    // 1. Hierarchy: PO / GRN / BO Display & Relationship
+    it('should return authoritative PO / GRN / BO hierarchy and relationship metadata for newly created BO', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const createRes = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+
+      expect(createRes.status).toBe(201);
+      const createdBo = createRes.body.data;
+
+      const viewRes = await request(app)
+        .get(`/api/v1/batch-orders/${createdBo.id}`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`);
+
+      expect(viewRes.status).toBe(200);
+      expect(viewRes.body.success).toBe(true);
+
+      const data = viewRes.body.data;
+      expect(data.hierarchy).toBeDefined();
+      expect(data.hierarchy.displayHierarchy).toBe(
+        `${mockPo.poNumber} / ${mockGrn.grnNumber} / ${createdBo.boNumber}`
+      );
+      expect(data.hierarchy.relationship).toContain(mockPo.poNumber);
+      expect(data.hierarchy.relationship).toContain(mockGrn.grnNumber);
+      expect(data.hierarchy.relationship).toContain(createdBo.boNumber);
+      expect(data.hierarchy.po.poNumber).toBe(mockPo.poNumber);
+      expect(data.hierarchy.grn.grnNumber).toBe(mockGrn.grnNumber);
+      expect(data.hierarchy.bo.boNumber).toBe(createdBo.boNumber);
+    });
+
+    // 2. Authoritative Source Information Read-Only Display
+    it('should display all 8 authoritative source fields (PO, GRN, Customer, Part, Quantity, Weight, Due Date, Recipe) as strictly read-only', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const createRes = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+
+      const createdBo = createRes.body.data;
+
+      const viewRes = await request(app)
+        .get(`/api/v1/batch-orders/${createdBo.id}`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`);
+
+      expect(viewRes.status).toBe(200);
+      const src = viewRes.body.data.sourceInformation;
+      expect(src).toBeDefined();
+
+      // 1. PO
+      expect(src.po.poNumber).toBe(mockPo.poNumber);
+      expect(src.po.readOnly).toBe(true);
+
+      // 2. GRN
+      expect(src.grn.grnNumber).toBe(mockGrn.grnNumber);
+      expect(src.grn.readOnly).toBe(true);
+
+      // 3. Customer
+      expect(src.customer.customerName).toBe(mockPo.supplierName);
+      expect(src.customer.readOnly).toBe(true);
+
+      // 4. Part
+      expect(src.part.itemCode).toBe(mockItem.itemCode);
+      expect(src.part.materialGrade).toBe(mockItem.materialGrade);
+      expect(src.part.readOnly).toBe(true);
+
+      // 5. Quantity
+      expect(src.quantity.targetQuantity).toBe(100);
+      expect(src.quantity.readOnly).toBe(true);
+
+      // 6. Weight
+      expect(src.weight.weightKg).toBe(50);
+      expect(src.weight.readOnly).toBe(true);
+
+      // 7. Due Date
+      expect(src.dueDate).toBeDefined();
+
+      // 8. Recipe
+      expect(src.recipe.recipeCode).toBe(mockRecipe.recipeCode);
+      expect(src.recipe.readOnly).toBe(true);
+
+      // Global flag
+      expect(viewRes.body.data.isReadOnlySourceData).toBe(true);
+    });
+
+    // 3. Recipe Corroboration & Lineage (BO -> Item -> Recipe)
+    it('should corroborate that the displayed Recipe corresponds to the BO Item and its material grade', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const createRes = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+
+      const createdBo = createRes.body.data;
+
+      const viewRes = await request(app)
+        .get(`/api/v1/batch-orders/${createdBo.id}`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`);
+
+      expect(viewRes.status).toBe(200);
+      const data = viewRes.body.data;
+
+      expect(data.recipeCorrespondence).toBeDefined();
+      expect(data.recipeCorrespondence.isCorresponded).toBe(true);
+      expect(data.recipeCorrespondence.itemCode).toBe(mockItem.itemCode);
+      expect(data.recipeCorrespondence.materialGrade).toBe(mockItem.materialGrade);
+      expect(data.recipeCorrespondence.recipeCode).toBe(mockRecipe.recipeCode);
+
+      expect(data.traceabilityLinks.boToItemToRecipe).toContain(createdBo.boNumber);
+      expect(data.traceabilityLinks.boToItemToRecipe).toContain(mockItem.itemCode);
+      expect(data.traceabilityLinks.boToItemToRecipe).toContain(mockRecipe.recipeCode);
+    });
+
+    // 4. Authoritative 15-Position Process Details Table
+    it('should return the authoritative 15-position process details table corresponding to the BO specification', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const createRes = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+
+      const createdBo = createRes.body.data;
+
+      // 4a. Via direct record view
+      const viewRes = await request(app)
+        .get(`/api/v1/batch-orders/${createdBo.id}`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`);
+
+      expect(viewRes.status).toBe(200);
+      const processDetails = viewRes.body.data.processDetails;
+      expect(processDetails).toBeDefined();
+      expect(processDetails).toHaveLength(15);
+      expect(processDetails[0].serialNumber).toBe(1);
+      expect(processDetails[14].serialNumber).toBe(15);
+
+      // 4b. Via dedicated process details endpoint
+      const procRes = await request(app)
+        .get(`/api/v1/batch-orders/${createdBo.id}/process-details`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`);
+
+      expect(procRes.status).toBe(200);
+      expect(procRes.body.data).toHaveLength(15);
+    });
+
+    // 5. Workflow State Machine: WAITING_FOR_PRODUCTION
+    it('should clearly display current workflow state as WAITING_FOR_PRODUCTION with exactly one active flag', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const createRes = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+
+      const createdBo = createRes.body.data;
+
+      const viewRes = await request(app)
+        .get(`/api/v1/batch-orders/${createdBo.id}`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`);
+
+      expect(viewRes.status).toBe(200);
+      const data = viewRes.body.data;
+
+      expect(data.status).toBe('WAITING_FOR_PRODUCTION');
+      expect(data.waitingForProduction).toBe(true);
+      expect(data.inProduction).toBe(false);
+      expect(data.waitingForInspection).toBe(false);
+      expect(data.inInspection).toBe(false);
+      expect(data.waitingForDispatch).toBe(false);
+      expect(data.dispatched).toBe(false);
+
+      expect(data.workflowState.waitingForProduction).toBe(true);
+      expect(data.workflowState.inProduction).toBe(false);
+      expect(data.workflowState.waitingForInspection).toBe(false);
+      expect(data.workflowState.inInspection).toBe(false);
+      expect(data.workflowState.waitingForDispatch).toBe(false);
+      expect(data.workflowState.dispatched).toBe(false);
+    });
+
+    // 6. Strict Immutability of Read-Only Source Data (PATCH Rejection)
+    it('should strictly reject any attempt to modify PO, GRN, Part, Recipe, Customer, Weight, or BO Number via PATCH', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const createRes = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+
+      const createdBo = createRes.body.data;
+
+      // Attempt 1: mutate poId
+      const resPo = await request(app)
+        .patch(`/api/v1/batch-orders/${createdBo.id}`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({ poId: 'po_tampered' });
+
+      expect([400, 422]).toContain(resPo.status);
+      expect(JSON.stringify(resPo.body)).toMatch(/Read-Only Source Data Violation|immutable/i);
+
+      // Attempt 2: mutate grnId
+      const resGrn = await request(app)
+        .patch(`/api/v1/batch-orders/${createdBo.id}`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({ grnId: 'grn_tampered' });
+
+      expect([400, 422]).toContain(resGrn.status);
+      expect(JSON.stringify(resGrn.body)).toMatch(/Read-Only Source Data Violation|immutable/i);
+
+      // Attempt 3: mutate itemId
+      const resItem = await request(app)
+        .patch(`/api/v1/batch-orders/${createdBo.id}`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({ itemId: 'item_tampered' });
+
+      expect([400, 422]).toContain(resItem.status);
+      expect(JSON.stringify(resItem.body)).toMatch(/Read-Only Source Data Violation|immutable/i);
+
+      // Attempt 4: mutate recipeId
+      const resRecipe = await request(app)
+        .patch(`/api/v1/batch-orders/${createdBo.id}`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({ recipeId: 'recipe_tampered' });
+
+      expect([400, 422]).toContain(resRecipe.status);
+      expect(JSON.stringify(resRecipe.body)).toMatch(/Read-Only Source Data Violation|immutable/i);
+
+      // Attempt 5: mutate customer
+      const resCust = await request(app)
+        .patch(`/api/v1/batch-orders/${createdBo.id}`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({ customer: { customerName: 'Rogue Customer' } });
+
+      expect([400, 422]).toContain(resCust.status);
+      expect(JSON.stringify(resCust.body)).toMatch(/Read-Only Source Data Violation|immutable/i);
+
+      // Attempt 6: mutate boNumber
+      const resBo = await request(app)
+        .patch(`/api/v1/batch-orders/${createdBo.id}`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({ boNumber: 'BO-HACK-001' });
+
+      expect([400, 422]).toContain(resBo.status);
+      expect(JSON.stringify(resBo.body)).toMatch(/Read-Only Source Data Violation|immutable/i);
+    });
+
+    // 7. Traceability Navigation Links (BO -> GRN -> PO and BO -> Item -> Recipe)
+    it('should provide full bidirectional traceability navigation for BO -> GRN -> PO and BO -> Item -> Recipe', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const createRes = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+
+      const createdBo = createRes.body.data;
+
+      // Check full record view traceability links
+      const viewRes = await request(app)
+        .get(`/api/v1/batch-orders/${createdBo.id}`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`);
+
+      expect(viewRes.status).toBe(200);
+      const links = viewRes.body.data.traceabilityLinks;
+      expect(links.boToGrnToPo).toContain(createdBo.boNumber);
+      expect(links.boToGrnToPo).toContain(mockGrn.grnNumber);
+      expect(links.boToGrnToPo).toContain(mockPo.poNumber);
+
+      expect(links.boToItemToRecipe).toContain(createdBo.boNumber);
+      expect(links.boToItemToRecipe).toContain(mockItem.itemCode);
+      expect(links.boToItemToRecipe).toContain(mockRecipe.recipeCode);
+
+      // Check dedicated genealogy endpoint
+      const genRes = await request(app)
+        .get(`/api/v1/batch-orders/${createdBo.id}/genealogy`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`);
+
+      expect(genRes.status).toBe(200);
+      expect(genRes.body.data.genealogy.isImmutable).toBe(true);
+      expect(genRes.body.data.genealogy.whichPo.poNumber).toBe(mockPo.poNumber);
+      expect(genRes.body.data.genealogy.whichGrn.grnNumber).toBe(mockGrn.grnNumber);
+      expect(genRes.body.data.genealogy.whichPart.itemCode).toBe(mockItem.itemCode);
+      expect(genRes.body.data.genealogy.whichRecipe.recipeCode).toBe(mockRecipe.recipeCode);
+    });
+
+    // 8. Multiple BOs with Different GRNs, Items, and Recipes
+    it('should maintain distinct, unpolluted genealogy and traceability across multiple BOs with different GRNs, Items, and Recipes', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      // Create BO 1: Ti-6Al-4V from mockGrn (PO-2026-00101)
+      const res1 = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+      expect(res1.status).toBe(201);
+      const bo1 = res1.body.data;
+
+      // Create BO 2: Inconel 718 from mockGrn2 (PO-2026-00202)
+      const res2 = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo2.id,
+          grnId: mockGrn2.id,
+          itemId: mockItem2.id,
+          recipeId: mockRecipe2.id,
+          quantity: 75,
+          weight: 40
+        });
+      expect(res2.status).toBe(201);
+      const bo2 = res2.body.data;
+
+      // Fetch BO 1 record view
+      const view1 = await request(app)
+        .get(`/api/v1/batch-orders/${bo1.id}`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`);
+      expect(view1.status).toBe(200);
+      expect(view1.body.data.hierarchy.displayHierarchy).toBe(
+        `${mockPo.poNumber} / ${mockGrn.grnNumber} / ${bo1.boNumber}`
+      );
+      expect(view1.body.data.sourceInformation.part.itemCode).toBe('MAT-TI-6AL4V');
+      expect(view1.body.data.sourceInformation.recipe.recipeCode).toBe('REC-TI-AGING');
+
+      // Fetch BO 2 record view
+      const view2 = await request(app)
+        .get(`/api/v1/batch-orders/${bo2.id}`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`);
+      expect(view2.status).toBe(200);
+      expect(view2.body.data.hierarchy.displayHierarchy).toBe(
+        `${mockPo2.poNumber} / ${mockGrn2.grnNumber} / ${bo2.boNumber}`
+      );
+      expect(view2.body.data.sourceInformation.part.itemCode).toBe('MAT-INCONEL-718');
+      expect(view2.body.data.sourceInformation.recipe.recipeCode).toBe('REC-IN-AGING');
+
+      // Verify no cross contamination
+      expect(view1.body.data.hierarchy.po.poNumber).not.toBe(view2.body.data.hierarchy.po.poNumber);
+      expect(view1.body.data.hierarchy.grn.grnNumber).not.toBe(view2.body.data.hierarchy.grn.grnNumber);
+    });
+
+    // 9. Authorization & RBAC Enforcement
+    it('should strictly enforce RBAC and reject unauthenticated or unauthorized access to the BO view', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const createRes = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+
+      const createdBo = createRes.body.data;
+
+      // 9a. Unauthenticated -> 401
+      const unauthRes = await request(app)
+        .get(`/api/v1/batch-orders/${createdBo.id}`)
+        .set('x-tenant-id', testTenant);
+      expect(unauthRes.status).toBe(401);
+
+      // 9b. Unauthorized role (MAINTENANCE_TECH lacking BATCH_ORDER_VIEW and PRODUCTION_JOB_VIEW) -> 403
+      const techToken = generateToken('usr_tech', ['MAINTENANCE_TECH']);
+      const forbiddenRes = await request(app)
+        .get(`/api/v1/batch-orders/${createdBo.id}`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${techToken}`);
+      expect(forbiddenRes.status).toBe(403);
+      expect(forbiddenRes.body.message).toMatch(/Access Denied/i);
+
+      // 9c. Authorized user with BATCH_ORDER_VIEW -> 200
+      const boViewToken = generateToken('usr_viewer', ['BATCH_ORDER_VIEWER']);
+      const allowedRes = await request(app)
+        .get(`/api/v1/batch-orders/${createdBo.id}`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${boViewToken}`);
+      expect(allowedRes.status).toBe(200);
+      expect(allowedRes.body.success).toBe(true);
+    });
+
+    // 10. Protection of Direct API Endpoints
+    it('should protect direct API endpoints against unauthenticated and unauthorized direct access', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const createRes = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+
+      const createdBo = createRes.body.data;
+      const techToken = generateToken('usr_tech', ['MAINTENANCE_TECH']);
+
+      // /batch-orders/:id/genealogy: unauth -> 401, unauthorized -> 403
+      const genUnauth = await request(app)
+        .get(`/api/v1/batch-orders/${createdBo.id}/genealogy`)
+        .set('x-tenant-id', testTenant);
+      expect(genUnauth.status).toBe(401);
+
+      const genForbidden = await request(app)
+        .get(`/api/v1/batch-orders/${createdBo.id}/genealogy`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${techToken}`);
+      expect(genForbidden.status).toBe(403);
+
+      // /batch-orders/:id/process-details: unauth -> 401, unauthorized -> 403
+      const procUnauth = await request(app)
+        .get(`/api/v1/batch-orders/${createdBo.id}/process-details`)
+        .set('x-tenant-id', testTenant);
+      expect(procUnauth.status).toBe(401);
+
+      const procForbidden = await request(app)
+        .get(`/api/v1/batch-orders/${createdBo.id}/process-details`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${techToken}`);
+      expect(procForbidden.status).toBe(403);
+
+      // /batch-orders query: unauth -> 401
+      const queryUnauth = await request(app)
+        .get('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant);
+      expect(queryUnauth.status).toBe(401);
+    });
+
+    // 11. Query by BO Number
+    it('should support authoritative record retrieval by business BO Number in addition to ID', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const createRes = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+
+      const createdBo = createRes.body.data;
+
+      const viewByBoNumber = await request(app)
+        .get(`/api/v1/batch-orders/${createdBo.boNumber}`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`);
+
+      expect(viewByBoNumber.status).toBe(200);
+      expect(viewByBoNumber.body.data.boNumber).toBe(createdBo.boNumber);
+      expect(viewByBoNumber.body.data.hierarchy.displayHierarchy).toBe(
+        `${mockPo.poNumber} / ${mockGrn.grnNumber} / ${createdBo.boNumber}`
+      );
+      expect(viewByBoNumber.body.data.sourceInformation.quantity.targetQuantity).toBe(100);
+    });
+  });
 });
+
 

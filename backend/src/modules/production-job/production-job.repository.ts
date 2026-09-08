@@ -56,7 +56,9 @@ export class ProductionJobRepository
     return this.findOne(tenantId, {
       $or: [
         { jobNumber: id.toUpperCase() },
-        { jobNumber: new RegExp(`^${id}$`, 'i') }
+        { jobNumber: new RegExp(`^${id}$`, 'i') },
+        { boNumber: id.toUpperCase() },
+        { boNumber: new RegExp(`^${id}$`, 'i') }
       ]
     });
   }

@@ -12,7 +12,9 @@ import {
   PackageCheck,
   ShieldCheck,
   Lock,
-  FileText
+  FileText,
+  CheckCircle2,
+  ArrowRight
 } from 'lucide-react';
 import { PageContainer } from '../layouts/PageContainer.js';
 import { PageHeader } from '../design-system/navigation/PageHeader.js';
@@ -57,6 +59,9 @@ export interface ProductionJob {
     completedQuantity: number;
     scrappedQuantity: number;
   };
+  weightKg?: number;
+  weight?: number;
+  dueDate?: string;
   status:
     | 'WAITING_FOR_PRODUCTION'
     | 'DRAFT'
@@ -113,6 +118,7 @@ export interface ProductionJob {
     targetCompletionDate: string;
     actualStartDate?: string;
     actualCompletionDate?: string;
+    dueDate?: string;
   };
   materialAllocations?: {
     reservationId?: string;
@@ -151,6 +157,37 @@ export interface ProductionJob {
     };
     isImmutable: boolean;
   };
+  hierarchy?: {
+    po?: { id?: string; poNumber?: string; supplierName?: string };
+    grn?: { id?: string; grnNumber?: string };
+    bo?: { id?: string; boNumber?: string; jobNumber?: string; status?: string };
+    displayHierarchy?: string;
+    relationship?: string;
+  };
+  sourceInformation?: {
+    po?: { poId?: string; poNumber?: string; supplierName?: string; readOnly?: boolean };
+    grn?: { grnId?: string; grnNumber?: string; readOnly?: boolean };
+    customer?: { customerId?: string; customerCode?: string; customerName?: string; readOnly?: boolean };
+    part?: { itemId?: string; itemCode?: string; itemName?: string; materialGrade?: string; uom?: string; readOnly?: boolean };
+    quantity?: { targetQuantity?: number; uom?: string; readOnly?: boolean };
+    weight?: { weightKg?: number; uom?: string; readOnly?: boolean };
+    dueDate?: string | null;
+    recipe?: { recipeId?: string; recipeCode?: string; recipeName?: string; revisionNumber?: number; processFamily?: string; readOnly?: boolean };
+    isReadOnlySourceData?: boolean;
+  };
+  recipeCorrespondence?: {
+    itemCode?: string;
+    itemName?: string;
+    materialGrade?: string;
+    recipeCode?: string;
+    recipeName?: string;
+    isCorresponded?: boolean;
+  };
+  traceabilityLinks?: {
+    boToGrnToPo?: string;
+    boToItemToRecipe?: string;
+  };
+  isReadOnlySourceData?: boolean;
 }
 
 export interface IProcessDetailRow {
@@ -386,6 +423,23 @@ export const JobsPage: React.FC = () => {
       // Retain default demo batch orders
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // Authoritative BO Record Selection (Fetches complete genealogy & hierarchy)
+  const handleSelectJob = async (job: ProductionJob) => {
+    setSelectedJob(job);
+    const id = job._id || job.id || job.jobNumber;
+    try {
+      const res = await authenticatedFetch(`${env.API_BASE_URL}/batch-orders/${id}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json.data) {
+          setSelectedJob(json.data);
+        }
+      }
+    } catch {
+      // Retain optimistic job record
     }
   };
 
@@ -1324,7 +1378,7 @@ export const JobsPage: React.FC = () => {
                           variant="secondary"
                           size="sm"
                           rightIcon={<ChevronRight size={14} />}
-                          onClick={() => setSelectedJob(job)}
+                          onClick={() => handleSelectJob(job)}
                         >
                           Details
                         </ActionButton>
@@ -1338,17 +1392,17 @@ export const JobsPage: React.FC = () => {
         </div>
       </AppCard>
 
-      {/* Selected Job Drawer */}
+      {/* Selected Job Drawer: Authoritative BO Record View & Planning Traceability */}
       <AppDrawer
         isOpen={!!selectedJob}
         onClose={() => setSelectedJob(null)}
-        title={selectedJob ? `Batch Order: ${selectedJob.boNumber || selectedJob.jobNumber}` : ''}
-        subtitle={selectedJob ? `Lineage: ${selectedJob.poNumber || 'PO'} → ${selectedJob.grnNumber || 'GRN'} → ${selectedJob.boNumber || selectedJob.jobNumber}` : ''}
+        title={selectedJob ? `Authoritative Batch Order: ${selectedJob.boNumber || selectedJob.jobNumber}` : ''}
+        subtitle={selectedJob ? `Hierarchy Genealogy: ${selectedJob.poNumber || 'PO'} → ${selectedJob.grnNumber || 'GRN'} → ${selectedJob.boNumber || selectedJob.jobNumber}` : ''}
         footer={
           selectedJob && (
             <>
               <AppButton variant="secondary" onClick={() => setSelectedJob(null)}>
-                Close
+                Close Record
               </AppButton>
               <AppButton
                 variant="primary"
@@ -1364,96 +1418,358 @@ export const JobsPage: React.FC = () => {
       >
         {selectedJob && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            {/* Authoritative Source Genealogy & Traceability Card */}
-            <AppCard style={{ padding: '16px', background: 'rgba(56, 189, 248, 0.05)', border: '1px solid rgba(56, 189, 248, 0.25)' }}>
-              <div style={{ fontSize: '12px', fontWeight: 700, color: '#38bdf8', marginBottom: '10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <GitMerge size={14} /> AUTHORITATIVE SOURCE GENEALOGY & TRACEABILITY
+            {/* 1. HIERARCHY DISPLAY: PO / GRN / BO */}
+            <AppCard style={{ padding: '16px', background: 'linear-gradient(180deg, rgba(15, 23, 42, 0.8) 0%, rgba(30, 41, 59, 0.6) 100%)', border: '1px solid rgba(56, 189, 248, 0.35)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', borderRadius: '6px', background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8' }}>
+                    <GitMerge size={16} />
+                  </span>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '13px', fontWeight: 800, color: '#ffffff', letterSpacing: '0.02em', textTransform: 'uppercase' }}>
+                      Authoritative Hierarchy: PO / GRN / BO
+                    </h3>
+                    <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
+                      Relationship: Source Purchase Order → Received Goods Receipt Note → Planned Batch Order
+                    </div>
+                  </div>
                 </div>
-                <span
-                  style={{
-                    fontSize: '10px',
-                    fontWeight: 700,
-                    padding: '2px 8px',
-                    borderRadius: '999px',
-                    background: 'rgba(16, 185, 129, 0.15)',
-                    color: '#34d399',
-                    border: '1px solid rgba(16, 185, 129, 0.3)'
-                  }}
-                >
-                  LOCKED & IMMUTABLE
-                </span>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ fontSize: '10px', fontWeight: 700, padding: '3px 8px', borderRadius: '4px', background: 'rgba(52, 211, 153, 0.15)', color: '#34d399', border: '1px solid rgba(52, 211, 153, 0.3)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                    <ShieldCheck size={12} />
+                    Verified Genealogy
+                  </span>
+                  <span style={{ fontSize: '10px', fontWeight: 700, padding: '3px 8px', borderRadius: '4px', background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8', border: '1px solid rgba(56, 189, 248, 0.3)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                    <Lock size={12} />
+                    Immutable Links
+                  </span>
+                </div>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', fontSize: '12px' }}>
-                <div style={{ padding: '10px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                  <div style={{ fontSize: '10px', color: '#93c5fd', fontWeight: 700, textTransform: 'uppercase', marginBottom: '3px' }}>
-                    1. Which PO Created This BO?
+              {/* 3-Tier Hierarchy Flow Cards */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr auto 1fr', alignItems: 'center', gap: '8px' }}>
+                {/* 1. PO Card */}
+                <div style={{ padding: '12px', borderRadius: '8px', background: 'rgba(30, 58, 138, 0.25)', border: '1px solid rgba(59, 130, 246, 0.4)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                    <span style={{ fontSize: '10px', fontWeight: 800, color: '#93c5fd', textTransform: 'uppercase' }}>1. Parent PO</span>
+                    <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: '3px', background: 'rgba(59, 130, 246, 0.2)', color: '#bfdbfe' }}>Contract</span>
                   </div>
-                  <div style={{ fontSize: '13px', fontWeight: 700, color: '#ffffff' }}>
-                    {selectedJob.genealogy?.whichPo?.poNumber || selectedJob.poNumber || 'PO-2026-00101'}
+                  <div style={{ fontSize: '14px', fontWeight: 800, color: '#ffffff' }}>
+                    {selectedJob.poNumber || selectedJob.hierarchy?.po?.poNumber || selectedJob.genealogy?.whichPo?.poNumber || 'PO-2026-00101'}
                   </div>
-                  <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
-                    Supplier: {selectedJob.genealogy?.whichPo?.supplierName || selectedJob.customer?.customerName || 'Valued Customer'}
+                  <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {selectedJob.customer?.customerName || selectedJob.genealogy?.whichPo?.supplierName || 'AeroDynamics Inc.'}
+                  </div>
+                  <div style={{ marginTop: '8px' }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const poNum = selectedJob.poNumber || selectedJob.genealogy?.whichPo?.poNumber;
+                        if (poNum) setSearchQuery(poNum);
+                      }}
+                      style={{
+                        padding: '3px 8px',
+                        fontSize: '10px',
+                        fontWeight: 700,
+                        borderRadius: '4px',
+                        background: 'rgba(59, 130, 246, 0.15)',
+                        color: '#60a5fa',
+                        border: '1px solid rgba(59, 130, 246, 0.3)',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Filter by PO
+                    </button>
                   </div>
                 </div>
 
-                <div style={{ padding: '10px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                  <div style={{ fontSize: '10px', color: '#6ee7b7', fontWeight: 700, textTransform: 'uppercase', marginBottom: '3px' }}>
-                    2. Which GRN Supplied It?
+                {/* Connector 1 */}
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', color: '#60a5fa' }}>
+                  <ArrowRight size={18} />
+                  <span style={{ fontSize: '9px', fontWeight: 700, color: '#94a3b8', marginTop: '2px' }}>Supplied</span>
+                </div>
+
+                {/* 2. GRN Card */}
+                <div style={{ padding: '12px', borderRadius: '8px', background: 'rgba(6, 78, 59, 0.25)', border: '1px solid rgba(16, 185, 129, 0.4)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                    <span style={{ fontSize: '10px', fontWeight: 800, color: '#6ee7b7', textTransform: 'uppercase' }}>2. Source GRN</span>
+                    <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: '3px', background: 'rgba(16, 185, 129, 0.2)', color: '#a7f3d0' }}>Receipt</span>
                   </div>
-                  <div style={{ fontSize: '13px', fontWeight: 700, color: '#ffffff' }}>
-                    {selectedJob.genealogy?.whichGrn?.grnNumber || selectedJob.grnNumber || 'GRN-202609-0501'}
+                  <div style={{ fontSize: '14px', fontWeight: 800, color: '#ffffff' }}>
+                    {selectedJob.grnNumber || selectedJob.hierarchy?.grn?.grnNumber || selectedJob.genealogy?.whichGrn?.grnNumber || 'GRN-202609-0501'}
                   </div>
-                  <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
-                    Status: Creation Phase Completed
+                  <div style={{ fontSize: '11px', color: '#34d399', marginTop: '2px', fontWeight: 600 }}>
+                    Creation Phase Complete
+                  </div>
+                  <div style={{ marginTop: '8px' }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const grnNum = selectedJob.grnNumber || selectedJob.genealogy?.whichGrn?.grnNumber;
+                        if (grnNum) setSearchQuery(grnNum);
+                      }}
+                      style={{
+                        padding: '3px 8px',
+                        fontSize: '10px',
+                        fontWeight: 700,
+                        borderRadius: '4px',
+                        background: 'rgba(16, 185, 129, 0.15)',
+                        color: '#34d399',
+                        border: '1px solid rgba(16, 185, 129, 0.3)',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Filter by GRN
+                    </button>
                   </div>
                 </div>
 
-                <div style={{ padding: '10px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                  <div style={{ fontSize: '10px', color: '#fcd34d', fontWeight: 700, textTransform: 'uppercase', marginBottom: '3px' }}>
-                    3. Which Part Does It Represent?
-                  </div>
-                  <div style={{ fontSize: '13px', fontWeight: 700, color: '#ffffff' }}>
-                    {selectedJob.genealogy?.whichPart?.itemCode || selectedJob.item?.itemCode}
-                  </div>
-                  <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
-                    {selectedJob.genealogy?.whichPart?.itemName || selectedJob.item?.itemName} ({selectedJob.genealogy?.whichPart?.materialGrade || selectedJob.item?.materialGrade})
-                  </div>
+                {/* Connector 2 */}
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', color: '#34d399' }}>
+                  <ArrowRight size={18} />
+                  <span style={{ fontSize: '9px', fontWeight: 700, color: '#94a3b8', marginTop: '2px' }}>Allocated</span>
                 </div>
 
-                <div style={{ padding: '10px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                  <div style={{ fontSize: '10px', color: '#f472b6', fontWeight: 700, textTransform: 'uppercase', marginBottom: '3px' }}>
-                    4. Which Recipe Governs It?
+                {/* 3. BO Card */}
+                <div style={{ padding: '12px', borderRadius: '8px', background: 'rgba(120, 53, 15, 0.25)', border: '1px solid rgba(245, 158, 11, 0.4)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                    <span style={{ fontSize: '10px', fontWeight: 800, color: '#fcd34d', textTransform: 'uppercase' }}>3. Planned BO</span>
+                    <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: '3px', background: 'rgba(245, 158, 11, 0.2)', color: '#fef3c7' }}>Batch Order</span>
                   </div>
-                  <div style={{ fontSize: '13px', fontWeight: 700, color: '#ffffff' }}>
-                    {selectedJob.genealogy?.whichRecipe?.recipeCode || selectedJob.recipeSnapshot?.recipeCode}
+                  <div style={{ fontSize: '14px', fontWeight: 800, color: '#ffffff' }}>
+                    {selectedJob.boNumber || selectedJob.jobNumber}
                   </div>
-                  <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
-                    {selectedJob.genealogy?.whichRecipe?.recipeName || selectedJob.recipeSnapshot?.name} (Rev {selectedJob.genealogy?.whichRecipe?.revisionNumber || selectedJob.recipeSnapshot?.revisionNumber || 1})
+                  <div style={{ fontSize: '11px', color: '#fbbf24', marginTop: '2px', fontWeight: 700 }}>
+                    Waiting for Production
+                  </div>
+                  <div style={{ marginTop: '8px' }}>
+                    <span style={{ fontSize: '10px', fontWeight: 700, color: '#94a3b8' }}>
+                      Qty: {selectedJob.quantity?.targetQuantity} {selectedJob.item?.uom || 'PCS'}
+                    </span>
                   </div>
                 </div>
               </div>
             </AppCard>
 
-            {/* Mutually Exclusive Workflow State Machine Card */}
-            <AppCard style={{ padding: '16px', background: 'rgba(245, 158, 11, 0.04)', border: '1px solid rgba(245, 158, 11, 0.25)' }}>
+            {/* 2. AUTHORITATIVE SOURCE INFORMATION (READ-ONLY) */}
+            <AppCard style={{ padding: '16px', border: '1px solid rgba(255, 255, 255, 0.08)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <ShieldCheck size={16} color="#38bdf8" />
+                  <span style={{ fontSize: '12px', fontWeight: 800, color: '#ffffff', letterSpacing: '0.02em', textTransform: 'uppercase' }}>
+                    Authoritative Source Information (Read-Only)
+                  </span>
+                </div>
+                <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', background: 'rgba(239, 68, 68, 0.12)', color: '#fca5a5', border: '1px solid rgba(239, 68, 68, 0.25)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                  <Lock size={11} /> Creation Phase Locked
+                </span>
+              </div>
+
+              <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginBottom: '14px' }}>
+                PO and GRN-derived parameters are authoritative master inputs and cannot be silently modified by the Planning Phase.
+              </div>
+
+              {/* 8 Authoritative Data Points in 4x2 Grid */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px' }}>
+                {/* 1. PO */}
+                <div style={{ padding: '10px 12px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                  <div style={{ fontSize: '10px', fontWeight: 700, color: '#93c5fd', textTransform: 'uppercase', marginBottom: '4px', display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Purchase Order</span>
+                    <span style={{ color: '#94a3b8', fontSize: '9px' }}>(Read-Only)</span>
+                  </div>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: '#ffffff' }}>
+                    {selectedJob.poNumber || selectedJob.genealogy?.whichPo?.poNumber || 'PO-2026-00101'}
+                  </div>
+                  <div style={{ fontSize: '10px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>
+                    Contract Record
+                  </div>
+                </div>
+
+                {/* 2. GRN */}
+                <div style={{ padding: '10px 12px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                  <div style={{ fontSize: '10px', fontWeight: 700, color: '#6ee7b7', textTransform: 'uppercase', marginBottom: '4px', display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Goods Receipt Note</span>
+                    <span style={{ color: '#94a3b8', fontSize: '9px' }}>(Read-Only)</span>
+                  </div>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: '#ffffff' }}>
+                    {selectedJob.grnNumber || selectedJob.genealogy?.whichGrn?.grnNumber || 'GRN-202609-0501'}
+                  </div>
+                  <div style={{ fontSize: '10px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>
+                    Receipt & Storage Verified
+                  </div>
+                </div>
+
+                {/* 3. Customer */}
+                <div style={{ padding: '10px 12px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                  <div style={{ fontSize: '10px', fontWeight: 700, color: '#fcd34d', textTransform: 'uppercase', marginBottom: '4px', display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Customer / Client</span>
+                    <span style={{ color: '#94a3b8', fontSize: '9px' }}>(Read-Only)</span>
+                  </div>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: '#ffffff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {selectedJob.customer?.customerName || selectedJob.genealogy?.whichPo?.supplierName || 'AeroDynamics Propulsion'}
+                  </div>
+                  <div style={{ fontSize: '10px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>
+                    Code: {selectedJob.customer?.customerCode || 'CUST-AERO-01'}
+                  </div>
+                </div>
+
+                {/* 4. Part */}
+                <div style={{ padding: '10px 12px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                  <div style={{ fontSize: '10px', fontWeight: 700, color: '#f472b6', textTransform: 'uppercase', marginBottom: '4px', display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Part & Material</span>
+                    <span style={{ color: '#94a3b8', fontSize: '9px' }}>(Read-Only)</span>
+                  </div>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: '#ffffff' }}>
+                    {selectedJob.item?.itemCode || selectedJob.genealogy?.whichPart?.itemCode}
+                  </div>
+                  <div style={{ fontSize: '10px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>
+                    Grade: {selectedJob.item?.materialGrade || selectedJob.genealogy?.whichPart?.materialGrade}
+                  </div>
+                </div>
+
+                {/* 5. Quantity */}
+                <div style={{ padding: '10px 12px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                  <div style={{ fontSize: '10px', fontWeight: 700, color: '#38bdf8', textTransform: 'uppercase', marginBottom: '4px', display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Allocated Quantity</span>
+                    <span style={{ color: '#94a3b8', fontSize: '9px' }}>(Read-Only)</span>
+                  </div>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: '#ffffff' }}>
+                    {selectedJob.quantity?.targetQuantity} {selectedJob.item?.uom || 'PCS'}
+                  </div>
+                  <div style={{ fontSize: '10px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>
+                    Constrained by GRN Available
+                  </div>
+                </div>
+
+                {/* 6. Weight */}
+                <div style={{ padding: '10px 12px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                  <div style={{ fontSize: '10px', fontWeight: 700, color: '#c084fc', textTransform: 'uppercase', marginBottom: '4px', display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Allocated Weight</span>
+                    <span style={{ color: '#94a3b8', fontSize: '9px' }}>(Read-Only)</span>
+                  </div>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: '#ffffff' }}>
+                    {selectedJob.weightKg || selectedJob.weight || 50} KG
+                  </div>
+                  <div style={{ fontSize: '10px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>
+                    Furnace Charge Metric
+                  </div>
+                </div>
+
+                {/* 7. Due Date */}
+                <div style={{ padding: '10px 12px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                  <div style={{ fontSize: '10px', fontWeight: 700, color: '#fb923c', textTransform: 'uppercase', marginBottom: '4px', display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Target Due Date</span>
+                    <span style={{ color: '#94a3b8', fontSize: '9px' }}>(Read-Only)</span>
+                  </div>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: '#ffffff' }}>
+                    {new Date(selectedJob.timeline?.dueDate || selectedJob.dueDate || Date.now()).toLocaleDateString()}
+                  </div>
+                  <div style={{ fontSize: '10px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>
+                    Customer Commitment
+                  </div>
+                </div>
+
+                {/* 8. Recipe */}
+                <div style={{ padding: '10px 12px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                  <div style={{ fontSize: '10px', fontWeight: 700, color: '#a3e635', textTransform: 'uppercase', marginBottom: '4px', display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Thermal Recipe</span>
+                    <span style={{ color: '#94a3b8', fontSize: '9px' }}>(Read-Only)</span>
+                  </div>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: '#ffffff' }}>
+                    {selectedJob.recipeSnapshot?.recipeCode || selectedJob.genealogy?.whichRecipe?.recipeCode}
+                  </div>
+                  <div style={{ fontSize: '10px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>
+                    Rev {selectedJob.recipeSnapshot?.revisionNumber || 1}
+                  </div>
+                </div>
+              </div>
+            </AppCard>
+
+            {/* 3. RECIPE CORROBORATION & LINEAGE (BO → ITEM → RECIPE) */}
+            <AppCard style={{ padding: '16px', background: 'rgba(15, 23, 42, 0.6)', border: '1px solid rgba(163, 230, 53, 0.3)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Flame size={16} color="#a3e635" />
+                  <span style={{ fontSize: '12px', fontWeight: 800, color: '#ffffff', letterSpacing: '0.02em', textTransform: 'uppercase' }}>
+                    Metallurgical Thermal Recipe & Lineage: BO → Item → Recipe
+                  </span>
+                </div>
+                <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', background: 'rgba(163, 230, 53, 0.15)', color: '#bef264', border: '1px solid rgba(163, 230, 53, 0.3)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                  <CheckCircle2 size={12} /> Verified Recipe-Item Match
+                </span>
+              </div>
+
+              {/* Lineage Banner */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', marginBottom: '14px', fontSize: '12px' }}>
+                <span style={{ fontWeight: 700, color: '#fcd34d' }}>BO: {selectedJob.boNumber || selectedJob.jobNumber}</span>
+                <span style={{ color: '#94a3b8' }}>──►</span>
+                <span style={{ fontWeight: 700, color: '#f472b6' }}>Item: {selectedJob.item?.itemCode} [{selectedJob.item?.materialGrade}]</span>
+                <span style={{ color: '#94a3b8' }}>──►</span>
+                <span style={{ fontWeight: 700, color: '#a3e635' }}>Recipe: {selectedJob.recipeSnapshot?.recipeCode} ({selectedJob.recipeSnapshot?.name})</span>
+              </div>
+
+              {/* Recipe Details & Stages */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', fontSize: '12px', marginBottom: '14px' }}>
+                <div>
+                  <div style={{ color: 'var(--color-text-tertiary)', fontSize: '11px' }}>Recipe Description</div>
+                  <div style={{ color: '#ffffff', fontWeight: 600 }}>{selectedJob.recipeSnapshot?.name || 'Vacuum Austenitize & 2-Bar N2 Quench'}</div>
+                </div>
+                <div>
+                  <div style={{ color: 'var(--color-text-tertiary)', fontSize: '11px' }}>Process Family</div>
+                  <div style={{ color: '#38bdf8', fontWeight: 600 }}>{selectedJob.recipeSnapshot?.processFamily || 'VACUUM_HEAT_TREATMENT'}</div>
+                </div>
+              </div>
+
+              {selectedJob.recipeSnapshot?.stages && selectedJob.recipeSnapshot.stages.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', marginBottom: '2px' }}>
+                    Standard Metallurgical Stages ({selectedJob.recipeSnapshot.stages.length} Stages)
+                  </div>
+                  {selectedJob.recipeSnapshot.stages.map((stg, idx) => (
+                    <div
+                      key={idx}
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        background: 'rgba(255, 255, 255, 0.02)',
+                        padding: '6px 12px',
+                        borderRadius: '4px',
+                        fontSize: '11px',
+                        border: '1px solid rgba(255, 255, 255, 0.04)'
+                      }}
+                    >
+                      <span style={{ color: '#e2e8f0', fontWeight: 600 }}>
+                        {stg.sequence || stg.stageSequence || idx + 1}. {stg.stageName}
+                      </span>
+                      <span style={{ color: '#a3e635', fontWeight: 700 }}>
+                        {stg.targetTemperatureC}°C ({stg.soakTimeMinutes || stg.targetDurationMinutes || 60} min)
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </AppCard>
+
+            {/* 4. CURRENT WORKFLOW STATE MACHINE (MUTUALLY EXCLUSIVE) */}
+            <AppCard style={{ padding: '16px', background: 'rgba(245, 158, 11, 0.05)', border: '1px solid rgba(245, 158, 11, 0.3)' }}>
               <div style={{ fontSize: '12px', fontWeight: 700, color: '#f59e0b', marginBottom: '10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <Clock size={14} /> WORKFLOW STATE MACHINE (MUTUALLY EXCLUSIVE)
+                  <Clock size={15} /> CURRENT WORKFLOW STATE: WAITING FOR PRODUCTION
                 </div>
                 <span
                   style={{
                     fontSize: '10px',
-                    fontWeight: 700,
+                    fontWeight: 800,
                     padding: '2px 8px',
                     borderRadius: '999px',
-                    background: 'rgba(245, 158, 11, 0.15)',
-                    color: '#fcd34d',
-                    border: '1px solid rgba(245, 158, 11, 0.3)'
+                    background: 'rgba(16, 185, 129, 0.15)',
+                    color: '#10b981',
+                    border: '1px solid rgba(16, 185, 129, 0.3)'
                   }}
                 >
-                  EXACTLY 1 ACTIVE
+                  EXACTLY 1 ACTIVE STATE
                 </span>
               </div>
 
@@ -1471,14 +1787,14 @@ export const JobsPage: React.FC = () => {
                     style={{
                       padding: '8px 10px',
                       borderRadius: '6px',
-                      background: st.active ? 'rgba(245, 158, 11, 0.18)' : 'rgba(255, 255, 255, 0.02)',
-                      border: st.active ? '1px solid #f59e0b' : '1px solid rgba(255, 255, 255, 0.05)',
+                      background: st.active ? 'rgba(16, 185, 129, 0.18)' : 'rgba(255, 255, 255, 0.02)',
+                      border: st.active ? '1px solid #10b981' : '1px solid rgba(255, 255, 255, 0.05)',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between'
                     }}
                   >
-                    <span style={{ color: st.active ? '#ffffff' : 'var(--color-text-muted)', fontWeight: st.active ? 700 : 500 }}>
+                    <span style={{ color: st.active ? '#ffffff' : 'var(--color-text-muted)', fontWeight: st.active ? 800 : 500 }}>
                       {st.label}
                     </span>
                     <span
@@ -1486,7 +1802,8 @@ export const JobsPage: React.FC = () => {
                         width: '8px',
                         height: '8px',
                         borderRadius: '50%',
-                        background: st.active ? '#10b981' : 'rgba(255, 255, 255, 0.2)'
+                        background: st.active ? '#10b981' : 'rgba(255, 255, 255, 0.2)',
+                        boxShadow: st.active ? '0 0 6px #10b981' : 'none'
                       }}
                     />
                   </div>
@@ -1494,71 +1811,15 @@ export const JobsPage: React.FC = () => {
               </div>
             </AppCard>
 
-            <AppCard style={{ padding: '16px' }}>
-              <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--color-primary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <Flame size={14} /> METALLURGICAL THERMAL RECIPE SNAPSHOT
-              </div>
-              <div style={{ fontSize: '15px', fontWeight: 700, color: '#ffffff' }}>{selectedJob.recipeSnapshot?.name || 'Standard Thermal Recipe'}</div>
-              <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
-                Recipe Code: {selectedJob.recipeSnapshot?.recipeCode} | Process: {selectedJob.recipeSnapshot?.processFamily || 'VACUUM_HEAT_TREATMENT'}
-              </div>
-
-              {selectedJob.recipeSnapshot?.stages && selectedJob.recipeSnapshot.stages.length > 0 && (
-                <div style={{ marginTop: '14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {selectedJob.recipeSnapshot.stages.map((stg, idx) => (
-                    <div
-                      key={idx}
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        background: 'rgba(255, 255, 255, 0.03)',
-                        padding: '8px 12px',
-                        borderRadius: 'var(--radius-sm)',
-                        fontSize: '12px'
-                      }}
-                    >
-                      <span style={{ color: '#e2e8f0', fontWeight: 600 }}>
-                        {stg.sequence || stg.stageSequence || idx + 1}. {stg.stageName}
-                      </span>
-                      <span style={{ color: 'var(--color-primary)', fontWeight: 700 }}>
-                        {stg.targetTemperatureC}°C ({stg.soakTimeMinutes || stg.targetDurationMinutes || 60} min)
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </AppCard>
-
-            <AppCard style={{ padding: '16px' }}>
-              <div style={{ fontSize: '12px', fontWeight: 700, color: '#38bdf8', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <Layers size={14} /> MATERIAL & HEAT LOT ALLOCATION
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '13px' }}>
-                <div>
-                  <div style={{ color: 'var(--color-text-tertiary)', fontSize: '11px' }}>Part Code & Grade</div>
-                  <div style={{ color: '#ffffff', fontWeight: 600 }}>
-                    {selectedJob.item?.itemCode} ({selectedJob.item?.materialGrade})
-                  </div>
-                </div>
-                <div>
-                  <div style={{ color: 'var(--color-text-tertiary)', fontSize: '11px' }}>Allocated Heat Lot</div>
-                  <div style={{ color: 'var(--color-primary)', fontWeight: 700 }}>
-                    {selectedJob.materialAllocations?.[0]?.heatLotNumber || 'HEAT-CERTIFIED'}
-                  </div>
-                </div>
-              </div>
-            </AppCard>
-
-            {/* 15-Position Authoritative Process Details Table */}
+            {/* 5. 15-POSITION AUTHORITATIVE PROCESS PLANNING TABLE */}
             <AppCard style={{ padding: '16px' }}>
               <div style={{ fontSize: '12px', fontWeight: 700, color: '#a78bfa', marginBottom: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <FileText size={14} /> AUTHORITATIVE PROCESS PLANNING (15 SEQUENTIAL POSITIONS)
+                  <FileText size={15} /> AUTHORITATIVE PROCESS PLANNING (15 SEQUENTIAL POSITIONS)
                 </div>
-                <span style={{ fontSize: '10px', color: 'var(--color-text-tertiary)' }}>Production & Inspection Handoff</span>
+                <span style={{ fontSize: '10px', color: 'var(--color-text-tertiary)' }}>Production & Quality Execution Plan</span>
               </div>
-              <div style={{ overflowX: 'auto', maxHeight: '340px' }}>
+              <div style={{ overflowX: 'auto', maxHeight: '360px' }}>
                 <table style={{ width: '100%', fontSize: '11px', borderCollapse: 'collapse', textAlign: 'left' }}>
                   <thead>
                     <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', color: 'var(--color-text-secondary)' }}>

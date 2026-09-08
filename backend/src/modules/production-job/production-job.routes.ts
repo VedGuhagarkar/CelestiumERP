@@ -140,18 +140,18 @@ productionJobRouter.get(
   asyncHandler(productionJobController.getJobsByPlan)
 );
 
-// 7. Get Production Job Details & History by ID
+// 7. Get Production Job / Batch Order Details & History by ID
 productionJobRouter.get(
-  '/:id',
+  ['/:id', '/batch-orders/:id'],
   authenticateJwt,
-  requirePermission(PERMISSIONS.PRODUCTION_JOB_VIEW),
+  requireAnyPermission(PERMISSIONS.BATCH_ORDER_VIEW, PERMISSIONS.PRODUCTION_JOB_VIEW),
   validateRequest(getJobByIdSchema),
   asyncHandler(productionJobController.getJobById)
 );
 
 // 8. Update Production Job Details Before Execution
 productionJobRouter.patch(
-  '/:id',
+  ['/:id', '/batch-orders/:id'],
   authenticateJwt,
   requirePermission(PERMISSIONS.PRODUCTION_JOB_UPDATE),
   validateRequest(updateJobSchema),

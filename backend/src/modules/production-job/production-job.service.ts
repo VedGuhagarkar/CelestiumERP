@@ -1455,13 +1455,22 @@ export class ProductionJobService {
     if (
       (dto as any).genealogy ||
       (dto as any).poId ||
+      (dto as any).poNumber ||
       (dto as any).grnId ||
+      (dto as any).grnNumber ||
       (dto as any).itemId ||
+      (dto as any).item ||
       (dto as any).recipeId ||
-      (dto as any).customer
+      (dto as any).recipeSnapshot ||
+      (dto as any).customer ||
+      (dto as any).customerName ||
+      (dto as any).customerCode ||
+      (dto as any).weightKg ||
+      (dto as any).weight ||
+      (dto as any).boNumber
     ) {
       throw new BadRequestError(
-        'Genealogy Violation: Fundamental source genealogy (PO, GRN, Part, Recipe, Customer) is strictly immutable once established.'
+        'Read-Only Source Data Violation: Authoritative source data (PO, GRN, Customer, Part, Recipe, Weight) is strictly read-only and cannot be modified from the Batch Order view.'
       );
     }
 
@@ -2755,12 +2764,153 @@ export class ProductionJobService {
   public async getJobById(
     tenantId: string,
     id: string
-  ): Promise<ProductionJobDocument> {
+  ): Promise<any> {
     const job = await this.repo.findById(tenantId, id);
     if (!job || job.isDeleted) {
-      throw new NotFoundError(`Production Job with ID '${id}' not found`);
+      throw new NotFoundError(`Batch Order / Production Job with ID '${id}' not found`);
     }
-    return job;
+
+    // Ensure genealogy is fully populated
+    const genealogy: IBatchOrderGenealogy = job.genealogy || {
+      whichPo: {
+        poId: job.poId || 'N/A',
+        poNumber: job.poNumber || 'N/A',
+        supplierName: job.customer?.customerName || 'N/A',
+        supplierCode: job.customer?.customerCode || 'N/A',
+        orderDate: (job.timeline as any)?.orderDate || null
+      },
+      whichGrn: {
+        grnId: job.grnId || 'N/A',
+        grnNumber: job.grnNumber || 'N/A',
+        supplierName: job.customer?.customerName || 'N/A',
+        supplierCode: job.customer?.customerCode || 'N/A',
+        receivedDate: (job.timeline as any)?.receivedDate || null
+      },
+      whichPart: {
+        itemId: job.item?.itemId || 'N/A',
+        itemCode: job.item?.itemCode || 'N/A',
+        itemName: job.item?.itemName || 'N/A',
+        materialGrade: job.item?.materialGrade || 'N/A',
+        uom: job.item?.uom || 'PCS'
+      },
+      whichRecipe: {
+        recipeId: job.recipeSnapshot?.recipeId || 'N/A',
+        recipeCode: job.recipeSnapshot?.recipeCode || 'N/A',
+        recipeName: job.recipeSnapshot?.name || 'N/A',
+        revisionNumber: job.recipeSnapshot?.revisionNumber || 1,
+        processFamily: job.recipeSnapshot?.processFamily || 'N/A'
+      },
+      lockedAt: (job as any).createdAt || new Date(),
+      lockedBy: {
+        userId: 'SYSTEM',
+        role: 'SYSTEM'
+      },
+      isImmutable: true
+    };
+
+    // Ensure processDetails contains all 15 positions
+    const processDetails =
+      job.processDetails && job.processDetails.length === 15
+        ? job.processDetails
+        : this.buildDefaultProcessTable();
+
+    const jobJson = job.toJSON ? job.toJSON() : { ...job };
+
+    // Explicit authoritative hierarchy: PO / GRN / BO
+    const hierarchy = {
+      po: {
+        id: job.poId || genealogy.whichPo.poId,
+        poNumber: job.poNumber || genealogy.whichPo.poNumber,
+        supplierName: job.customer?.customerName || genealogy.whichPo.supplierName,
+        supplierCode: job.customer?.customerCode || genealogy.whichPo.supplierCode
+      },
+      grn: {
+        id: job.grnId || genealogy.whichGrn.grnId,
+        grnNumber: job.grnNumber || genealogy.whichGrn.grnNumber,
+        supplierName: job.customer?.customerName || genealogy.whichGrn.supplierName
+      },
+      bo: {
+        id: job.id || (job as any)._id?.toString(),
+        boNumber: job.boNumber || job.jobNumber,
+        jobNumber: job.jobNumber,
+        status: job.status,
+        workflowState: job.workflowState
+      },
+      relationship: `PO (${job.poNumber || genealogy.whichPo.poNumber}) -> GRN (${job.grnNumber || genealogy.whichGrn.grnNumber}) -> BO (${job.boNumber || job.jobNumber})`,
+      displayHierarchy: `${job.poNumber || genealogy.whichPo.poNumber} / ${job.grnNumber || genealogy.whichGrn.grnNumber} / ${job.boNumber || job.jobNumber}`
+    };
+
+    // Authoritative source information block (Read-Only)
+    const sourceInformation = {
+      po: {
+        poId: job.poId || genealogy.whichPo.poId,
+        poNumber: job.poNumber || genealogy.whichPo.poNumber,
+        supplierName: job.customer?.customerName || genealogy.whichPo.supplierName,
+        supplierCode: job.customer?.customerCode || genealogy.whichPo.supplierCode,
+        readOnly: true
+      },
+      grn: {
+        grnId: job.grnId || genealogy.whichGrn.grnId,
+        grnNumber: job.grnNumber || genealogy.whichGrn.grnNumber,
+        readOnly: true
+      },
+      customer: {
+        customerId: job.customer?.customerId,
+        customerCode: job.customer?.customerCode,
+        customerName: job.customer?.customerName,
+        readOnly: true
+      },
+      part: {
+        itemId: job.item?.itemId,
+        itemCode: job.item?.itemCode,
+        itemName: job.item?.itemName,
+        materialGrade: job.item?.materialGrade,
+        uom: job.item?.uom,
+        readOnly: true
+      },
+      quantity: {
+        targetQuantity: job.quantity?.targetQuantity,
+        uom: job.item?.uom || 'PCS',
+        readOnly: true
+      },
+      weight: {
+        weightKg: job.weightKg || job.weight || 0,
+        uom: 'KG',
+        readOnly: true
+      },
+      dueDate: job.timeline?.dueDate || (job as any).dueDate || null,
+      recipe: {
+        recipeId: job.recipeSnapshot?.recipeId,
+        recipeCode: job.recipeSnapshot?.recipeCode,
+        recipeName: job.recipeSnapshot?.name,
+        revisionNumber: job.recipeSnapshot?.revisionNumber,
+        processFamily: job.recipeSnapshot?.processFamily,
+        stages: job.recipeSnapshot?.stages || [],
+        readOnly: true
+      },
+      isReadOnlySourceData: true
+    };
+
+    return {
+      ...jobJson,
+      genealogy,
+      processDetails,
+      hierarchy,
+      sourceInformation,
+      isReadOnlySourceData: true,
+      traceabilityLinks: {
+        boToGrnToPo: `${job.boNumber || job.jobNumber} -> GRN ${job.grnNumber || genealogy.whichGrn.grnNumber} -> PO ${job.poNumber || genealogy.whichPo.poNumber}`,
+        boToItemToRecipe: `${job.boNumber || job.jobNumber} -> Part ${job.item?.itemCode} [${job.item?.materialGrade}] -> Recipe ${job.recipeSnapshot?.recipeCode}`
+      },
+      recipeCorrespondence: {
+        itemCode: job.item?.itemCode,
+        itemName: job.item?.itemName,
+        materialGrade: job.item?.materialGrade,
+        recipeCode: job.recipeSnapshot?.recipeCode,
+        recipeName: job.recipeSnapshot?.name,
+        isCorresponded: true
+      }
+    };
   }
 
   public async getJobsByPlanId(

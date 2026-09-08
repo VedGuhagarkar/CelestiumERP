@@ -294,25 +294,43 @@ export const updateJobSchema: ValidationSchema = {
       shift: shiftEnum.optional(),
       notes: z.string().trim().max(500).optional(),
       poId: z.any().optional(),
+      poNumber: z.any().optional(),
       grnId: z.any().optional(),
+      grnNumber: z.any().optional(),
       itemId: z.any().optional(),
+      item: z.any().optional(),
       recipeId: z.any().optional(),
+      recipeSnapshot: z.any().optional(),
       customer: z.any().optional(),
+      customerName: z.any().optional(),
+      customerCode: z.any().optional(),
+      weight: z.any().optional(),
+      weightKg: z.any().optional(),
+      boNumber: z.any().optional(),
       genealogy: z.any().optional()
     })
     .superRefine((data, ctx) => {
       if (
         data.poId !== undefined ||
+        data.poNumber !== undefined ||
         data.grnId !== undefined ||
+        data.grnNumber !== undefined ||
         data.itemId !== undefined ||
+        data.item !== undefined ||
         data.recipeId !== undefined ||
+        data.recipeSnapshot !== undefined ||
         data.customer !== undefined ||
+        data.customerName !== undefined ||
+        data.customerCode !== undefined ||
+        data.weight !== undefined ||
+        data.weightKg !== undefined ||
+        data.boNumber !== undefined ||
         data.genealogy !== undefined
       ) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message:
-            'Genealogy Violation: Fundamental source genealogy (PO, GRN, Part, Recipe, Customer) is strictly immutable once established.',
+            'Genealogy Violation / Read-Only Source Data Violation: Authoritative source data (PO, GRN, Part, Recipe, Customer, Weight) is strictly immutable and cannot be modified from the Batch Order view.',
           path: ['genealogy']
         });
       }
