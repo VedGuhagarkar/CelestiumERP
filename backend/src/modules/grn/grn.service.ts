@@ -61,13 +61,20 @@ export class GRNService extends BaseService {
 
     for (const itemDto of dto.items) {
       // Find matching line on PO
-      const poLine = po.items.find(
-        (line) => line.lineItemId === itemDto.poLineItemId || line.itemId === itemDto.itemId
-      );
+      let poLine = po.items.find((line) => line.lineItemId === itemDto.poLineItemId);
+      if (!poLine && itemDto.itemId) {
+        poLine = po.items.find((line) => line.itemId === itemDto.itemId);
+      }
 
       if (!poLine) {
         throw new BadRequestError(
-          `Received item '${itemDto.itemId}' does not match any line item on Purchase Order [${po.poNumber}]`
+          `Received item '${itemDto.itemId || itemDto.poLineItemId}' does not match any line item on Purchase Order [${po.poNumber}]`
+        );
+      }
+
+      if (itemDto.poLineItemId && itemDto.itemId && poLine.itemId !== itemDto.itemId) {
+        throw new BadRequestError(
+          `Mismatched line item identifier: poLineItemId '${itemDto.poLineItemId}' does not match itemId '${itemDto.itemId}' on Purchase Order [${po.poNumber}]`
         );
       }
 
@@ -300,6 +307,7 @@ export class GRNService extends BaseService {
           supplierHeatNumber: item.supplierHeatNumber,
           supplierLotNumber: item.supplierLotNumber,
           mtrNumber: item.mtrNumber,
+          supplierChallanNumber: receipt.supplierChallanNumber,
           chemicalComposition: item.chemicalComposition
             ? (item.chemicalComposition instanceof Map
                 ? Object.fromEntries(item.chemicalComposition)

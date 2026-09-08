@@ -104,9 +104,9 @@ export class PurchaseOrderService extends BaseService {
       if (!item) {
         throw new NotFoundError(`Item with ID '${itemDto.itemId}' not found in Item Master`);
       }
-      if (item.status !== 'active') {
+      if (item.isDeleted || item.status !== 'active') {
         throw new BadRequestError(
-          `Cannot create PO with item '${item.itemCode}' in '${item.status}' status. Only active items are permitted.`
+          `Cannot create PO with item '${item.itemCode}' in '${item.isDeleted ? 'deleted' : item.status}' status. Only active items are permitted.`
         );
       }
 
@@ -115,22 +115,22 @@ export class PurchaseOrderService extends BaseService {
       if (!recipe) {
         throw new NotFoundError(`Recipe with ID '${itemDto.recipeId}' not found in Recipe Master`);
       }
-      if (recipe.status !== 'APPROVED' && recipe.status !== 'ACTIVE') {
+      if (recipe.isDeleted || (recipe.status !== 'APPROVED' && recipe.status !== 'ACTIVE')) {
         throw new BadRequestError(
-          `Cannot create PO with recipe '${recipe.recipeCode}' in '${recipe.status}' status. Only APPROVED or ACTIVE recipes are permitted.`
+          `Cannot create PO with recipe '${recipe.recipeCode}' in '${recipe.isDeleted ? 'deleted' : recipe.status}' status. Only APPROVED or ACTIVE recipes are permitted.`
         );
       }
 
       // 4. Metallurgical Grade Compatibility Cross-Check
-      if (
-        recipe.applicableMaterialGrades &&
-        recipe.applicableMaterialGrades.length > 0 &&
-        item.materialGrade &&
-        !recipe.applicableMaterialGrades.includes(item.materialGrade)
-      ) {
-        throw new BadRequestError(
-          `Material grade mismatch for item '${item.itemCode}': Item grade '${item.materialGrade}' is not compatible with Recipe '${recipe.recipeCode}' grades [${recipe.applicableMaterialGrades.join(', ')}]`
-        );
+      const itemGrade = (item.materialGrade || '').trim().toUpperCase();
+      const applicableGrades = (recipe.applicableMaterialGrades || []).map((g) => g.trim().toUpperCase());
+
+      if (applicableGrades.length > 0) {
+        if (!itemGrade || !applicableGrades.includes(itemGrade)) {
+          throw new BadRequestError(
+            `Material grade mismatch for item '${item.itemCode}': Item grade '${item.materialGrade || 'UNSPECIFIED'}' is not compatible with Recipe '${recipe.recipeCode}' grades [${recipe.applicableMaterialGrades.join(', ')}]`
+          );
+        }
       }
 
       if (itemDto.unitPrice !== undefined && itemDto.unitPrice < 0) {

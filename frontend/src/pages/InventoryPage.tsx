@@ -51,6 +51,7 @@ export interface Recipe {
   _id?: string;
   id?: string;
   recipeCode: string;
+  revision?: number;
   recipeName?: string;
   processFamily: string;
   applicableMaterialGrades: string[];
@@ -68,6 +69,7 @@ export interface POItem {
   processingRequirement?: string;
   recipeId: string;
   recipeCode: string;
+  recipeRevision?: number;
   orderedQuantity: number;
   receivedQuantity?: number;
   balanceQuantity?: number;
@@ -114,6 +116,7 @@ export interface ReceivedItem {
   materialGrade: string;
   recipeId: string;
   recipeCode: string;
+  recipeRevision?: number;
   supplierHeatNumber: string;
   millTestCertificateNumber: string;
   receivedQuantity: number;
@@ -178,6 +181,7 @@ export interface GRNUnit {
   materialGrade: string;
   recipeId: string;
   recipeCode: string;
+  recipeRevision?: number;
   supplierHeatNumber: string;
   millTestCertificateNumber: string;
   quantity: number;
@@ -200,9 +204,9 @@ const DEFAULT_ITEMS: Item[] = [
 ];
 
 const DEFAULT_RECIPES: Recipe[] = [
-  { id: 'rec_01', recipeCode: 'REC-CARB-4140-01', recipeName: 'Deep Case Gas Carburizing 930°C', processFamily: 'CARBURIZING', applicableMaterialGrades: ['AISI 4140', 'EN19', 'SCM440'], status: 'ACTIVE' },
-  { id: 'rec_02', recipeCode: 'REC-CARB-8620-01', recipeName: 'Automotive Pinion Carburize & Oil Quench', processFamily: 'CARBURIZING', applicableMaterialGrades: ['AISI 8620', '20MnCr5'], status: 'ACTIVE' },
-  { id: 'rec_03', recipeCode: 'REC-VAC-718-01', recipeName: 'Vacuum Solution Anneal & Age Harden', processFamily: 'VACUUM_HEAT_TREATMENT', applicableMaterialGrades: ['INCONEL 718'], status: 'ACTIVE' }
+  { id: 'rec_01', recipeCode: 'REC-CARB-4140-01', revision: 1, recipeName: 'Deep Case Gas Carburizing 930°C', processFamily: 'CARBURIZING', applicableMaterialGrades: ['AISI 4140', 'EN19', 'SCM440'], status: 'ACTIVE' },
+  { id: 'rec_02', recipeCode: 'REC-CARB-8620-01', revision: 1, recipeName: 'Automotive Pinion Carburize & Oil Quench', processFamily: 'CARBURIZING', applicableMaterialGrades: ['AISI 8620', '20MnCr5'], status: 'ACTIVE' },
+  { id: 'rec_03', recipeCode: 'REC-VAC-718-01', revision: 1, recipeName: 'Vacuum Solution Anneal & Age Harden', processFamily: 'VACUUM_HEAT_TREATMENT', applicableMaterialGrades: ['INCONEL 718'], status: 'ACTIVE' }
 ];
 
 const DEFAULT_POS: PurchaseOrder[] = [
@@ -224,6 +228,7 @@ const DEFAULT_POS: PurchaseOrder[] = [
         materialGrade: 'AISI 4140',
         recipeId: 'rec_01',
         recipeCode: 'REC-CARB-4140-01',
+        recipeRevision: 1,
         orderedQuantity: 5000,
         receivedQuantity: 5000,
         uom: 'KG',
@@ -250,6 +255,7 @@ const DEFAULT_POS: PurchaseOrder[] = [
         materialGrade: 'AISI 8620',
         recipeId: 'rec_02',
         recipeCode: 'REC-CARB-8620-01',
+        recipeRevision: 1,
         orderedQuantity: 8000,
         receivedQuantity: 0,
         uom: 'KG',
@@ -287,6 +293,7 @@ const DEFAULT_RECEIPTS: MaterialReceipt[] = [
         materialGrade: 'AISI 4140',
         recipeId: 'rec_01',
         recipeCode: 'REC-CARB-4140-01',
+        recipeRevision: 1,
         supplierHeatNumber: 'HEAT-TK-4140-889',
         millTestCertificateNumber: 'MTR-TK-2026-9941',
         receivedQuantity: 5000,
@@ -321,6 +328,7 @@ const DEFAULT_GRNS: GRN[] = [
         materialGrade: 'AISI 4140',
         recipeId: 'rec_01',
         recipeCode: 'REC-CARB-4140-01',
+        recipeRevision: 1,
         supplierHeatNumber: 'HEAT-TK-4140-889',
         millTestCertificateNumber: 'MTR-TK-2026-9941',
         receivedQuantity: 5000,
@@ -348,6 +356,7 @@ const DEFAULT_UNITS: GRNUnit[] = Array.from({ length: 10 }).map((_, idx) => ({
   materialGrade: 'AISI 4140',
   recipeId: 'rec_01',
   recipeCode: 'REC-CARB-4140-01',
+  recipeRevision: 1,
   supplierHeatNumber: 'HEAT-TK-4140-889',
   millTestCertificateNumber: 'MTR-TK-2026-9941',
   quantity: 500,
@@ -576,6 +585,7 @@ export const InventoryPage: React.FC = () => {
             materialGrade: selectedItem.materialGrade,
             recipeId: selectedRecipe.id || selectedRecipe._id || poRecipeId,
             recipeCode: selectedRecipe.recipeCode,
+            recipeRevision: selectedRecipe.revision || 1,
             orderedQuantity: Number(poOrderedQty),
             unitPrice: Number(poUnitPrice),
             lineTotal: calculatedLineTotal,
@@ -589,7 +599,7 @@ export const InventoryPage: React.FC = () => {
       setPurchaseOrders((prev) => [poRecord, ...prev]);
       setFeedback({
         type: 'success',
-        message: `Purchase Order ${poRecord.poNumber} created successfully for item ${selectedItem.itemCode} bound to recipe ${selectedRecipe.recipeCode}.`
+        message: `Purchase Order ${poRecord.poNumber} created successfully for item ${selectedItem.itemCode} bound to recipe ${selectedRecipe.recipeCode} (Rev ${selectedRecipe.revision || 1}).`
       });
       setIsCreatePoModalOpen(false);
       fetchCreationPhaseData();
@@ -627,6 +637,7 @@ export const InventoryPage: React.FC = () => {
             materialGrade: poItem?.materialGrade || 'AISI 4140',
             recipeId: poItem?.recipeId || 'rec_01',
             recipeCode: poItem?.recipeCode || 'REC-CARB-4140-01',
+            recipeRevision: poItem?.recipeRevision || 1,
             supplierHeatNumber: rcptSupplierHeatNumber,
             millTestCertificateNumber: rcptMtrNumber,
             receivedQuantity: Number(rcptReceivedQty),
@@ -1053,7 +1064,10 @@ export const InventoryPage: React.FC = () => {
                           </div>
                         </td>
                         <td style={{ padding: '14px 16px' }}>
-                          <StatusBadge variant="info" status={item?.recipeCode || 'NONE'} />
+                          <StatusBadge
+                            variant="info"
+                            status={item?.recipeCode ? `${item.recipeCode} (Rev ${item.recipeRevision ?? 1})` : 'NONE'}
+                          />
                         </td>
                         <td style={{ padding: '14px 16px', fontWeight: 600 }}>
                           {item?.orderedQuantity?.toLocaleString()} {item?.uom}
@@ -1111,7 +1125,7 @@ export const InventoryPage: React.FC = () => {
                                         <strong>Metallurgical Grade:</strong> {item?.materialGrade}
                                       </div>
                                       <div>
-                                        <strong>Bound Recipe:</strong> {item?.recipeCode}
+                                        <strong>Bound Recipe:</strong> {item?.recipeCode} (Rev {item?.recipeRevision ?? 1})
                                       </div>
                                       <div>
                                         <strong>Quantity:</strong> {item?.orderedQuantity} {item?.uom} @ ${item?.unitPrice}/unit
@@ -1417,7 +1431,10 @@ export const InventoryPage: React.FC = () => {
                         <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>Grade: {u.materialGrade}</div>
                       </td>
                       <td style={{ padding: '14px 16px' }}>
-                        <StatusBadge variant="info" status={u.recipeCode} />
+                        <StatusBadge
+                          variant="info"
+                          status={u.recipeCode ? `${u.recipeCode} (Rev ${u.recipeRevision ?? 1})` : 'NONE'}
+                        />
                       </td>
                       <td style={{ padding: '14px 16px' }}>
                         <div>{u.supplierHeatNumber}</div>
@@ -2035,7 +2052,9 @@ export const InventoryPage: React.FC = () => {
                   <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
                     <td style={{ padding: '8px', fontWeight: 600 }}>{item.itemCode}</td>
                     <td style={{ padding: '8px' }}>{item.materialGrade}</td>
-                    <td style={{ padding: '8px', fontWeight: 600, color: '#0369a1' }}>{item.recipeCode}</td>
+                    <td style={{ padding: '8px', fontWeight: 600, color: '#0369a1' }}>
+                      {item.recipeCode} (Rev {item.recipeRevision ?? 1})
+                    </td>
                     <td style={{ padding: '8px' }}>{item.supplierHeatNumber}</td>
                     <td style={{ padding: '8px' }}>{item.millTestCertificateNumber}</td>
                     <td style={{ padding: '8px', textAlign: 'right', fontWeight: 700 }}>{item.receivedQuantity} {item.uom}</td>
