@@ -109,12 +109,40 @@ export class GRNController {
 
   public getAvailableUnitsForPlanning = async (req: Request, res: Response): Promise<Response> => {
     const tenantId = req.tenantId!;
-    const { itemId, recipeId } = req.query as { itemId?: string; recipeId?: string };
-    if (!itemId) {
-      return ApiResponse.error(res, 'Query parameter "itemId" is required', 400);
-    }
-    const units = await this.service.getAvailableUnitsForPlanning(tenantId, itemId, recipeId);
+    const { itemId, recipeId, materialGrade } = req.query as {
+      itemId?: string;
+      recipeId?: string;
+      materialGrade?: string;
+    };
+    const units = await this.service.getAvailableUnitsForPlanning(tenantId, {
+      itemId,
+      recipeId,
+      materialGrade
+    });
     return ApiResponse.success(res, units, 'Available units for planning retrieved');
+  };
+
+  public getUnitTraceability = async (req: Request, res: Response): Promise<Response> => {
+    const tenantId = req.tenantId!;
+    const unitIdentifier = req.params.unitIdentifier as string;
+    const traceability = await this.service.getUnitTraceability(tenantId, unitIdentifier);
+    return ApiResponse.success(res, traceability, `Traceability for unit '${unitIdentifier}' retrieved`);
+  };
+
+  public allocateUnitForPlanning = async (req: Request, res: Response): Promise<Response> => {
+    const tenantId = req.tenantId!;
+    const user = req.user!;
+    const unitIdentifier = req.params.unitIdentifier as string;
+    const allocated = await this.service.allocateUnitForPlanning(tenantId, unitIdentifier, req.body, {
+      userId: user.userId,
+      email: user.email,
+      roles: user.roles,
+      role: user.roles?.[0],
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+      correlationId: req.headers['x-correlation-id'] as string
+    });
+    return ApiResponse.success(res, allocated, `Unit '${unitIdentifier}' allocated to plan '${req.body.allocatedPlanNumber}'`);
   };
 }
 

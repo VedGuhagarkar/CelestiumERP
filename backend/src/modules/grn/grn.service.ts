@@ -14,6 +14,9 @@ import {
   CreateGrnDto,
   QueryGrnDto,
   QueryGrnUnitDto,
+  AllocateUnitDto,
+  QueryAvailablePlanningUnitsDto,
+  IGRNUnitTraceability,
   IMaterialReceiptItem,
   IGRNItem,
   IGRNUnit,
@@ -727,11 +730,13 @@ export class GRNService extends BaseService {
           poNumber: po.poNumber,
           grnId: '',
           grnNumber,
-          materialReceiptId: receipt ? receipt.id : '',
-          receiptNumber: receipt ? receipt.receiptNumber : '',
+          materialReceiptId: receipt ? receipt.id : undefined,
+          receiptNumber: receipt ? receipt.receiptNumber : undefined,
           itemId: poItem.itemId,
           itemCode: poItem.itemCode,
           itemName: poItem.itemName,
+          particulars: poItem.itemName,
+          hsnCode,
           materialGrade: poItem.materialGrade,
           processFamily: poItem.processFamily,
           recipeId: poItem.recipeId,
@@ -740,10 +745,12 @@ export class GRNService extends BaseService {
           warehouseId: warehouseId || 'WH-MAIN',
           warehouseCode: warehouseCode || 'WH-MAIN',
           storageLocationCode: storageLocationCode || 'BAY-01-A',
+          supplierName: authoritativeSupplierName,
           supplierHeatNumber,
           supplierLotNumber,
           mtrNumber,
           supplierChallanNumber,
+          supplierChallanDate,
           quantity: unitQty,
           uom: poItem.uom,
           status: 'AVAILABLE_FOR_PLANNING',
@@ -777,7 +784,7 @@ export class GRNService extends BaseService {
       });
     }
 
-    // 6. Persist GRN Document
+    // 6. Persist GRN Document with Embedded Units (Dual Storage Requirement)
     let grn: GRNDocument;
     try {
       grn = await this.repo.createGrn(tenantId, {
@@ -797,6 +804,7 @@ export class GRNService extends BaseService {
         warehouseCode: warehouseCode || 'WH-MAIN',
         storageLocationCode: storageLocationCode || 'BAY-01-A',
         items: grnItems,
+        units: unitsToInsert as any,
         totalUnitsGenerated: unitsToInsert.length,
         status: 'AVAILABLE_FOR_PLANNING',
         receivedBy: actor.userId,
@@ -815,10 +823,18 @@ export class GRNService extends BaseService {
       throw err;
     }
 
-    // Populate grnId on units and persist
+    // Populate grnId on units and persist to collection and embedded doc
     unitsToInsert.forEach((u) => {
       u.grnId = grn.id;
     });
+
+    if (grn.units && grn.units.length > 0 && typeof (grn as any).save === 'function') {
+      grn.units.forEach((u: any) => {
+        u.grnId = grn.id;
+      });
+      await (grn as any).save();
+    }
+
     await this.repo.createGrnUnits(tenantId, unitsToInsert);
 
     // 7. Update Material Receipt status if linked
@@ -1085,14 +1101,160 @@ export class GRNService extends BaseService {
   }
 
   /**
-   * 8. Authoritative Planning Gate: Get certified units ready for Planning
+   * 8. Retrieve complete 5-tier lineage traceability for an individual part/material unit
+   * Authoritative Chain: PO -> GRN -> Unit -> Item -> Recipe
+   */
+  public async getUnitTraceability(
+    tenantId: string,
+    unitIdentifier: string
+  ): Promise<IGRNUnitTraceability> {
+    const unit = await this.repo.findUnitByIdentifier(tenantId, unitIdentifier);
+    if (!unit) {
+      throw new NotFoundError(`GRN Unit with identifier '${unitIdentifier}' not found`);
+    }
+
+    const grn = await this.repo.findGrnByNumber(tenantId, unit.grnNumber);
+    const po = await this.poService.getOrderById(tenantId, unit.poId).catch(() => null);
+
+    return {
+      unitIdentifier: unit.unitIdentifier,
+      status: unit.status,
+      quantity: unit.quantity,
+      uom: unit.uom,
+      po: {
+        poId: unit.poId,
+        poNumber: unit.poNumber,
+        orderDate: po?.orderDate
+      },
+      grn: {
+        grnId: unit.grnId || grn?.id || '',
+        grnNumber: unit.grnNumber,
+        grnDate: grn?.grnDate || (unit as any).createdAt || new Date(),
+        supplierName: unit.supplierName || grn?.supplierName || '',
+        supplierChallanNumber: unit.supplierChallanNumber,
+        supplierChallanDate: unit.supplierChallanDate || grn?.supplierChallanDate
+      },
+      item: {
+        itemId: unit.itemId,
+        itemCode: unit.itemCode,
+        itemName: unit.itemName,
+        particulars: unit.particulars || unit.itemName,
+        materialGrade: unit.materialGrade,
+        uom: unit.uom,
+        hsnCode: unit.hsnCode
+      },
+      recipe: {
+        recipeId: unit.recipeId,
+        recipeCode: unit.recipeCode,
+        recipeRevision: unit.recipeRevision,
+        processFamily: unit.processFamily
+      },
+      storage: {
+        warehouseId: unit.warehouseId,
+        warehouseCode: unit.warehouseCode,
+        storageLocationCode: unit.storageLocationCode
+      },
+      lot: {
+        supplierHeatNumber: unit.supplierHeatNumber,
+        supplierLotNumber: unit.supplierLotNumber,
+        mtrNumber: unit.mtrNumber
+      },
+      allocation: unit.allocatedPlanId
+        ? {
+            allocatedPlanId: unit.allocatedPlanId,
+            allocatedPlanNumber: unit.allocatedPlanNumber || '',
+            allocatedJobId: unit.allocatedJobId
+          }
+        : undefined
+    };
+  }
+
+  /**
+   * 9. Authoritative Planning Gate: Get certified units ready for Planning
    */
   public async getAvailableUnitsForPlanning(
     tenantId: string,
-    itemId: string,
+    itemIdOrQuery?: string | QueryAvailablePlanningUnitsDto,
     recipeId?: string
   ): Promise<GRNUnitDocument[]> {
-    return this.repo.queryAvailableUnitsForPlanning(tenantId, itemId, recipeId);
+    if (typeof itemIdOrQuery === 'object' && itemIdOrQuery !== null) {
+      return this.repo.queryAvailableUnitsForPlanning(
+        tenantId,
+        itemIdOrQuery.itemId,
+        itemIdOrQuery.recipeId,
+        itemIdOrQuery.materialGrade
+      );
+    }
+    return this.repo.queryAvailableUnitsForPlanning(tenantId, itemIdOrQuery, recipeId);
+  }
+
+  /**
+   * 10. Allocate individual unit to downstream planning batch (Locks unit immutability)
+   */
+  public async allocateUnitForPlanning(
+    tenantId: string,
+    unitIdentifier: string,
+    dto: AllocateUnitDto,
+    actor: ActorContext
+  ): Promise<GRNUnitDocument> {
+    const unit = await this.repo.findUnitByIdentifier(tenantId, unitIdentifier);
+    if (!unit) {
+      throw new NotFoundError(`GRN Unit with identifier '${unitIdentifier}' not found`);
+    }
+
+    if (unit.status !== 'AVAILABLE_FOR_PLANNING') {
+      throw new BadRequestError(
+        `Unit '${unitIdentifier}' cannot be allocated. Current status is '${unit.status}'. Only AVAILABLE_FOR_PLANNING units can be allocated to a production plan.`
+      );
+    }
+
+    if (!dto.allocatedPlanId || !dto.allocatedPlanNumber) {
+      throw new BadRequestError('Allocated Plan ID and Plan Number are required for planning allocation.');
+    }
+
+    const updatedUnit = await this.repo.allocateUnit(
+      tenantId,
+      unitIdentifier,
+      dto.allocatedPlanId,
+      dto.allocatedPlanNumber,
+      dto.allocatedJobId
+    );
+
+    if (!updatedUnit) {
+      throw new BadRequestError(`Failed to allocate unit '${unitIdentifier}' due to concurrent update.`);
+    }
+
+    this.logger.info(
+      `🔒 Unit [${unitIdentifier}] allocated to Plan [${dto.allocatedPlanNumber}] (Status: ALLOCATED_TO_PLAN)`
+    );
+
+    await this.audit.record(tenantId, {
+      actorId: actor.userId,
+      actorEmail: actor.email,
+      actorRole: actor.role || actor.roles?.[0],
+      action: 'GRN_UNIT_ALLOCATED_TO_PLAN',
+      entityType: 'GRNUnit',
+      entityId: updatedUnit.id,
+      beforeState: { status: unit.status },
+      afterState: {
+        status: updatedUnit.status,
+        allocatedPlanId: dto.allocatedPlanId,
+        allocatedPlanNumber: dto.allocatedPlanNumber,
+        allocatedJobId: dto.allocatedJobId
+      },
+      ipAddress: actor.ipAddress,
+      userAgent: actor.userAgent,
+      correlationId: actor.correlationId
+    });
+
+    this.publishEvent('grn.unit.allocated', tenantId, {
+      unitIdentifier,
+      allocatedPlanId: dto.allocatedPlanId,
+      allocatedPlanNumber: dto.allocatedPlanNumber,
+      allocatedJobId: dto.allocatedJobId
+    });
+
+    return updatedUnit;
   }
 }
 

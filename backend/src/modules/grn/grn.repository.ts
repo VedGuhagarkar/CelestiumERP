@@ -42,8 +42,18 @@ export interface IGRNRepository {
   // GRN Unit operations
   createGrnUnits(tenantId: string, units: Array<Partial<GRNUnitDocument>>): Promise<GRNUnitDocument[]>;
   findUnitByIdentifier(tenantId: string, unitIdentifier: string): Promise<GRNUnitDocument | null>;
+  findUnitsByGrnId(tenantId: string, grnId: string): Promise<GRNUnitDocument[]>;
+  findUnitsByPoId(tenantId: string, poId: string): Promise<GRNUnitDocument[]>;
   queryUnits(tenantId: string, query: QueryGrnUnitDto): Promise<{ units: GRNUnitDocument[]; total: number }>;
-  queryAvailableUnitsForPlanning(tenantId: string, itemId: string, recipeId?: string): Promise<GRNUnitDocument[]>;
+  queryAvailableUnitsForPlanning(tenantId: string, itemId?: string, recipeId?: string, materialGrade?: string): Promise<GRNUnitDocument[]>;
+  allocateUnit(
+    tenantId: string,
+    unitIdentifier: string,
+    planId: string,
+    planNumber: string,
+    jobId?: string
+  ): Promise<GRNUnitDocument | null>;
+  checkUnitImmutability(tenantId: string, unitIdentifier: string): Promise<boolean>;
   updateUnitStatus(
     tenantId: string,
     unitIdentifier: string,
@@ -310,25 +320,82 @@ export class GRNRepository implements IGRNRepository {
     return { units, total };
   }
 
+  public async findUnitsByGrnId(tenantId: string, grnId: string): Promise<GRNUnitDocument[]> {
+    return this.unitModel.find({ tenantId, grnId, isDeleted: false }).sort({ createdAt: 1 }).exec();
+  }
+
+  public async findUnitsByPoId(tenantId: string, poId: string): Promise<GRNUnitDocument[]> {
+    return this.unitModel.find({ tenantId, poId, isDeleted: false }).sort({ createdAt: 1 }).exec();
+  }
+
   public async queryAvailableUnitsForPlanning(
     tenantId: string,
-    itemId: string,
-    recipeId?: string
+    itemId?: string,
+    recipeId?: string,
+    materialGrade?: string
   ): Promise<GRNUnitDocument[]> {
     if (mongoose.connection.readyState === 0) return [];
 
     const filter: FilterQuery<GRNUnitDocument> = {
       tenantId,
-      itemId,
       status: 'AVAILABLE_FOR_PLANNING',
       isDeleted: false
     };
 
-    if (recipeId) {
-      filter.recipeId = recipeId;
-    }
+    if (itemId) filter.itemId = itemId;
+    if (recipeId) filter.recipeId = recipeId;
+    if (materialGrade) filter.materialGrade = materialGrade.toUpperCase().trim();
 
     return this.unitModel.find(filter).sort({ createdAt: 1 }).exec();
+  }
+
+  public async allocateUnit(
+    tenantId: string,
+    unitIdentifier: string,
+    planId: string,
+    planNumber: string,
+    jobId?: string
+  ): Promise<GRNUnitDocument | null> {
+    const unitId = unitIdentifier.toUpperCase().trim();
+    const updated = await this.unitModel.findOneAndUpdate(
+      {
+        tenantId,
+        unitIdentifier: unitId,
+        status: 'AVAILABLE_FOR_PLANNING',
+        isDeleted: false
+      },
+      {
+        $set: {
+          status: 'ALLOCATED_TO_PLAN',
+          allocatedPlanId: planId,
+          allocatedPlanNumber: planNumber,
+          allocatedJobId: jobId
+        }
+      },
+      { new: true }
+    ).exec();
+
+    if (updated) {
+      await this.grnModel.updateOne(
+        { tenantId, 'units.unitIdentifier': unitId },
+        {
+          $set: {
+            'units.$.status': 'ALLOCATED_TO_PLAN',
+            'units.$.allocatedPlanId': planId,
+            'units.$.allocatedPlanNumber': planNumber,
+            'units.$.allocatedJobId': jobId
+          }
+        }
+      ).exec();
+    }
+
+    return updated;
+  }
+
+  public async checkUnitImmutability(tenantId: string, unitIdentifier: string): Promise<boolean> {
+    const unit = await this.findUnitByIdentifier(tenantId, unitIdentifier);
+    if (!unit) return false;
+    return unit.status !== 'AVAILABLE_FOR_PLANNING';
   }
 
   public async updateUnitStatus(
@@ -338,15 +405,29 @@ export class GRNRepository implements IGRNRepository {
     allocatedPlanId?: string,
     allocatedPlanNumber?: string
   ): Promise<GRNUnitDocument | null> {
+    const unitId = unitIdentifier.toUpperCase().trim();
     const update: any = { status };
     if (allocatedPlanId !== undefined) update.allocatedPlanId = allocatedPlanId;
     if (allocatedPlanNumber !== undefined) update.allocatedPlanNumber = allocatedPlanNumber;
 
-    return this.unitModel.findOneAndUpdate(
-      { tenantId, unitIdentifier: unitIdentifier.toUpperCase().trim(), isDeleted: false },
+    const doc = await this.unitModel.findOneAndUpdate(
+      { tenantId, unitIdentifier: unitId, isDeleted: false },
       { $set: update },
       { new: true }
     ).exec();
+
+    if (doc) {
+      const embeddedUpdate: any = { 'units.$.status': status };
+      if (allocatedPlanId !== undefined) embeddedUpdate['units.$.allocatedPlanId'] = allocatedPlanId;
+      if (allocatedPlanNumber !== undefined) embeddedUpdate['units.$.allocatedPlanNumber'] = allocatedPlanNumber;
+
+      await this.grnModel.updateOne(
+        { tenantId, 'units.unitIdentifier': unitId },
+        { $set: embeddedUpdate }
+      ).exec();
+    }
+
+    return doc;
   }
 }
 

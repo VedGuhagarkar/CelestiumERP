@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { grnController } from './grn.controller.js';
 import { authenticateJwt } from '../../core/middleware/auth.middleware.js';
-import { requirePermission } from '../../core/middleware/rbac.middleware.js';
+import { requirePermission, requireAnyPermission } from '../../core/middleware/rbac.middleware.js';
 import { validateRequest } from '../../core/middleware/validate.middleware.js';
 import { asyncHandler } from '../../core/middleware/async-handler.middleware.js';
 import {
@@ -9,7 +9,9 @@ import {
   storeMaterialSchema,
   createGrnSchema,
   queryGrnSchema,
-  queryGrnUnitSchema
+  queryGrnUnitSchema,
+  allocateUnitSchema,
+  queryAvailablePlanningUnitsSchema
 } from './grn.validator.js';
 import { PERMISSIONS } from '../rbac/rbac.constants.js';
 
@@ -73,7 +75,29 @@ grnRouter.get(
   '/units/available-for-planning',
   authenticateJwt,
   requirePermission(PERMISSIONS.INVENTORY_GRN_VIEW),
+  validateRequest(queryAvailablePlanningUnitsSchema),
   asyncHandler(grnController.getAvailableUnitsForPlanning)
+);
+
+// 7. Individual Unit Traceability (Full 5-tier lineage: PO -> GRN -> Unit -> Item -> Recipe)
+grnRouter.get(
+  '/units/:unitIdentifier/traceability',
+  authenticateJwt,
+  requirePermission(PERMISSIONS.INVENTORY_GRN_VIEW),
+  asyncHandler(grnController.getUnitTraceability)
+);
+
+// 8. Allocate Individual Unit to Downstream Planning Batch
+grnRouter.post(
+  '/units/:unitIdentifier/allocate',
+  authenticateJwt,
+  requireAnyPermission(
+    PERMISSIONS.PRODUCTION_JOB_CREATE,
+    PERMISSIONS.INVENTORY_GRN_CREATE,
+    PERMISSIONS.INVENTORY_STORAGE_RECORD
+  ),
+  validateRequest(allocateUnitSchema),
+  asyncHandler(grnController.allocateUnitForPlanning)
 );
 
 // 7. Get GRN by ID

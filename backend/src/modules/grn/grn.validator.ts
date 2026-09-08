@@ -102,3 +102,23 @@ export const queryGrnUnitSchema: ValidationSchema = {
     limit: z.string().regex(/^\d+$/).transform(Number).optional()
   }).optional()
 };
+
+export const allocateUnitSchema: ValidationSchema = {
+  params: z.object({
+    unitIdentifier: z.string().trim().min(1, 'Unit identifier is required')
+  }),
+  body: z.object({
+    allocatedPlanId: z.string().trim().min(1, 'Allocated Plan ID is required'),
+    allocatedPlanNumber: z.string().trim().min(1, 'Allocated Plan Number is required'),
+    allocatedJobId: z.string().trim().optional()
+  })
+};
+
+export const queryAvailablePlanningUnitsSchema: ValidationSchema = {
+  query: z.object({
+    itemId: z.string().trim().optional(),
+    recipeId: z.string().trim().optional(),
+    materialGrade: z.string().trim().optional()
+  }).optional()
+};
+

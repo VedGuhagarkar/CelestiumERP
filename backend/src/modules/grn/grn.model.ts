@@ -128,7 +128,57 @@ const GRNItemSchema = new Schema<IGRNItem>(
   { _id: false }
 );
 
-// 4. GRN Schema (Every GRN belongs to exactly one PO)
+// 4. GRN Individual Material/Part Unit Schema
+const GRNUnitSchema = createBaseSchema<GRNUnitDocument>({
+  unitIdentifier: { type: String, required: true, uppercase: true, trim: true },
+  poId: { type: String, required: true },
+  poNumber: { type: String, required: true, uppercase: true, trim: true },
+  grnId: { type: String, required: true },
+  grnNumber: { type: String, required: true, uppercase: true, trim: true },
+  materialReceiptId: { type: String },
+  receiptNumber: { type: String, uppercase: true, trim: true },
+  supplierName: { type: String, trim: true },
+  supplierChallanNumber: { type: String, required: true, uppercase: true, trim: true },
+  supplierChallanDate: { type: Date },
+  itemId: { type: String, required: true },
+  itemCode: { type: String, required: true, uppercase: true, trim: true },
+  itemName: { type: String, required: true, trim: true },
+  particulars: { type: String, trim: true },
+  hsnCode: { type: String, uppercase: true, trim: true },
+  materialGrade: { type: String, required: true, trim: true },
+  processFamily: { type: String, required: true },
+  recipeId: { type: String, required: true },
+  recipeCode: { type: String, required: true, uppercase: true, trim: true },
+  recipeRevision: { type: Number, required: true },
+  warehouseId: { type: String, required: true },
+  warehouseCode: { type: String, required: true, uppercase: true, trim: true },
+  storageLocationCode: { type: String, required: true, uppercase: true, trim: true },
+  supplierHeatNumber: { type: String, required: true, uppercase: true, trim: true },
+  supplierLotNumber: { type: String, uppercase: true, trim: true },
+  mtrNumber: { type: String, uppercase: true, trim: true },
+  chemicalComposition: { type: Map, of: Number },
+  quantity: { type: Number, required: true, min: 0.0001 },
+  uom: { type: String, required: true, trim: true },
+  status: {
+    type: String,
+    enum: ['AVAILABLE_FOR_PLANNING', 'ALLOCATED_TO_PLAN', 'IN_PRODUCTION', 'CONSUMED'],
+    default: 'AVAILABLE_FOR_PLANNING',
+    index: true
+  },
+  allocatedPlanId: { type: String },
+  allocatedPlanNumber: { type: String, uppercase: true },
+  allocatedJobId: { type: String }
+});
+
+IndexRegistry.addTenantUniqueIndex(GRNUnitSchema, 'unitIdentifier');
+GRNUnitSchema.index({ tenantId: 1, grnNumber: 1 });
+GRNUnitSchema.index({ tenantId: 1, poNumber: 1 });
+GRNUnitSchema.index({ tenantId: 1, itemId: 1, recipeId: 1, status: 1 });
+GRNUnitSchema.index({ tenantId: 1, supplierHeatNumber: 1 });
+
+export const GRNUnitModel = model<GRNUnitDocument>('GRNUnit', GRNUnitSchema);
+
+// 5. GRN Schema (Every GRN belongs to exactly one PO, stores individual data units)
 const GRNSchema = createBaseSchema<GRNDocument>({
   grnNumber: { type: String, required: true, uppercase: true, trim: true },
   idempotencyKey: { type: String, trim: true },
@@ -146,6 +196,7 @@ const GRNSchema = createBaseSchema<GRNDocument>({
   warehouseCode: { type: String, uppercase: true, trim: true },
   storageLocationCode: { type: String, uppercase: true, trim: true },
   items: { type: [GRNItemSchema], required: true },
+  units: { type: [GRNUnitSchema], default: [] },
   totalUnitsGenerated: { type: Number, required: true, min: 1 },
   status: {
     type: String,
@@ -172,51 +223,6 @@ GRNSchema.index({ tenantId: 1, poId: 1 });
 GRNSchema.index({ tenantId: 1, poNumber: 1 });
 GRNSchema.index({ tenantId: 1, materialReceiptId: 1 });
 GRNSchema.index({ tenantId: 1, status: 1 });
+GRNSchema.index({ tenantId: 1, 'units.unitIdentifier': 1 });
 
 export const GRNModel = model<GRNDocument>('GRN', GRNSchema);
-
-// 5. GRN Individual Material/Part Unit Schema
-const GRNUnitSchema = createBaseSchema<GRNUnitDocument>({
-  unitIdentifier: { type: String, required: true, uppercase: true, trim: true },
-  poId: { type: String, required: true },
-  poNumber: { type: String, required: true, uppercase: true, trim: true },
-  grnId: { type: String, required: true },
-  grnNumber: { type: String, required: true, uppercase: true, trim: true },
-  materialReceiptId: { type: String, required: true },
-  receiptNumber: { type: String, required: true, uppercase: true, trim: true },
-  itemId: { type: String, required: true },
-  itemCode: { type: String, required: true, uppercase: true, trim: true },
-  itemName: { type: String, required: true, trim: true },
-  materialGrade: { type: String, required: true, trim: true },
-  processFamily: { type: String, required: true },
-  recipeId: { type: String, required: true },
-  recipeCode: { type: String, required: true, uppercase: true, trim: true },
-  recipeRevision: { type: Number, required: true },
-  warehouseId: { type: String, required: true },
-  warehouseCode: { type: String, required: true, uppercase: true, trim: true },
-  storageLocationCode: { type: String, required: true, uppercase: true, trim: true },
-  supplierHeatNumber: { type: String, required: true, uppercase: true, trim: true },
-  supplierLotNumber: { type: String, uppercase: true, trim: true },
-  mtrNumber: { type: String, uppercase: true, trim: true },
-  supplierChallanNumber: { type: String, required: true, uppercase: true, trim: true },
-  chemicalComposition: { type: Map, of: Number },
-  quantity: { type: Number, required: true, min: 0.0001 },
-  uom: { type: String, required: true, trim: true },
-  status: {
-    type: String,
-    enum: ['AVAILABLE_FOR_PLANNING', 'ALLOCATED_TO_PLAN', 'IN_PRODUCTION', 'CONSUMED'],
-    default: 'AVAILABLE_FOR_PLANNING',
-    index: true
-  },
-  allocatedPlanId: { type: String },
-  allocatedPlanNumber: { type: String, uppercase: true },
-  allocatedJobId: { type: String }
-});
-
-IndexRegistry.addTenantUniqueIndex(GRNUnitSchema, 'unitIdentifier');
-GRNUnitSchema.index({ tenantId: 1, grnNumber: 1 });
-GRNUnitSchema.index({ tenantId: 1, poNumber: 1 });
-GRNUnitSchema.index({ tenantId: 1, itemId: 1, recipeId: 1, status: 1 });
-GRNUnitSchema.index({ tenantId: 1, supplierHeatNumber: 1 });
-
-export const GRNUnitModel = model<GRNUnitDocument>('GRNUnit', GRNUnitSchema);

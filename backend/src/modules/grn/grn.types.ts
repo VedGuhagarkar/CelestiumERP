@@ -119,6 +119,7 @@ export interface IGRN {
   warehouseCode?: string;
   storageLocationCode?: string;
   items: IGRNItem[];
+  units?: IGRNUnit[];
   totalUnitsGenerated: number;
   status: GRNStatus;
   receivedBy: string;
@@ -143,11 +144,15 @@ export interface IGRNUnit {
   poNumber: string;
   grnId: string;
   grnNumber: string;
-  materialReceiptId: string;
-  receiptNumber: string;
+  materialReceiptId?: string;
+  receiptNumber?: string;
+  supplierName?: string;
+  supplierChallanNumber: string;
+  supplierChallanDate?: Date;
   itemId: string;
   itemCode: string;
   itemName: string;
+  particulars?: string;
   materialGrade: string;
   processFamily: ProcessFamily;
   recipeId: string;
@@ -159,7 +164,7 @@ export interface IGRNUnit {
   supplierHeatNumber: string;
   supplierLotNumber?: string;
   mtrNumber?: string;
-  supplierChallanNumber: string;
+  hsnCode?: string;
   chemicalComposition?: Record<string, number>;
   quantity: number;
   uom: UnitOfMeasure;
@@ -257,4 +262,66 @@ export interface QueryGrnUnitDto {
   supplierHeatNumber?: string;
   page?: number;
   limit?: number;
+}
+
+export interface AllocateUnitDto {
+  allocatedPlanId: string;
+  allocatedPlanNumber: string;
+  allocatedJobId?: string;
+}
+
+export interface QueryAvailablePlanningUnitsDto {
+  itemId?: string;
+  recipeId?: string;
+  materialGrade?: string;
+}
+
+export interface IGRNUnitTraceability {
+  unitIdentifier: string;
+  status: GRNUnitStatus;
+  quantity: number;
+  uom: UnitOfMeasure;
+  po: {
+    poId: string;
+    poNumber: string;
+    orderDate?: Date;
+  };
+  grn: {
+    grnId: string;
+    grnNumber: string;
+    grnDate: Date;
+    supplierName: string;
+    supplierChallanNumber: string;
+    supplierChallanDate?: Date;
+  };
+  item: {
+    itemId: string;
+    itemCode: string;
+    itemName: string;
+    particulars?: string;
+    materialGrade: string;
+    uom: string;
+    hsnCode?: string;
+  };
+  recipe: {
+    recipeId: string;
+    recipeCode: string;
+    recipeRevision: number;
+    processFamily: ProcessFamily;
+  };
+  storage: {
+    warehouseId: string;
+    warehouseCode: string;
+    storageLocationCode: string;
+  };
+  lot: {
+    supplierHeatNumber: string;
+    supplierLotNumber?: string;
+    mtrNumber?: string;
+  };
+  allocation?: {
+    allocatedPlanId?: string;
+    allocatedPlanNumber?: string;
+    allocatedJobId?: string;
+  };
 }
