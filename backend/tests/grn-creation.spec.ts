@@ -121,6 +121,7 @@ describe('Prompt 6: Rebuild GRN Creation Suite (Authoritative PO -> GRN Workflow
 
   beforeEach(() => {
     jest.restoreAllMocks();
+    mockStoredReceipt.status = 'STORED';
 
     // Default RBAC Setup: Store officer role has INVENTORY_GRN_CREATE
     jest.spyOn(roleRepository, 'seedDefaultRolesForTenant').mockResolvedValue(undefined as any);
@@ -638,7 +639,19 @@ describe('Prompt 6: Rebuild GRN Creation Suite (Authoritative PO -> GRN Workflow
         expect.arrayContaining([expect.objectContaining({ receivedQuantity: 40 })])
       );
 
-      // Delivery 2: 60 pcs of item 1 (completing ordered qty for item 1)
+      // Delivery 2: 60 pcs of item 1 (completing ordered qty for item 1 with its own stored receipt)
+      const mockStoredReceipt2 = {
+        ...mockStoredReceipt,
+        id: 'rcpt_stored_deliv_002',
+        receiptNumber: 'RCPT-202609-0002',
+        status: 'STORED',
+        save: jest.fn().mockResolvedValue(true)
+      };
+      jest.spyOn(grnRepository, 'queryReceipts').mockResolvedValueOnce([mockStoredReceipt2 as any]);
+      jest.spyOn(grnRepository, 'findReceiptById').mockImplementation(async (_t, id) => {
+        if (id === mockStoredReceipt2.id) return mockStoredReceipt2 as any;
+        return mockStoredReceipt as any;
+      });
       jest.spyOn(grnRepository, 'generateNextGrnNumber').mockResolvedValueOnce('GRN-202609-0002');
       const res2 = await request(app)
         .post('/api/v1/grn')

@@ -26,6 +26,7 @@ export interface IGRNRepository {
     requiredAvailableQuantity?: number
   ): Promise<MaterialReceiptDocument | null>;
   generateNextReceiptNumber(tenantId: string): Promise<string>;
+  atomicTransitionReceiptToGrnCreated(tenantId: string, receiptId: string): Promise<MaterialReceiptDocument | null>;
   queryReceipts(tenantId: string, query: { poId?: string; status?: string; search?: string }): Promise<MaterialReceiptDocument[]>;
 
   // GRN operations
@@ -126,6 +127,26 @@ export class GRNRepository implements IGRNRepository {
           $set: updateData,
           $push: { movementHistory: newMovement }
         },
+        { new: true }
+      )
+      .exec();
+  }
+
+  public async atomicTransitionReceiptToGrnCreated(
+    tenantId: string,
+    receiptId: string
+  ): Promise<MaterialReceiptDocument | null> {
+    const filter: FilterQuery<MaterialReceiptDocument> = {
+      tenantId,
+      _id: receiptId,
+      status: 'STORED',
+      isDeleted: false
+    };
+
+    return this.receiptModel
+      .findOneAndUpdate(
+        filter,
+        { $set: { status: 'GRN_CREATED' } },
         { new: true }
       )
       .exec();

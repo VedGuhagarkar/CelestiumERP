@@ -144,6 +144,11 @@ export class GRNController {
     });
     return ApiResponse.success(res, allocated, `Unit '${unitIdentifier}' allocated to plan '${req.body.allocatedPlanNumber}'`);
   };
+
+  public getStateMachineLifecycle = async (_req: Request, res: Response): Promise<Response> => {
+    const lifecycle = this.service.getCreationPhaseLifecycle();
+    return ApiResponse.success(res, lifecycle, 'Authoritative Creation Phase State Machine lifecycle retrieved');
+  };
 }
 
 export const grnController = new GRNController();

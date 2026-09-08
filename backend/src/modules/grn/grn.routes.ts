@@ -72,7 +72,7 @@ grnRouter.get(
 
 // 6. Available for Planning Query Gate
 grnRouter.get(
-  '/units/available-for-planning',
+  ['/units/available-for-planning', '/planning-units/available'],
   authenticateJwt,
   requirePermission(PERMISSIONS.INVENTORY_GRN_VIEW),
   validateRequest(queryAvailablePlanningUnitsSchema),
@@ -89,7 +89,7 @@ grnRouter.get(
 
 // 8. Allocate Individual Unit to Downstream Planning Batch
 grnRouter.post(
-  '/units/:unitIdentifier/allocate',
+  ['/units/:unitIdentifier/allocate', '/planning-units/:unitIdentifier/allocate'],
   authenticateJwt,
   requireAnyPermission(
     PERMISSIONS.PRODUCTION_JOB_CREATE,
@@ -100,7 +100,14 @@ grnRouter.post(
   asyncHandler(grnController.allocateUnitForPlanning)
 );
 
-// 7. Get GRN by ID
+// 9. Authoritative Creation Phase State Machine Lifecycle
+grnRouter.get(
+  '/state-control/lifecycle',
+  authenticateJwt,
+  asyncHandler(grnController.getStateMachineLifecycle)
+);
+
+// 10. Get GRN by ID
 grnRouter.get(
   '/:id',
   authenticateJwt,

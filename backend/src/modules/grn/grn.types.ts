@@ -225,6 +225,7 @@ export interface CreateGrnItemDto {
 
 export interface CreateGrnDto {
   poId?: string;
+  receiptId?: string;
   materialReceiptId?: string;
   idempotencyKey?: string;
   supplierChallanNumber?: string;

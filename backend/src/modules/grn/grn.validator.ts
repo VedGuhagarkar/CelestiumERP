@@ -35,13 +35,22 @@ export const storeMaterialSchema: ValidationSchema = {
     warehouseId: z.string().trim().min(1, 'Warehouse ID is required'),
     storageLocationCode: z.string().trim().min(1, 'Storage location code (bay/bin) is required').max(100),
     quantity: z.number().positive('Storage quantity must be greater than zero').optional(),
+    items: z
+      .array(
+        z.object({
+          poLineItemId: z.string().trim().optional(),
+          itemId: z.string().trim().optional(),
+          putawayQuantity: z.number().positive().optional()
+        })
+      )
+      .optional(),
     storageNotes: z.string().trim().max(500).optional()
   })
 };
 
 export const createGrnItemSchema = z.object({
   poLineItemId: z.string().trim().optional(),
-  itemId: z.string().trim().min(1, 'Item ID is required'),
+  itemId: z.string().trim().optional(),
   challanQuantity: z.number().positive('Challan quantity must be greater than zero').optional(),
   receivedQuantity: z.number().positive('Received quantity must be greater than zero').optional(),
   acceptedQuantity: z.number().positive('Accepted quantity must be greater than zero').optional(),
@@ -49,6 +58,9 @@ export const createGrnItemSchema = z.object({
   supplierLotNumber: z.string().trim().max(100).optional(),
   mtrNumber: z.string().trim().max(100).optional(),
   chemicalComposition: z.record(z.string(), z.number()).optional()
+}).refine((data) => Boolean(data.poLineItemId || data.itemId), {
+  message: 'Either poLineItemId or itemId must be provided',
+  path: ['poLineItemId']
 });
 
 export const createGrnSchema: ValidationSchema = {
@@ -56,6 +68,7 @@ export const createGrnSchema: ValidationSchema = {
     .object({
       poId: z.string().trim().min(1, 'Purchase Order ID is required').optional(),
       materialReceiptId: z.string().trim().min(1, 'Material Receipt ID is required').optional(),
+      receiptId: z.string().trim().min(1, 'Receipt ID is required').optional(),
       idempotencyKey: z.string().trim().max(100).optional(),
       supplierChallanNumber: z.string().trim().max(100).optional(),
       supplierChallanDate: z.string().datetime().or(z.string().regex(/^\d{4}-\d{2}-\d{2}/)).optional(),
@@ -68,8 +81,8 @@ export const createGrnSchema: ValidationSchema = {
       remarks: z.string().trim().max(1000).optional(),
       unitGenerationMode: z.enum(['BY_PCS', 'BY_LOT']).optional()
     })
-    .refine((data) => Boolean(data.poId || data.materialReceiptId), {
-      message: 'Either Purchase Order ID (poId) or Material Receipt ID (materialReceiptId) must be provided',
+    .refine((data) => Boolean(data.poId || data.materialReceiptId || data.receiptId), {
+      message: 'Either Purchase Order ID (poId) or Material Receipt ID (materialReceiptId / receiptId) must be provided',
       path: ['poId']
     })
 };

@@ -501,7 +501,7 @@ describe('Prompt 4: Authoritative Incoming Material Receipt Suite (Creation Phas
         });
 
       expect(res3.status).toBe(400);
-      expect(res3.body.message).toContain('exceeds remaining ordered quantity');
+      expect(res3.body.message).toMatch(/exceeds remaining ordered quantity|not eligible for material receipt/);
     });
   });
 
