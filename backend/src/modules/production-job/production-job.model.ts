@@ -335,6 +335,47 @@ const jobExecutionSchema = new Schema(
   { _id: false }
 );
 
+const batchOrderGenealogySchema = new Schema(
+  {
+    whichPo: {
+      poId: { type: String, required: true },
+      poNumber: { type: String, required: true, uppercase: true },
+      supplierName: { type: String, required: true },
+      supplierCode: { type: String, default: null },
+      orderDate: { type: Date, default: null }
+    },
+    whichGrn: {
+      grnId: { type: String, required: true },
+      grnNumber: { type: String, required: true, uppercase: true },
+      supplierName: { type: String, required: true },
+      supplierCode: { type: String, default: null },
+      receivedDate: { type: Date, default: null }
+    },
+    whichPart: {
+      itemId: { type: String, required: true },
+      itemCode: { type: String, required: true, uppercase: true },
+      itemName: { type: String, required: true },
+      materialGrade: { type: String, required: true },
+      uom: { type: String, required: true }
+    },
+    whichRecipe: {
+      recipeId: { type: String, required: true },
+      recipeCode: { type: String, required: true, uppercase: true },
+      recipeName: { type: String, required: true },
+      revisionNumber: { type: Number, default: 1 },
+      processFamily: { type: String, required: true }
+    },
+    lockedAt: { type: Date, default: Date.now },
+    lockedBy: {
+      userId: { type: String, required: true },
+      email: { type: String, default: null },
+      role: { type: String, default: null }
+    },
+    isImmutable: { type: Boolean, default: true }
+  },
+  { _id: false }
+);
+
 const productionJobSchema = createBaseSchema<ProductionJobDocument>({
   jobNumber: { type: String, required: true, uppercase: true },
   poId: { type: String, default: null },
@@ -382,11 +423,21 @@ const productionJobSchema = createBaseSchema<ProductionJobDocument>({
   timeline: { type: jobTimelineSchema, required: true },
   execution: { type: jobExecutionSchema, default: () => ({ stageProgress: [], downtimeLog: [], productionLogs: [] }) },
   processDetails: { type: [processDetailRowSchema], default: [] },
+  genealogy: { type: batchOrderGenealogySchema, default: null },
   transitionHistory: { type: [jobStateTransitionSchema], default: [] },
   assignmentHistory: { type: [jobResourceAssignmentHistorySchema], default: [] },
   idempotencyKey: { type: String, default: null },
   cancellationReason: { type: String, default: null },
   notes: { type: String, default: null }
+});
+
+productionJobSchema.pre('save', function (next) {
+  if (!this.isNew) {
+    if (this.isModified('genealogy') && !this.isModified('isDeleted')) {
+      return next(new Error('Genealogy Violation: Batch Order source genealogy is strictly immutable once established.'));
+    }
+  }
+  next();
 });
 
 productionJobSchema.index({ tenantId: 1, jobNumber: 1 }, { unique: true });

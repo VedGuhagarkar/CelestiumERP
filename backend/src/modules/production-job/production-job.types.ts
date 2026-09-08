@@ -281,6 +281,44 @@ export interface IJobExecution {
   storagePlacement?: IJobStoragePlacement | null;
 }
 
+export interface IBatchOrderGenealogy {
+  whichPo: {
+    poId: string;
+    poNumber: string;
+    supplierName: string;
+    supplierCode?: string;
+    orderDate?: Date;
+  };
+  whichGrn: {
+    grnId: string;
+    grnNumber: string;
+    supplierName: string;
+    supplierCode?: string;
+    receivedDate?: Date;
+  };
+  whichPart: {
+    itemId: string;
+    itemCode: string;
+    itemName: string;
+    materialGrade: string;
+    uom: string;
+  };
+  whichRecipe: {
+    recipeId: string;
+    recipeCode: string;
+    recipeName: string;
+    revisionNumber: number;
+    processFamily: string;
+  };
+  lockedAt: Date;
+  lockedBy: {
+    userId: string;
+    email?: string;
+    role?: string;
+  };
+  isImmutable: boolean;
+}
+
 export interface IProductionJob {
   jobNumber: string;
   tenantId: string;
@@ -329,6 +367,7 @@ export interface IProductionJob {
   };
   execution?: IJobExecution;
   processDetails: IProcessDetailRow[];
+  genealogy?: IBatchOrderGenealogy | null;
   transitionHistory: IJobStateTransition[];
   assignmentHistory: IJobResourceAssignmentHistory[];
   idempotencyKey?: string | null;
@@ -363,6 +402,15 @@ export interface CreateBatchOrderDto {
   notes?: string;
   idempotencyKey?: string;
   processDetails?: Partial<IProcessDetailRow>[];
+  customer?: {
+    customerId?: string;
+    customerCode?: string;
+    customerName?: string;
+  };
+  customerId?: string;
+  customerCode?: string;
+  customerName?: string;
+  materialGrade?: string;
 }
 
 export interface UpdateProcessDetailsDto {

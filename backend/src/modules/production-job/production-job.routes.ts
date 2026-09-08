@@ -10,6 +10,7 @@ import {
   createBatchOrderSchema,
   updateProcessDetailsSchema,
   getProcessDetailsSchema,
+  getBatchOrderGenealogySchema,
   updateJobSchema,
   assignOperatorSchema,
   removeOperatorSchema,
@@ -86,6 +87,15 @@ productionJobRouter.put(
   ),
   validateRequest(updateProcessDetailsSchema),
   asyncHandler(productionJobController.updateProcessDetails)
+);
+
+// 0g. Get Authoritative Source Genealogy for Batch Order
+productionJobRouter.get(
+  ['/batch-orders/:id/genealogy', '/:id/genealogy'],
+  authenticateJwt,
+  requireAnyPermission(PERMISSIONS.BATCH_ORDER_VIEW, PERMISSIONS.PRODUCTION_JOB_VIEW),
+  validateRequest(getBatchOrderGenealogySchema),
+  asyncHandler(productionJobController.getBatchOrderGenealogy)
 );
 
 // 2. Convert Approved Production Plan to Executable Production Job

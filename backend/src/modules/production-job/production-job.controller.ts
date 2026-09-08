@@ -110,6 +110,23 @@ export class ProductionJobController extends BaseController {
     }
   };
 
+  public getBatchOrderGenealogy = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const genealogy = await this.service.getBatchOrderGenealogy(
+        tenantId,
+        req.params.id as string
+      );
+      this.sendSuccess(res, genealogy, 'Batch Order source genealogy retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
   public createDirectJob = async (
     req: Request,
     res: Response,

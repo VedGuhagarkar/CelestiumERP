@@ -110,7 +110,19 @@ export const createBatchOrderSchema: ValidationSchema = {
       shift: z.string().trim().optional(),
       notes: z.string().trim().max(1000).optional(),
       idempotencyKey: z.string().trim().optional(),
-      processDetails: z.array(processDetailRowValidatorSchema).max(15, 'Maximum 15 process rows allowed').optional()
+      processDetails: z.array(processDetailRowValidatorSchema).max(15, 'Maximum 15 process rows allowed').optional(),
+      customer: z
+        .object({
+          customerId: z.string().optional(),
+          customerCode: z.string().optional(),
+          customerName: z.string().optional()
+        })
+        .optional(),
+      customerId: z.string().trim().optional(),
+      customerCode: z.string().trim().optional(),
+      customerName: z.string().trim().optional(),
+      materialGrade: z.string().trim().optional(),
+      material: z.string().trim().optional()
     })
     .superRefine((data, ctx) => {
       const qty = data.quantity !== undefined ? data.quantity : data.targetQuantity;
@@ -145,6 +157,12 @@ export const createBatchOrderSchema: ValidationSchema = {
     })
 };
 
+export const getBatchOrderGenealogySchema: ValidationSchema = {
+  params: z.object({
+    id: z.string().trim().min(1, 'Batch Order ID is required')
+  })
+};
+
 export const createDirectJobSchema: ValidationSchema = {
   body: z.object({
     poId: z.string().trim().optional(),
@@ -169,16 +187,40 @@ export const updateJobSchema: ValidationSchema = {
   params: z.object({
     id: z.string().trim().min(1, 'Job ID is required')
   }),
-  body: z.object({
-    targetQuantity: z.number().min(0.001).optional(),
-    priority: jobPriorityEnum.optional(),
-    plannedStartDate: z.string().or(z.date()).optional(),
-    targetCompletionDate: z.string().or(z.date()).optional(),
-    assignedFurnaceId: z.string().trim().optional(),
-    assignedOperatorId: z.string().trim().optional(),
-    shift: shiftEnum.optional(),
-    notes: z.string().trim().max(500).optional()
-  })
+  body: z
+    .object({
+      targetQuantity: z.number().min(0.001).optional(),
+      priority: jobPriorityEnum.optional(),
+      plannedStartDate: z.string().or(z.date()).optional(),
+      targetCompletionDate: z.string().or(z.date()).optional(),
+      assignedFurnaceId: z.string().trim().optional(),
+      assignedOperatorId: z.string().trim().optional(),
+      shift: shiftEnum.optional(),
+      notes: z.string().trim().max(500).optional(),
+      poId: z.any().optional(),
+      grnId: z.any().optional(),
+      itemId: z.any().optional(),
+      recipeId: z.any().optional(),
+      customer: z.any().optional(),
+      genealogy: z.any().optional()
+    })
+    .superRefine((data, ctx) => {
+      if (
+        data.poId !== undefined ||
+        data.grnId !== undefined ||
+        data.itemId !== undefined ||
+        data.recipeId !== undefined ||
+        data.customer !== undefined ||
+        data.genealogy !== undefined
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            'Genealogy Violation: Fundamental source genealogy (PO, GRN, Part, Recipe, Customer) is strictly immutable once established.',
+          path: ['genealogy']
+        });
+      }
+    })
 };
 
 export const assignOperatorSchema: ValidationSchema = {

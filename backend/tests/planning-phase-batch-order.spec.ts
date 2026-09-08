@@ -1355,5 +1355,337 @@ describe('Planning Phase — Authoritative PO -> GRN -> BO Workflow', () => {
       expect(inspectionHandoffRow.status).toBe('PENDING');
     });
   });
+
+  describe('5. Enforce BO Source-of-Truth Relationships & Deliberate Tampering Prevention', () => {
+    let createdJobRecord: any = null;
+
+    beforeEach(() => {
+      jest.clearAllMocks();
+      jest.spyOn(purchaseOrderRepository, 'findById').mockResolvedValue(mockPo as any);
+      jest.spyOn(grnRepository, 'findGrnById').mockResolvedValue(mockGrn as any);
+      jest.spyOn(grnRepository, 'findUnitsByGrnId').mockResolvedValue(mockGrn.units as any);
+      jest.spyOn(grnRepository, 'allocateUnit').mockResolvedValue({} as any);
+      jest.spyOn(itemRepository, 'findById').mockResolvedValue(mockItem as any);
+      jest.spyOn(recipeRepository, 'findById').mockResolvedValue(mockRecipe as any);
+      jest.spyOn(productionJobRepository, 'findByIdempotencyKey').mockResolvedValue(null);
+      jest.spyOn(productionJobRepository, 'generateNextBatchOrderNumber').mockResolvedValue('BO-202609-0888');
+      jest.spyOn(productionJobRepository, 'create').mockImplementation(async (tenant: string, data: any) => {
+        createdJobRecord = {
+          id: 'job_bo_tamper_test',
+          _id: 'job_bo_tamper_test',
+          tenantId: tenant,
+          ...data,
+          save: jest.fn().mockResolvedValue(true),
+          toJSON: function () {
+            return { ...this };
+          }
+        };
+        return createdJobRecord;
+      });
+      jest.spyOn(productionJobRepository, 'findById').mockImplementation(async () => {
+        return createdJobRecord;
+      });
+    });
+
+    // 1. Cross-Record Contamination: PO A + GRN B
+    it('should reject requests attempting to combine PO A with unrelated GRN B', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+      const mismatchedGrn = {
+        ...mockGrn,
+        id: 'grn_other',
+        poId: 'po_other',
+        poNumber: 'PO-2026-99999'
+      };
+      jest.spyOn(grnRepository, 'findGrnById').mockResolvedValue(mismatchedGrn as any);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mismatchedGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/Hierarchy Violation|belongs to PO/i);
+    });
+
+    // 2. Cross-Record Contamination: GRN A + Part B
+    it('should reject requests attempting to combine GRN A with Part B not present in GRN', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: 'item_rogue_part',
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/Part Membership Violation/i);
+    });
+
+    // 3. Cross-Record Contamination: PO A + Part B (Part not present on PO line items)
+    it('should reject requests attempting to combine PO A with Part not present in PO line items', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      // GRN has a part, but PO does not have this part
+      const grnWithDifferentPart = {
+        ...mockGrn,
+        items: [
+          {
+            itemId: 'item_inconel_718',
+            itemCode: 'MAT-INCONEL-718',
+            itemName: 'Inconel 718 Superalloy',
+            materialGrade: 'Inconel 718',
+            receivedQuantity: 100,
+            acceptedQuantity: 100,
+            uom: 'KG',
+            recipeId: 'rec_inconel_01'
+          }
+        ]
+      };
+      const inconelItem = {
+        id: 'item_inconel_718',
+        _id: 'item_inconel_718',
+        itemCode: 'MAT-INCONEL-718',
+        itemName: 'Inconel 718 Superalloy',
+        materialGrade: 'Inconel 718',
+        uom: 'KG',
+        status: 'ACTIVE'
+      };
+
+      jest.spyOn(grnRepository, 'findGrnById').mockResolvedValue(grnWithDifferentPart as any);
+      jest.spyOn(itemRepository, 'findById').mockResolvedValue(inconelItem as any);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: grnWithDifferentPart.id,
+          itemId: 'item_inconel_718',
+          recipeId: 'rec_inconel_01',
+          quantity: 50,
+          weight: 25
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('Cross-Record Contamination Violation');
+      expect(res.body.message).toContain('does not exist on parent PO');
+    });
+
+    // 4. Cross-Record Contamination: Part A + Recipe B (Contradictory recipe/material)
+    it('should reject requests attempting to combine Part A with Recipe B that contradicts its material', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+      const steelRecipe = {
+        id: 'rec_steel_carburize',
+        recipeCode: 'REC-CARBURIZING-01',
+        name: 'Case Hardening Carburize Cycle',
+        processFamily: 'CASE_HARDENING',
+        status: 'APPROVED',
+        applicableMaterialGrades: ['EN19', '16MnCr5'] // incompatible with Ti-6Al-4V
+      };
+      jest.spyOn(recipeRepository, 'findById').mockResolvedValue(steelRecipe as any);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: steelRecipe.id,
+          quantity: 50,
+          weight: 25
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/Metallurgical Incompatibility|Recipe Mismatch Violation/i);
+    });
+
+    // 5. Cross-Record Contamination: PO A + unrelated Customer (Deliberate client tampering)
+    it('should reject client-supplied customer data that contradicts the authoritative PO/GRN customer', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50,
+          customer: {
+            customerName: 'Rogue Aero Corporation',
+            customerCode: 'ROGUE-CUST'
+          }
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('Cross-Record Contamination Violation');
+      expect(res.body.message).toMatch(/Client-supplied customer.*contradicts authoritative PO\/GRN customer/);
+    });
+
+    // 6. Cross-Record Contamination: GRN A + unrelated Material (Deliberate client tampering)
+    it('should reject client-supplied material grade that contradicts authoritative GRN material', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50,
+          materialGrade: 'ALUMINUM-7075-T6' // Contradicts Ti-6Al-4V
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('Cross-Record Contamination Violation');
+      expect(res.body.message).toMatch(/Requested material grade.*contradicts authoritative GRN material grade/);
+    });
+
+    // 7. Server-Side Retrieval of Master Data
+    it('should authoritatively retrieve customer and item master data server-side without trusting client duplication', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      // Submit minimal identifiers only
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+
+      // Verify that the created BO has authoritative customer and master item data retrieved server-side
+      const createdBo = res.body.data;
+      expect(createdBo.customer.customerName).toBe(mockGrn.supplierName);
+      expect(createdBo.item.itemCode).toBe(mockItem.itemCode);
+      expect(createdBo.item.materialGrade).toBe(mockItem.materialGrade);
+      expect(createdBo.recipeSnapshot.recipeCode).toBe(mockRecipe.recipeCode);
+      expect(createdBo.genealogy).toBeDefined();
+    });
+
+    // 8. Immutable Genealogy Retrieval & Answering 4 Traceability Questions
+    it('should answer all 4 traceability questions via GET /batch-orders/:id/genealogy', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      // First create BO
+      await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+
+      // Call genealogy endpoint
+      const genealogyRes = await request(app)
+        .get('/api/v1/batch-orders/job_bo_tamper_test/genealogy')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`);
+
+      expect(genealogyRes.status).toBe(200);
+      expect(genealogyRes.body.success).toBe(true);
+
+      const { genealogy, answers, traceabilityChain } = genealogyRes.body.data;
+      expect(genealogy.isImmutable).toBe(true);
+
+      // Question 1: Which PO created this BO?
+      expect(genealogy.whichPo.poId).toBe(mockPo.id);
+      expect(genealogy.whichPo.poNumber).toBe(mockPo.poNumber);
+      expect(answers.whichPoCreatedThisBo).toContain(mockPo.poNumber);
+
+      // Question 2: Which GRN supplied it?
+      expect(genealogy.whichGrn.grnId).toBe(mockGrn.id);
+      expect(genealogy.whichGrn.grnNumber).toBe(mockGrn.grnNumber);
+      expect(answers.whichGrnSuppliedIt).toContain(mockGrn.grnNumber);
+
+      // Question 3: Which Part does it represent?
+      expect(genealogy.whichPart.itemCode).toBe(mockItem.itemCode);
+      expect(genealogy.whichPart.materialGrade).toBe(mockItem.materialGrade);
+      expect(answers.whichPartDoesItRepresent).toContain(mockItem.itemCode);
+
+      // Question 4: Which Recipe governs it?
+      expect(genealogy.whichRecipe.recipeCode).toBe(mockRecipe.recipeCode);
+      expect(answers.whichRecipeGovernsIt).toContain(mockRecipe.recipeCode);
+
+      expect(traceabilityChain).toContain('PO (PO-2026-00101) -> GRN (GRN-202609-0501) -> BO');
+    });
+
+    // 9. Genealogy Immutability: Block deliberate PATCH mutation of fundamental genealogy
+    it('should reject attempts to mutate genealogy or source PO/GRN/Part via updateJob', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      // Setup existing job in DRAFT or APPROVED
+      createdJobRecord = {
+        id: 'job_bo_tamper_test',
+        _id: 'job_bo_tamper_test',
+        jobNumber: 'BO-202609-0888',
+        status: 'APPROVED',
+        quantity: { targetQuantity: 100 },
+        priority: 'NORMAL',
+        timeline: { plannedStartDate: new Date(), targetCompletionDate: new Date() },
+        save: jest.fn().mockResolvedValue(true),
+        toJSON: function () {
+          return { ...this };
+        }
+      };
+
+      const res = await request(app)
+        .patch('/api/v1/production-jobs/job_bo_tamper_test')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: 'po_tampered_999',
+          targetQuantity: 120
+        });
+
+      expect([400, 422]).toContain(res.status);
+      expect(res.body.success).toBe(false);
+      expect(JSON.stringify(res.body)).toMatch(/Genealogy Violation/i);
+    });
+  });
 });
 

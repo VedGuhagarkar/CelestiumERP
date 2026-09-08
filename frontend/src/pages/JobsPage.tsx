@@ -75,6 +75,7 @@ export interface ProductionJob {
   recipeSnapshot?: {
     recipeId?: string;
     recipeCode: string;
+    revisionNumber?: number;
     name?: string;
     processFamily?: string;
     stages?: {
@@ -107,6 +108,35 @@ export interface ProductionJob {
     uom: string;
   }[];
   processDetails?: IProcessDetailRow[];
+  genealogy?: {
+    whichPo: {
+      poId: string;
+      poNumber: string;
+      supplierName: string;
+      supplierCode?: string;
+    };
+    whichGrn: {
+      grnId: string;
+      grnNumber: string;
+      supplierName: string;
+      supplierCode?: string;
+    };
+    whichPart: {
+      itemId: string;
+      itemCode: string;
+      itemName: string;
+      materialGrade: string;
+      uom: string;
+    };
+    whichRecipe: {
+      recipeId: string;
+      recipeCode: string;
+      recipeName: string;
+      revisionNumber: number;
+      processFamily: string;
+    };
+    isImmutable: boolean;
+  };
 }
 
 export interface IProcessDetailRow {
@@ -1309,23 +1339,74 @@ export const JobsPage: React.FC = () => {
       >
         {selectedJob && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            {/* Hierarchy Verification Card */}
-            <AppCard style={{ padding: '16px', background: 'rgba(56, 189, 248, 0.05)', border: '1px solid rgba(56, 189, 248, 0.2)' }}>
-              <div style={{ fontSize: '12px', fontWeight: 700, color: '#38bdf8', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <GitMerge size={14} /> AUTHORITATIVE HIERARCHY LINEAGE
+            {/* Authoritative Source Genealogy & Traceability Card */}
+            <AppCard style={{ padding: '16px', background: 'rgba(56, 189, 248, 0.05)', border: '1px solid rgba(56, 189, 248, 0.25)' }}>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: '#38bdf8', marginBottom: '10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <GitMerge size={14} /> AUTHORITATIVE SOURCE GENEALOGY & TRACEABILITY
+                </div>
+                <span
+                  style={{
+                    fontSize: '10px',
+                    fontWeight: 700,
+                    padding: '2px 8px',
+                    borderRadius: '999px',
+                    background: 'rgba(16, 185, 129, 0.15)',
+                    color: '#34d399',
+                    border: '1px solid rgba(16, 185, 129, 0.3)'
+                  }}
+                >
+                  LOCKED & IMMUTABLE
+                </span>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px', textAlign: 'center' }}>
-                <div style={{ padding: '8px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.03)' }}>
-                  <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>Parent PO</div>
-                  <div style={{ fontSize: '13px', fontWeight: 700, color: '#93c5fd' }}>{selectedJob.poNumber || 'PO-2026-00101'}</div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', fontSize: '12px' }}>
+                <div style={{ padding: '10px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div style={{ fontSize: '10px', color: '#93c5fd', fontWeight: 700, textTransform: 'uppercase', marginBottom: '3px' }}>
+                    1. Which PO Created This BO?
+                  </div>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: '#ffffff' }}>
+                    {selectedJob.genealogy?.whichPo?.poNumber || selectedJob.poNumber || 'PO-2026-00101'}
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
+                    Supplier: {selectedJob.genealogy?.whichPo?.supplierName || selectedJob.customer?.customerName || 'Valued Customer'}
+                  </div>
                 </div>
-                <div style={{ padding: '8px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.03)' }}>
-                  <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>Creation GRN</div>
-                  <div style={{ fontSize: '13px', fontWeight: 700, color: '#6ee7b7' }}>{selectedJob.grnNumber || 'GRN-202609-0501'}</div>
+
+                <div style={{ padding: '10px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div style={{ fontSize: '10px', color: '#6ee7b7', fontWeight: 700, textTransform: 'uppercase', marginBottom: '3px' }}>
+                    2. Which GRN Supplied It?
+                  </div>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: '#ffffff' }}>
+                    {selectedJob.genealogy?.whichGrn?.grnNumber || selectedJob.grnNumber || 'GRN-202609-0501'}
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
+                    Status: Creation Phase Completed
+                  </div>
                 </div>
-                <div style={{ padding: '8px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.03)' }}>
-                  <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>Batch Order</div>
-                  <div style={{ fontSize: '13px', fontWeight: 700, color: '#fca5a5' }}>{selectedJob.boNumber || selectedJob.jobNumber}</div>
+
+                <div style={{ padding: '10px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div style={{ fontSize: '10px', color: '#fcd34d', fontWeight: 700, textTransform: 'uppercase', marginBottom: '3px' }}>
+                    3. Which Part Does It Represent?
+                  </div>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: '#ffffff' }}>
+                    {selectedJob.genealogy?.whichPart?.itemCode || selectedJob.item?.itemCode}
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
+                    {selectedJob.genealogy?.whichPart?.itemName || selectedJob.item?.itemName} ({selectedJob.genealogy?.whichPart?.materialGrade || selectedJob.item?.materialGrade})
+                  </div>
+                </div>
+
+                <div style={{ padding: '10px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div style={{ fontSize: '10px', color: '#f472b6', fontWeight: 700, textTransform: 'uppercase', marginBottom: '3px' }}>
+                    4. Which Recipe Governs It?
+                  </div>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: '#ffffff' }}>
+                    {selectedJob.genealogy?.whichRecipe?.recipeCode || selectedJob.recipeSnapshot?.recipeCode}
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
+                    {selectedJob.genealogy?.whichRecipe?.recipeName || selectedJob.recipeSnapshot?.name} (Rev {selectedJob.genealogy?.whichRecipe?.revisionNumber || selectedJob.recipeSnapshot?.revisionNumber || 1})
+                  </div>
                 </div>
               </div>
             </AppCard>
@@ -1680,6 +1761,10 @@ export const JobsPage: React.FC = () => {
                 </div>
                 <div style={{ color: 'var(--color-text-secondary)', marginTop: '4px' }}>
                   Bound Recipe: <strong style={{ color: '#ffffff' }}>{selectedPart.recipeCode || selectedPart.boundRecipe?.recipeCode || 'REC-TI-AGING'}</strong> (Frozen process structure will be snapshotted).
+                </div>
+                <div style={{ color: 'var(--color-text-secondary)', marginTop: '4px', display: 'flex', gap: '14px', flexWrap: 'wrap', fontSize: '11px' }}>
+                  <span>Authoritative Customer: <strong style={{ color: '#38bdf8' }}>{selectedGrn.supplierName || selectedPo.supplierName || 'Valued Customer'}</strong> (Derived from GRN)</span>
+                  <span>Authoritative Material: <strong style={{ color: '#34d399' }}>{selectedPart.materialGrade || 'Ti-6Al-4V'}</strong> (Locked from Master)</span>
                 </div>
               </div>
 

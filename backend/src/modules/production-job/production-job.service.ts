@@ -28,7 +28,8 @@ import {
   ALLOWED_STATUS_TRANSITIONS,
   PRIORITY_WEIGHTS,
   IJobRecipeSnapshot,
-  IJobSpecificationSnapshot
+  IJobSpecificationSnapshot,
+  IBatchOrderGenealogy
 } from './production-job.types.js';
 import { customerRepository } from '../customer/customer.repository.js';
 import { itemRepository } from '../item/item.repository.js';
@@ -140,6 +141,24 @@ export class ProductionJobService {
     const item = await itemRepository.findById(tenantId, grnItem.itemId);
     if (!item || item.isDeleted) {
       throw new NotFoundError(`Item with ID '${grnItem.itemId}' not found in Item Master.`);
+    }
+
+    // 3b. Verify Part belongs to parent PO line items (Item -> PO relationship)
+    let poItem: any = null;
+    if (po.items && po.items.length > 0) {
+      poItem = po.items.find(
+        (pi) =>
+          pi.itemId === item.id ||
+          pi.itemCode === item.itemCode ||
+          (pi as any)._id?.toString() === item.id ||
+          pi.itemId === grnItem.itemId ||
+          pi.itemCode === grnItem.itemCode
+      );
+      if (!poItem) {
+        throw new BadRequestError(
+          `Cross-Record Contamination Violation: Part '${item.itemCode}' does not exist on parent PO '${po.poNumber}'. Part must originate from PO line items.`
+        );
+      }
     }
 
     // 4. Verify Recipe exists and corresponds to the BO Item
@@ -317,6 +336,87 @@ export class ProductionJobService {
     const customerCode = grn.supplierCode || (po as any).supplierCode || 'CUST-DEFAULT';
     const customerId = (po as any).customerId || grn.poId || po.id;
 
+    // Reject Cross-Record Contamination: PO A + unrelated Customer (Client customer tampering)
+    const clientCust =
+      dto.customer ||
+      (dto.customerId || dto.customerCode || dto.customerName
+        ? { customerId: dto.customerId, customerCode: dto.customerCode, customerName: dto.customerName }
+        : null);
+
+    if (clientCust) {
+      const clientCustId = clientCust.customerId ? String(clientCust.customerId).trim() : null;
+      const clientCustCode = clientCust.customerCode ? String(clientCust.customerCode).trim().toUpperCase() : null;
+      const clientCustName = clientCust.customerName ? String(clientCust.customerName).trim().toUpperCase() : null;
+
+      const authId = String(customerId);
+      const authPoId = String(po.id);
+      const authCode = customerCode.toUpperCase();
+      const authName = customerName.toUpperCase();
+
+      const idMismatch =
+        clientCustId &&
+        clientCustId !== authId &&
+        clientCustId !== authPoId &&
+        clientCustId !== String(grn.poId);
+
+      let resolvedCustMatch = !idMismatch;
+      if (idMismatch && clientCustId) {
+        const custDoc = await customerRepository.findById(tenantId, clientCustId);
+        if (custDoc && !custDoc.isDeleted) {
+          const custDocName = (custDoc.companyName || (custDoc as any).name || (custDoc as any).customerName || '').toUpperCase();
+          const custDocCode = (custDoc.customerCode || '').toUpperCase();
+          if (
+            custDocName === authName ||
+            custDocName.includes(authName) ||
+            authName.includes(custDocName) ||
+            (authCode !== 'CUST-DEFAULT' && custDocCode === authCode)
+          ) {
+            resolvedCustMatch = true;
+          }
+        }
+      }
+
+      const codeMismatch =
+        clientCustCode &&
+        clientCustCode !== authCode &&
+        !authCode.includes(clientCustCode) &&
+        !clientCustCode.includes(authCode);
+
+      const nameMismatch =
+        clientCustName &&
+        clientCustName !== authName &&
+        !authName.includes(clientCustName) &&
+        !clientCustName.includes(authName);
+
+      if (!resolvedCustMatch || codeMismatch || nameMismatch) {
+        throw new BadRequestError(
+          `Cross-Record Contamination Violation: Client-supplied customer '${clientCust.customerName || clientCust.customerCode || clientCust.customerId}' contradicts authoritative PO/GRN customer '${customerName}' (${customerCode}). Client customer tampering is prohibited.`
+        );
+      }
+    }
+
+    // Reject Cross-Record Contamination: GRN A + unrelated material
+    const requestedMaterial = dto.materialGrade || (dto as any).material;
+    if (requestedMaterial) {
+      const reqMatUpper = requestedMaterial.trim().toUpperCase();
+      const itemGradeUpper = itemGrade.trim().toUpperCase();
+      if (reqMatUpper !== itemGradeUpper) {
+        throw new BadRequestError(
+          `Cross-Record Contamination Violation: Requested material grade '${requestedMaterial}' contradicts authoritative GRN material grade '${itemGrade}'. Combining GRN with unrelated material is prohibited.`
+        );
+      }
+    }
+
+    if (poItem && poItem.materialGrade) {
+      const poGradeUpper = String(poItem.materialGrade).trim().toUpperCase();
+      const itemGradeUpper = itemGrade.trim().toUpperCase();
+      if (poGradeUpper !== itemGradeUpper) {
+        throw new BadRequestError(
+          `Cross-Record Contamination Violation: GRN material grade '${itemGrade}' contradicts parent PO material grade '${poItem.materialGrade}'.`
+        );
+      }
+    }
+
     const plannedStartDate = dto.plannedStartDate ? new Date(dto.plannedStartDate) : new Date();
     const targetCompletionDate = dto.targetCompletionDate
       ? new Date(dto.targetCompletionDate)
@@ -331,6 +431,45 @@ export class ProductionJobService {
       recipe,
       dto.processDetails
     );
+
+    // 10c. Seal Immutable Authoritative Source Genealogy (Supplier -> PO -> GRN -> BO, Item -> Recipe -> BO)
+    const genealogy: IBatchOrderGenealogy = {
+      whichPo: {
+        poId: po.id,
+        poNumber: po.poNumber,
+        supplierName: po.supplierName || customerName,
+        supplierCode: po.supplierCode || customerCode,
+        orderDate: po.orderDate || undefined
+      },
+      whichGrn: {
+        grnId: grn.id,
+        grnNumber: grn.grnNumber,
+        supplierName: grn.supplierName || customerName,
+        supplierCode: grn.supplierCode || customerCode,
+        receivedDate: (grn as any).receivedDate || grn.createdAt
+      },
+      whichPart: {
+        itemId: item.id,
+        itemCode: item.itemCode,
+        itemName: item.name || grnItem.itemName,
+        materialGrade: itemGrade,
+        uom: item.uom || grnItem.uom || 'PCS'
+      },
+      whichRecipe: {
+        recipeId: recipe.id,
+        recipeCode: recipe.recipeCode,
+        recipeName: recipe.name,
+        revisionNumber: (recipe as any).revisionNumber || recipe.revision || 1,
+        processFamily: recipe.processFamily
+      },
+      lockedAt: new Date(),
+      lockedBy: {
+        userId: actor.userId,
+        email: actor.email,
+        role: actor.role
+      },
+      isImmutable: true
+    };
 
     // 11. Create Batch Order Document with Concurrency Safety and Retry
     let retries = 5;
@@ -400,6 +539,7 @@ export class ProductionJobService {
             productionLogs: []
           },
           processDetails,
+          genealogy,
           transitionHistory: [
             {
               fromStatus: 'WAITING_FOR_PRODUCTION',
@@ -903,6 +1043,69 @@ export class ProductionJobService {
   }
 
   /**
+   * Authoritative Source Genealogy Query
+   * Answers the 4 core traceability questions:
+   * 1. Which PO created this BO?
+   * 2. Which GRN supplied it?
+   * 3. Which Part does it represent?
+   * 4. Which Recipe governs it?
+   */
+  public async getBatchOrderGenealogy(tenantId: string, jobId: string) {
+    const job = await this.repo.findById(tenantId, jobId);
+    if (!job || job.isDeleted) {
+      throw new NotFoundError(`Batch Order with ID '${jobId}' not found.`);
+    }
+
+    const genealogy: IBatchOrderGenealogy = job.genealogy || {
+      whichPo: {
+        poId: job.poId || 'N/A',
+        poNumber: job.poNumber || 'N/A',
+        supplierName: job.customer?.customerName || 'N/A',
+        supplierCode: job.customer?.customerCode || 'N/A'
+      },
+      whichGrn: {
+        grnId: job.grnId || 'N/A',
+        grnNumber: job.grnNumber || 'N/A',
+        supplierName: job.customer?.customerName || 'N/A',
+        supplierCode: job.customer?.customerCode || 'N/A'
+      },
+      whichPart: {
+        itemId: job.item?.itemId || 'N/A',
+        itemCode: job.item?.itemCode || 'N/A',
+        itemName: job.item?.itemName || 'N/A',
+        materialGrade: job.item?.materialGrade || 'N/A',
+        uom: job.item?.uom || 'PCS'
+      },
+      whichRecipe: {
+        recipeId: job.recipeSnapshot?.recipeId || 'N/A',
+        recipeCode: job.recipeSnapshot?.recipeCode || 'N/A',
+        recipeName: job.recipeSnapshot?.name || 'N/A',
+        revisionNumber: job.recipeSnapshot?.revisionNumber || 1,
+        processFamily: job.recipeSnapshot?.processFamily || 'N/A'
+      },
+      lockedAt: (job as any).createdAt || new Date(),
+      lockedBy: {
+        userId: 'SYSTEM',
+        role: 'SYSTEM'
+      },
+      isImmutable: true
+    };
+
+    return {
+      boNumber: job.boNumber || job.jobNumber,
+      status: job.status,
+      genealogy,
+      answers: {
+        whichPoCreatedThisBo: `PO ${genealogy.whichPo.poNumber} (ID: ${genealogy.whichPo.poId})`,
+        whichGrnSuppliedIt: `GRN ${genealogy.whichGrn.grnNumber} (ID: ${genealogy.whichGrn.grnId})`,
+        whichPartDoesItRepresent: `${genealogy.whichPart.itemCode} - ${genealogy.whichPart.itemName} [${genealogy.whichPart.materialGrade}] (ID: ${genealogy.whichPart.itemId})`,
+        whichRecipeGovernsIt: `${genealogy.whichRecipe.recipeCode} - ${genealogy.whichRecipe.recipeName} (Rev ${genealogy.whichRecipe.revisionNumber})`
+      },
+      traceabilityChain: `Supplier (${genealogy.whichPo.supplierName}) -> PO (${genealogy.whichPo.poNumber}) -> GRN (${genealogy.whichGrn.grnNumber}) -> BO (${job.boNumber || job.jobNumber}) governed by Recipe (${genealogy.whichRecipe.recipeCode})`
+    };
+  }
+
+  /**
    * 3. Planning Query: Get POs eligible for planning (POs that have completed GRNs)
    */
   public async getEligiblePOs(tenantId: string): Promise<any[]> {
@@ -1095,6 +1298,19 @@ export class ProductionJobService {
     const job = await this.repo.findById(tenantId, jobId);
     if (!job || job.isDeleted) {
       throw new NotFoundError(`Production Job with ID '${jobId}' not found`);
+    }
+
+    if (
+      (dto as any).genealogy ||
+      (dto as any).poId ||
+      (dto as any).grnId ||
+      (dto as any).itemId ||
+      (dto as any).recipeId ||
+      (dto as any).customer
+    ) {
+      throw new BadRequestError(
+        'Genealogy Violation: Fundamental source genealogy (PO, GRN, Part, Recipe, Customer) is strictly immutable once established.'
+      );
     }
 
     if (job.status !== 'DRAFT' && job.status !== 'APPROVED' && job.status !== 'SCHEDULED') {
