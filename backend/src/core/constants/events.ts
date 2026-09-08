@@ -95,6 +95,7 @@ export const DomainEvents = {
   RECIPE_APPROVED: 'MasterData.RecipeApproved',
   SPEC_APPROVED: 'MasterData.SpecificationApproved',
   PRODUCTION_PLAN_CREATED: 'Planning.ProductionPlanCreated',
+  BATCH_ORDER_CREATED: 'Planning.BatchOrderCreated',
   MRP_RUN_COMPLETED: 'Planning.MrpRunCompleted',
 
   // Costing & Finance Events

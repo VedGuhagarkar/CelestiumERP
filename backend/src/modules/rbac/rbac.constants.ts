@@ -26,6 +26,9 @@ export const PERMISSIONS = {
   PRODUCTION_JOB_HOLD: 'production:job:hold',
   PRODUCTION_SCHEDULE_VIEW: 'production:schedule:view',
   PRODUCTION_SCHEDULE_MANAGE: 'production:schedule:manage',
+  BATCH_ORDER_CREATE: 'production:batch_order:create',
+  BATCH_ORDER_VIEW: 'production:batch_order:view',
+  BATCH_ORDER_UPDATE: 'production:batch_order:update',
 
   // 4. Metallurgical Quality Control, Recipes, Pyrometry & Specifications
   QUALITY_RECIPE_CREATE: 'quality:recipe:create',
@@ -186,6 +189,9 @@ export const DEFAULT_FACTORY_ROLES = [
       PERMISSIONS.PRODUCTION_JOB_CANCEL,
       PERMISSIONS.PRODUCTION_SCHEDULE_VIEW,
       PERMISSIONS.PRODUCTION_SCHEDULE_MANAGE,
+      PERMISSIONS.BATCH_ORDER_CREATE,
+      PERMISSIONS.BATCH_ORDER_VIEW,
+      PERMISSIONS.BATCH_ORDER_UPDATE,
       PERMISSIONS.QUALITY_RECIPE_VIEW,
       PERMISSIONS.QUALITY_SPEC_VIEW,
       PERMISSIONS.QUALITY_INSPECTION_RECORD,

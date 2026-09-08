@@ -313,6 +313,12 @@ const jobExecutionSchema = new Schema(
 
 const productionJobSchema = createBaseSchema<ProductionJobDocument>({
   jobNumber: { type: String, required: true, uppercase: true },
+  poId: { type: String, default: null },
+  poNumber: { type: String, default: null, uppercase: true },
+  grnId: { type: String, default: null },
+  grnNumber: { type: String, default: null, uppercase: true },
+  boNumber: { type: String, default: null, uppercase: true },
+  batchOrderNumber: { type: String, default: null, uppercase: true },
   planId: { type: String, default: null },
   planNumber: { type: String, default: null, uppercase: true },
   customer: { type: jobCustomerSchema, required: true },
@@ -321,6 +327,7 @@ const productionJobSchema = createBaseSchema<ProductionJobDocument>({
   status: {
     type: String,
     enum: [
+      'WAITING_FOR_PRODUCTION',
       'DRAFT',
       'PENDING_REVIEW',
       'APPROVED',
@@ -334,7 +341,7 @@ const productionJobSchema = createBaseSchema<ProductionJobDocument>({
       'COMPLETED',
       'CANCELLED'
     ],
-    default: 'DRAFT'
+    default: 'WAITING_FOR_PRODUCTION'
   },
   priority: {
     type: String,
@@ -356,6 +363,9 @@ const productionJobSchema = createBaseSchema<ProductionJobDocument>({
 });
 
 productionJobSchema.index({ tenantId: 1, jobNumber: 1 }, { unique: true });
+productionJobSchema.index({ tenantId: 1, poId: 1 });
+productionJobSchema.index({ tenantId: 1, grnId: 1 });
+productionJobSchema.index({ tenantId: 1, boNumber: 1 });
 productionJobSchema.index({ tenantId: 1, planId: 1 });
 productionJobSchema.index({ tenantId: 1, status: 1 });
 productionJobSchema.index({ tenantId: 1, priority: 1, 'timeline.targetCompletionDate': 1 });

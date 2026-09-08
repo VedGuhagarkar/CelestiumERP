@@ -1,12 +1,13 @@
 import { Router } from 'express';
 import { productionJobController } from './production-job.controller.js';
 import { authenticateJwt } from '../../core/middleware/auth.middleware.js';
-import { requirePermission } from '../../core/middleware/rbac.middleware.js';
+import { requirePermission, requireAnyPermission } from '../../core/middleware/rbac.middleware.js';
 import { validateRequest } from '../../core/middleware/validate.middleware.js';
 import { asyncHandler } from '../../core/middleware/async-handler.middleware.js';
 import { PERMISSIONS } from '../rbac/rbac.constants.js';
 import {
   createDirectJobSchema,
+  createBatchOrderSchema,
   updateJobSchema,
   assignOperatorSchema,
   removeOperatorSchema,
@@ -28,11 +29,46 @@ import {
 
 export const productionJobRouter = Router();
 
-// 1. Create Direct Production Job
+// --- Authoritative Planning Phase & Batch Order Endpoints ---
+
+// 0a. Get Eligible Purchase Orders (POs with completed GRNs)
+productionJobRouter.get(
+  ['/eligible-pos', '/planning/eligible-pos'],
+  authenticateJwt,
+  requireAnyPermission(PERMISSIONS.BATCH_ORDER_VIEW, PERMISSIONS.PRODUCTION_JOB_VIEW),
+  asyncHandler(productionJobController.getEligiblePOs)
+);
+
+// 0b. Get Eligible GRNs Belonging Strictly to a Specific PO
+productionJobRouter.get(
+  ['/pos/:poId/grns', '/planning/pos/:poId/grns'],
+  authenticateJwt,
+  requireAnyPermission(PERMISSIONS.BATCH_ORDER_VIEW, PERMISSIONS.PRODUCTION_JOB_VIEW),
+  asyncHandler(productionJobController.getEligibleGRNsForPO)
+);
+
+// 0c. Get Parts Available for Planning on a Specific GRN
+productionJobRouter.get(
+  ['/grns/:grnId/parts', '/planning/grns/:grnId/parts'],
+  authenticateJwt,
+  requireAnyPermission(PERMISSIONS.BATCH_ORDER_VIEW, PERMISSIONS.PRODUCTION_JOB_VIEW),
+  asyncHandler(productionJobController.getEligiblePartsForGRN)
+);
+
+// 0d. Create Authoritative Batch Order (PO -> GRN -> BO Hierarchy)
+productionJobRouter.post(
+  ['/', '/batch-orders', '/create-batch-order'],
+  authenticateJwt,
+  requireAnyPermission(PERMISSIONS.BATCH_ORDER_CREATE, PERMISSIONS.PRODUCTION_JOB_CREATE),
+  validateRequest(createBatchOrderSchema),
+  asyncHandler(productionJobController.createBatchOrder)
+);
+
+// 1. Create Direct Production Job / Batch Order
 productionJobRouter.post(
   '/',
   authenticateJwt,
-  requirePermission(PERMISSIONS.PRODUCTION_JOB_CREATE),
+  requireAnyPermission(PERMISSIONS.BATCH_ORDER_CREATE, PERMISSIONS.PRODUCTION_JOB_CREATE),
   validateRequest(createDirectJobSchema),
   asyncHandler(productionJobController.createDirectJob)
 );

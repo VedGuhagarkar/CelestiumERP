@@ -144,6 +144,8 @@ v1Router.use('/search', searchRouter);
 v1Router.use('/purchase-orders', purchaseOrderRouter);
 v1Router.use('/grn', grnRouter);
 v1Router.use('/material-receipts', grnRouter);
+v1Router.use('/batch-orders', productionJobRouter);
+v1Router.use('/planning', productionJobRouter);
 
 
 

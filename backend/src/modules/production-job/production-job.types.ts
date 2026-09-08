@@ -8,6 +8,7 @@ import {
 } from '../specification/specification.types.js';
 
 export type JobStatus =
+  | 'WAITING_FOR_PRODUCTION'
   | 'DRAFT'
   | 'PENDING_REVIEW'
   | 'APPROVED'
@@ -55,6 +56,7 @@ export const PRIORITY_WEIGHTS: Record<JobPriority, number> = {
 };
 
 export const ALLOWED_STATUS_TRANSITIONS: Record<JobStatus, JobStatus[]> = {
+  WAITING_FOR_PRODUCTION: ['SCHEDULED', 'IN_PROGRESS', 'CANCELLED'],
   DRAFT: ['PENDING_REVIEW', 'CANCELLED'],
   PENDING_REVIEW: ['APPROVED', 'DRAFT', 'CANCELLED'],
   APPROVED: ['SCHEDULED', 'IN_PROGRESS', 'CANCELLED'],
@@ -264,6 +266,12 @@ export interface IJobExecution {
 export interface IProductionJob {
   jobNumber: string;
   tenantId: string;
+  poId?: string | null;
+  poNumber?: string | null;
+  grnId?: string | null;
+  grnNumber?: string | null;
+  boNumber?: string | null;
+  batchOrderNumber?: string | null;
   planId?: string | null;
   planNumber?: string | null;
   customer: {
@@ -312,12 +320,31 @@ export interface ProductionJobDocument extends IProductionJob, Document {
   updatedAt: Date;
 }
 
-export interface CreateDirectJobDto {
-  customerId: string;
+export interface CreateBatchOrderDto {
+  poId: string;
+  grnId: string;
   itemId: string;
-  recipeId: string;
-  specificationId: string;
+  recipeId?: string;
+  specificationId?: string;
   targetQuantity: number;
+  priority?: JobPriority;
+  plannedStartDate?: string | Date;
+  targetCompletionDate?: string | Date;
+  assignedFurnaceId?: string;
+  assignedOperatorId?: string;
+  shift?: string;
+  notes?: string;
+  idempotencyKey?: string;
+}
+
+export interface CreateDirectJobDto {
+  customerId?: string;
+  itemId: string;
+  recipeId?: string;
+  specificationId?: string;
+  targetQuantity: number;
+  poId?: string;
+  grnId?: string;
   priority?: JobPriority;
   plannedStartDate: string | Date;
   targetCompletionDate: string | Date;

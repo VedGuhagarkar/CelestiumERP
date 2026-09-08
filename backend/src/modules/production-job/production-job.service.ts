@@ -4,6 +4,7 @@ import {
 } from './production-job.repository.js';
 import {
   CreateDirectJobDto,
+  CreateBatchOrderDto,
   UpdateJobDto,
   AssignOperatorDto,
   RemoveOperatorDto,
@@ -31,6 +32,8 @@ import { itemRepository } from '../item/item.repository.js';
 import { recipeRepository } from '../recipe/recipe.repository.js';
 import { specificationRepository } from '../specification/specification.repository.js';
 import { productionPlanRepository } from '../production-planning/production-plan.repository.js';
+import { purchaseOrderRepository } from '../purchase-order/purchase-order.repository.js';
+import { grnRepository } from '../grn/grn.repository.js';
 import { furnaceCapacityRepository } from '../furnace-capacity/furnace-capacity.repository.js';
 import { workforceCapacityRepository } from '../workforce-capacity/workforce-capacity.repository.js';
 import { constraintAnalysisService } from '../constraint-analysis/constraint-analysis.service.js';
@@ -53,43 +56,125 @@ export class ProductionJobService {
     private readonly repo: IProductionJobRepository = productionJobRepository
   ) {}
 
-  public async createDirectJob(
+  /**
+   * 1. Authoritative Batch Order Creation
+   * Enforces PO -> GRN -> BO and Item -> Recipe -> BO lineage
+   * Initial Status: WAITING_FOR_PRODUCTION
+   */
+  public async createBatchOrder(
     tenantId: string,
     actor: IActorContext,
-    dto: CreateDirectJobDto
+    dto: CreateBatchOrderDto
   ): Promise<ProductionJobDocument> {
-    const customer = await customerRepository.findById(tenantId, dto.customerId);
-    if (!customer || customer.isDeleted) {
-      throw new NotFoundError(`Customer with ID '${dto.customerId}' not found`);
+    if (!dto.poId) {
+      throw new BadRequestError('Purchase Order reference (poId) is required for Batch Order creation.');
+    }
+    if (!dto.grnId) {
+      throw new BadRequestError('Goods Receipt Note reference (grnId) is required for Batch Order creation.');
+    }
+    if (!dto.itemId) {
+      throw new BadRequestError('Part reference (itemId) is required for Batch Order creation.');
     }
 
-    const item = await itemRepository.findById(tenantId, dto.itemId);
+    // 1. Verify PO exists and is in valid status
+    const po = await purchaseOrderRepository.findById(tenantId, dto.poId);
+    if (!po || po.isDeleted) {
+      throw new NotFoundError(`Purchase Order with ID '${dto.poId}' not found.`);
+    }
+    const eligiblePoStatuses = ['ISSUED', 'PARTIALLY_RECEIVED', 'RECEIVED'];
+    if (!eligiblePoStatuses.includes(po.status)) {
+      throw new BadRequestError(
+        `Purchase Order '${po.poNumber}' is in '${po.status}' status and is not eligible for planning. Required: [${eligiblePoStatuses.join(', ')}].`
+      );
+    }
+
+    // 2. Verify GRN exists and completed Creation Phase
+    const grn = await grnRepository.findGrnById(tenantId, dto.grnId);
+    if (!grn || grn.isDeleted) {
+      throw new NotFoundError(`Goods Receipt Note with ID '${dto.grnId}' not found.`);
+    }
+
+    // Enforce PO-GRN hierarchy ownership
+    const grnPoIdMatches = String(grn.poId) === String(po.id) || String(grn.poId) === String(po._id);
+    const grnPoNumberMatches = grn.poNumber?.toUpperCase() === po.poNumber?.toUpperCase();
+    if (!grnPoIdMatches && !grnPoNumberMatches) {
+      throw new BadRequestError(
+        `Hierarchy Violation: GRN '${grn.grnNumber}' belongs to PO '${grn.poNumber}', not to selected PO '${po.poNumber}'.`
+      );
+    }
+
+    // Check GRN status: must have completed Creation Phase
+    const eligibleGrnStatuses = ['AVAILABLE_FOR_PLANNING', 'PRINTED', 'ISSUED'];
+    if (!eligibleGrnStatuses.includes(grn.status)) {
+      throw new BadRequestError(
+        `GRN '${grn.grnNumber}' is in '${grn.status}' status and has not completed the Creation Phase.`
+      );
+    }
+    if (!grn.items || grn.items.length === 0) {
+      throw new BadRequestError(`GRN '${grn.grnNumber}' has no items.`);
+    }
+
+    // 3. Verify selected Part exists in GRN
+    const grnItem = grn.items.find(
+      (item) => item.itemId === dto.itemId || item.itemCode === dto.itemId || (item as any)._id?.toString() === dto.itemId
+    );
+    if (!grnItem) {
+      throw new BadRequestError(
+        `Part Membership Violation: Part '${dto.itemId}' does not exist in GRN '${grn.grnNumber}'. Available items: [${grn.items.map((i) => i.itemCode).join(', ')}].`
+      );
+    }
+
+    // Verify Item exists in Item master
+    const item = await itemRepository.findById(tenantId, grnItem.itemId);
     if (!item || item.isDeleted) {
-      throw new NotFoundError(`Item with ID '${dto.itemId}' not found`);
+      throw new NotFoundError(`Item with ID '${grnItem.itemId}' not found in Item Master.`);
     }
 
-    const recipe = await recipeRepository.findById(tenantId, dto.recipeId);
+    // 4. Verify Recipe exists and belongs to the Item
+    const targetRecipeId = dto.recipeId || grnItem.recipeId;
+    if (!targetRecipeId) {
+      throw new BadRequestError(`No recipe is bound to item '${grnItem.itemCode}' on GRN '${grn.grnNumber}'.`);
+    }
+
+    const recipe = await recipeRepository.findById(tenantId, targetRecipeId);
     if (!recipe || recipe.isDeleted) {
-      throw new NotFoundError(`Recipe with ID '${dto.recipeId}' not found`);
+      throw new NotFoundError(`Recipe with ID '${targetRecipeId}' not found.`);
     }
 
     if (recipe.status !== 'APPROVED' && recipe.status !== 'ACTIVE') {
       throw new BadRequestError(
-        `Recipe '${recipe.recipeCode}' must be in APPROVED or ACTIVE status (Current status: '${recipe.status}')`
+        `Recipe '${recipe.recipeCode}' must be in APPROVED or ACTIVE status (Current: '${recipe.status}').`
       );
     }
 
-    const spec = await specificationRepository.findById(tenantId, dto.specificationId);
-    if (!spec || spec.isDeleted) {
-      throw new NotFoundError(`Specification with ID '${dto.specificationId}' not found`);
-    }
+    // Validate Recipe belongs to Item
+    const itemGrade = item.materialGrade || grnItem.materialGrade;
+    const isGradeCompatible =
+      recipe.applicableMaterialGrades &&
+      recipe.applicableMaterialGrades.some((g: string) => g.toUpperCase().trim() === itemGrade.toUpperCase().trim());
+    const isLineageBound = recipe.id === grnItem.recipeId || recipe.recipeCode === grnItem.recipeCode;
 
-    if (spec.status !== 'APPROVED' && spec.status !== 'ACTIVE') {
+    if (!isGradeCompatible && !isLineageBound) {
       throw new BadRequestError(
-        `Specification '${spec.specCode}' must be in APPROVED or ACTIVE status (Current status: '${spec.status}')`
+        `Metallurgical Incompatibility: Recipe '${recipe.recipeCode}' does not apply to material grade '${itemGrade}'. Applicable: [${recipe.applicableMaterialGrades?.join(', ')}].`
       );
     }
 
+    // 5. Validate Quantity
+    if (!dto.targetQuantity || dto.targetQuantity <= 0) {
+      throw new BadRequestError('Batch Order target quantity must be greater than zero.');
+    }
+    if (dto.targetQuantity > grnItem.acceptedQuantity) {
+      throw new BadRequestError(
+        `Requested target quantity [${dto.targetQuantity}] exceeds GRN accepted quantity [${grnItem.acceptedQuantity}].`
+      );
+    }
+
+    // 6. Generate Batch Order Number and Hierarchy References
+    const boNumber = await this.repo.generateNextBatchOrderNumber(tenantId);
+    const jobNumber = boNumber;
+
+    // 7. Create Process Structure Snapshots
     const recipeSnapshot: IJobRecipeSnapshot = {
       recipeId: recipe.id,
       recipeCode: recipe.recipeCode,
@@ -103,20 +188,35 @@ export class ProductionJobService {
       snapshottedAt: new Date()
     };
 
-    const specSnapshot: IJobSpecificationSnapshot = {
-      specificationId: spec.id,
-      specCode: spec.specCode,
-      revisionNumber: (spec as any).revisionNumber || spec.revision || 1,
-      title: spec.title,
-      customerCode: spec.customerCode,
-      surfaceHardness: spec.surfaceHardness || ({} as any),
-      coreHardness: spec.coreHardness || undefined,
-      caseDepth: spec.caseDepth || undefined,
-      microstructure: spec.microstructure || undefined,
-      customerAcceptance: spec.customerAcceptance || ({} as any),
+    let specSnapshot: any = {
+      specificationId: 'SPEC-DEFAULT',
+      specCode: 'SPEC-STANDARD',
+      revisionNumber: 1,
+      title: 'Standard Metallurgical Specification',
+      surfaceHardness: {},
+      customerAcceptance: {},
       snapshottedAt: new Date()
     };
+    if (dto.specificationId) {
+      const spec = await specificationRepository.findById(tenantId, dto.specificationId);
+      if (spec && !spec.isDeleted) {
+        specSnapshot = {
+          specificationId: spec.id,
+          specCode: spec.specCode,
+          revisionNumber: (spec as any).revisionNumber || spec.revision || 1,
+          title: spec.title,
+          customerCode: spec.customerCode,
+          surfaceHardness: spec.surfaceHardness || {},
+          coreHardness: spec.coreHardness || undefined,
+          caseDepth: spec.caseDepth || undefined,
+          microstructure: spec.microstructure || undefined,
+          customerAcceptance: spec.customerAcceptance || {},
+          snapshottedAt: new Date()
+        };
+      }
+    }
 
+    // 8. Equipment & Operator Assignments
     let equipmentAssignment = {};
     if (dto.assignedFurnaceId) {
       const furnace = await furnaceCapacityRepository.findFurnaceById(tenantId, dto.assignedFurnaceId);
@@ -143,25 +243,62 @@ export class ProductionJobService {
       }
     }
 
-    const jobNumber = await this.repo.generateNextJobNumber(tenantId);
-    const initialStatus = 'DRAFT';
+    // 9. Allocate GRN Units
+    const grnUnits = await grnRepository.findUnitsByGrnId(tenantId, grn.id);
+    const eligibleUnits = grnUnits.filter(
+      (u) =>
+        (u.itemId === grnItem.itemId || u.itemCode === grnItem.itemCode) &&
+        u.status === 'AVAILABLE_FOR_PLANNING'
+    );
 
-    const customerName = (customer as any).name || (customer as any).companyName || 'Customer';
-    const itemName = (item as any).name || (item as any).itemName || 'Item';
+    const unitsToAllocate = eligibleUnits.slice(0, Math.ceil(dto.targetQuantity));
+    for (const unit of unitsToAllocate) {
+      await grnRepository.allocateUnit(
+        tenantId,
+        unit.unitIdentifier,
+        boNumber,
+        boNumber,
+        boNumber
+      );
+    }
 
+    const materialAllocations = unitsToAllocate.map((u) => ({
+      reservationId: u.unitIdentifier,
+      heatLotId: null,
+      heatLotNumber: u.supplierHeatNumber || null,
+      supplierHeatNumber: u.supplierHeatNumber || null,
+      allocatedQuantity: u.quantity,
+      uom: u.uom
+    }));
+
+    const customerName = (po as any).supplierName || (po as any).vendorName || 'Valued Customer';
+    const customerCode = (po as any).supplierCode || 'CUST-DEFAULT';
+
+    const plannedStartDate = dto.plannedStartDate ? new Date(dto.plannedStartDate) : new Date();
+    const targetCompletionDate = dto.targetCompletionDate
+      ? new Date(dto.targetCompletionDate)
+      : new Date(Date.now() + 24 * 3600000);
+
+    // 10. Create Batch Order Document in WAITING_FOR_PRODUCTION state
     const job = await this.repo.create(tenantId, {
       jobNumber,
+      boNumber,
+      batchOrderNumber: boNumber,
+      poId: po.id,
+      poNumber: po.poNumber,
+      grnId: grn.id,
+      grnNumber: grn.grnNumber,
       customer: {
-        customerId: customer.id,
-        customerCode: customer.customerCode,
+        customerId: (po as any).customerId || po.id,
+        customerCode,
         customerName
       },
       item: {
         itemId: item.id,
         itemCode: item.itemCode,
-        itemName,
-        materialGrade: item.materialGrade || 'GENERIC',
-        uom: item.uom || 'EA'
+        itemName: item.name || grnItem.itemName,
+        materialGrade: itemGrade,
+        uom: item.uom || grnItem.uom || 'PCS'
       },
       quantity: {
         targetQuantity: dto.targetQuantity,
@@ -169,21 +306,24 @@ export class ProductionJobService {
         completedQuantity: 0,
         scrappedQuantity: 0
       },
-      status: initialStatus,
+      status: 'WAITING_FOR_PRODUCTION',
       priority: dto.priority || 'NORMAL',
       recipeSnapshot,
       specificationSnapshot: specSnapshot,
-      materialAllocations: (dto.materialAllocations || []).map((m) => ({
-        heatLotId: m.heatLotId || null,
-        heatLotNumber: m.heatLotNumber || null,
-        allocatedQuantity: m.allocatedQuantity,
-        uom: m.uom
-      })),
+      materialAllocations: materialAllocations.length > 0 ? materialAllocations : [
+        {
+          heatLotId: null,
+          heatLotNumber: grnItem.supplierHeatNumber || null,
+          supplierHeatNumber: grnItem.supplierHeatNumber || null,
+          allocatedQuantity: dto.targetQuantity,
+          uom: grnItem.uom
+        }
+      ],
       equipmentAssignment,
       operatorAssignment,
       timeline: {
-        plannedStartDate: new Date(dto.plannedStartDate),
-        targetCompletionDate: new Date(dto.targetCompletionDate)
+        plannedStartDate,
+        targetCompletionDate
       },
       execution: {
         stageProgress: [],
@@ -192,31 +332,208 @@ export class ProductionJobService {
       },
       transitionHistory: [
         {
-          fromStatus: 'DRAFT',
-          toStatus: 'DRAFT',
+          fromStatus: 'WAITING_FOR_PRODUCTION',
+          toStatus: 'WAITING_FOR_PRODUCTION',
           timestamp: new Date(),
           performedBy: {
             userId: actor.userId,
             email: actor.email,
             role: actor.role
           },
-          reason: 'Direct Job Initiation'
+          reason: `Authoritative PO -> GRN -> BO Creation (${po.poNumber} -> ${grn.grnNumber} -> ${boNumber})`
         }
       ],
       assignmentHistory: [],
-      notes: dto.notes || null
+      notes: dto.notes || null,
+      idempotencyKey: dto.idempotencyKey || null
     });
 
     await auditService.record(tenantId, {
       actorId: actor.userId,
-      action: 'CREATE_PRODUCTION_JOB',
-      entityType: 'PRODUCTION_JOB',
+      actorEmail: actor.email,
+      actorRole: actor.role,
+      action: 'CREATE_BATCH_ORDER',
+      entityType: 'BATCH_ORDER',
       entityId: job.id,
       afterState: job.toJSON ? job.toJSON() : job,
-      metadata: { jobNumber: job.jobNumber, customerCode: customer.customerCode, targetQuantity: dto.targetQuantity }
+      metadata: {
+        boNumber: job.boNumber,
+        poNumber: po.poNumber,
+        grnNumber: grn.grnNumber,
+        itemCode: grnItem.itemCode,
+        recipeCode: recipe.recipeCode,
+        targetQuantity: dto.targetQuantity
+      }
+    });
+
+    this.eventBus.publish({
+      name: DomainEvents.BATCH_ORDER_CREATED,
+      tenantId,
+      occurredAt: new Date(),
+      actorId: actor.userId,
+      payload: {
+        jobId: job.id,
+        jobNumber: job.jobNumber,
+        boNumber: job.boNumber,
+        poNumber: po.poNumber,
+        grnNumber: grn.grnNumber,
+        status: job.status
+      }
     });
 
     return job;
+  }
+
+  /**
+   * 2. Direct Job Creation endpoint (Legacy forwarder enforcing PO -> GRN -> BO hierarchy)
+   */
+  public async createDirectJob(
+    tenantId: string,
+    actor: IActorContext,
+    dto: CreateDirectJobDto
+  ): Promise<ProductionJobDocument> {
+    if (dto.poId && dto.grnId) {
+      return this.createBatchOrder(tenantId, actor, {
+        poId: dto.poId,
+        grnId: dto.grnId,
+        itemId: dto.itemId,
+        recipeId: dto.recipeId,
+        specificationId: dto.specificationId,
+        targetQuantity: dto.targetQuantity,
+        priority: dto.priority,
+        plannedStartDate: dto.plannedStartDate,
+        targetCompletionDate: dto.targetCompletionDate,
+        assignedFurnaceId: dto.assignedFurnaceId,
+        assignedOperatorId: dto.assignedOperatorId,
+        shift: dto.shift,
+        notes: dto.notes
+      });
+    }
+
+    throw new BadRequestError(
+      'Batch Order creation requires a valid PO (poId) and completed GRN (grnId) reference. Arbitrary job creation without Creation Phase lineage is not permitted.'
+    );
+  }
+
+  /**
+   * 3. Planning Query: Get POs eligible for planning (POs that have completed GRNs)
+   */
+  public async getEligiblePOs(tenantId: string): Promise<any[]> {
+    const { grns } = await grnRepository.queryGrns(tenantId, { limit: 500 });
+    const eligibleGrns = grns.filter(
+      (g) =>
+        !g.isDeleted &&
+        ['AVAILABLE_FOR_PLANNING', 'PRINTED', 'ISSUED'].includes(g.status) &&
+        (g.items?.length ?? 0) > 0
+    );
+
+    const eligiblePoIds = Array.from(new Set(eligibleGrns.map((g) => g.poId).filter(Boolean)));
+    const eligiblePos = [];
+
+    for (const poId of eligiblePoIds) {
+      const po = await purchaseOrderRepository.findById(tenantId, poId);
+      if (po && !po.isDeleted && ['ISSUED', 'PARTIALLY_RECEIVED', 'RECEIVED'].includes(po.status)) {
+        const poGrns = eligibleGrns.filter((g) => String(g.poId) === String(po.id) || g.poNumber === po.poNumber);
+        eligiblePos.push({
+          id: po.id,
+          poNumber: po.poNumber,
+          supplierName: po.supplierName,
+          orderDate: po.orderDate,
+          status: po.status,
+          itemCount: po.items?.length || 0,
+          completedGrnCount: poGrns.length,
+          grns: poGrns.map((g) => ({
+            id: g.id,
+            grnNumber: g.grnNumber,
+            status: g.status,
+            grnDate: g.grnDate,
+            totalUnitsGenerated: g.totalUnitsGenerated || g.units?.length || 0
+          }))
+        });
+      }
+    }
+
+    return eligiblePos;
+  }
+
+  /**
+   * 4. Planning Query: Get completed GRNs strictly belonging to the specified PO
+   */
+  public async getEligibleGRNsForPO(tenantId: string, poId: string): Promise<any[]> {
+    const po = await purchaseOrderRepository.findById(tenantId, poId);
+    if (!po || po.isDeleted) {
+      throw new NotFoundError(`Purchase Order with ID '${poId}' not found.`);
+    }
+
+    const grns = await grnRepository.findGrnsByPoId(tenantId, po.id);
+    const eligibleGrns = grns.filter(
+      (g) =>
+        !g.isDeleted &&
+        ['AVAILABLE_FOR_PLANNING', 'PRINTED', 'ISSUED'].includes(g.status) &&
+        (g.items?.length ?? 0) > 0
+    );
+
+    return eligibleGrns.map((g) => ({
+      id: g.id,
+      grnNumber: g.grnNumber,
+      poId: po.id,
+      poNumber: po.poNumber,
+      status: g.status,
+      grnDate: g.grnDate,
+      supplierName: g.supplierName,
+      supplierChallanNumber: g.supplierChallanNumber,
+      warehouseCode: g.warehouseCode,
+      storageLocationCode: g.storageLocationCode,
+      items: g.items,
+      totalUnits: g.totalUnitsGenerated || g.units?.length || 0
+    }));
+  }
+
+  /**
+   * 5. Planning Query: Get parts available for planning on a specific GRN
+   */
+  public async getEligiblePartsForGRN(tenantId: string, grnId: string): Promise<any[]> {
+    const grn = await grnRepository.findGrnById(tenantId, grnId);
+    if (!grn || grn.isDeleted) {
+      throw new NotFoundError(`Goods Receipt Note with ID '${grnId}' not found.`);
+    }
+
+    const eligibleGrnStatuses = ['AVAILABLE_FOR_PLANNING', 'PRINTED', 'ISSUED'];
+    if (!eligibleGrnStatuses.includes(grn.status)) {
+      throw new BadRequestError(
+        `GRN '${grn.grnNumber}' is in '${grn.status}' status and has not completed the Creation Phase.`
+      );
+    }
+
+    const units = await grnRepository.findUnitsByGrnId(tenantId, grn.id);
+    const existingJobs = await this.repo.findByGrnId(tenantId, grn.id);
+
+    return (grn.items || []).map((item) => {
+      const itemUnits = units.filter(
+        (u) => (u.itemId === item.itemId || u.itemCode === item.itemCode) && u.status === 'AVAILABLE_FOR_PLANNING'
+      );
+      const allocatedQty = existingJobs
+        .filter((j) => j.item.itemId === item.itemId && j.status !== 'CANCELLED')
+        .reduce((sum, j) => sum + (j.quantity?.targetQuantity || 0), 0);
+
+      const availableQuantity = Math.max(0, item.acceptedQuantity - allocatedQty);
+
+      return {
+        itemId: item.itemId,
+        itemCode: item.itemCode,
+        itemName: item.itemName,
+        materialGrade: item.materialGrade,
+        processFamily: item.processFamily,
+        recipeId: item.recipeId,
+        recipeCode: item.recipeCode,
+        recipeRevision: item.recipeRevision,
+        acceptedQuantity: item.acceptedQuantity,
+        availableQuantity,
+        availableUnitsCount: itemUnits.length,
+        uom: item.uom,
+        supplierHeatNumber: item.supplierHeatNumber
+      };
+    });
   }
 
   public async updateJob(

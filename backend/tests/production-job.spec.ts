@@ -12,6 +12,8 @@ import { workforceCapacityRepository } from '../src/modules/workforce-capacity/w
 import { auditService } from '../src/modules/audit/audit.service.js';
 import { DEFAULT_FACTORY_ROLES } from '../src/modules/rbac/rbac.constants.js';
 import { roleRepository } from '../src/modules/rbac/role.repository.js';
+import { purchaseOrderRepository } from '../src/modules/purchase-order/purchase-order.repository.js';
+import { grnRepository } from '../src/modules/grn/grn.repository.js';
 
 describe('Production Job Domain & 12-Stage Lifecycle State Machine', () => {
   const app = createApp();
@@ -168,10 +170,41 @@ describe('Production Job Domain & 12-Stage Lifecycle State Machine', () => {
   });
 
   describe('POST /api/v1/production-jobs (Direct Job Creation)', () => {
+    const mockPo = {
+      id: 'po_001',
+      _id: 'po_001',
+      poNumber: 'PO-2026-0001',
+      supplierName: 'Apex Aerospace Components',
+      status: 'RECEIVED'
+    };
+
+    const mockGrn = {
+      id: 'grn_001',
+      _id: 'grn_001',
+      grnNumber: 'GRN-2026-0001',
+      poId: 'po_001',
+      poNumber: 'PO-2026-0001',
+      status: 'AVAILABLE_FOR_PLANNING',
+      items: [
+        {
+          itemId: 'item_4140',
+          itemCode: 'MAT-4140-BAR',
+          itemName: 'AISI 4140 Round Bar',
+          materialGrade: 'AISI 4140',
+          acceptedQuantity: 500,
+          recipeId: 'rec_001',
+          uom: 'KG'
+        }
+      ]
+    };
+
     it('should create a direct production job with frozen recipe and spec snapshots', async () => {
       const plannerToken = generateToken('usr_planner', ['PLANT_MANAGER']);
       const auditSpy = jest.spyOn(auditService, 'record').mockResolvedValue({} as any);
 
+      jest.spyOn(purchaseOrderRepository, 'findById').mockResolvedValue(mockPo as any);
+      jest.spyOn(grnRepository, 'findGrnById').mockResolvedValue(mockGrn as any);
+      jest.spyOn(grnRepository, 'findUnitsByGrnId').mockResolvedValue([] as any);
       jest.spyOn(customerRepository, 'findById').mockResolvedValue(mockCustomer as any);
       jest.spyOn(itemRepository, 'findById').mockResolvedValue(mockItem as any);
       jest.spyOn(recipeRepository, 'findById').mockResolvedValue(mockRecipe as any);
@@ -189,11 +222,16 @@ describe('Production Job Domain & 12-Stage Lifecycle State Machine', () => {
         defaultShift: 'SHIFT_1_MORNING'
       } as any);
 
-      jest.spyOn(productionJobRepository, 'generateNextJobNumber').mockResolvedValue('JOB-202608-0001');
+      jest.spyOn(productionJobRepository, 'generateNextBatchOrderNumber').mockResolvedValue('BO-202608-0001');
+      jest.spyOn(productionJobRepository, 'generateNextJobNumber').mockResolvedValue('BO-202608-0001');
 
       const mockCreated = createMockJobDocument({
-        status: 'DRAFT',
-        transitionHistory: [{ fromStatus: 'DRAFT', toStatus: 'DRAFT', reason: 'Direct Job Initiation' }]
+        status: 'WAITING_FOR_PRODUCTION',
+        boNumber: 'BO-202608-0001',
+        jobNumber: 'BO-202608-0001',
+        poId: 'po_001',
+        grnId: 'grn_001',
+        transitionHistory: [{ fromStatus: 'WAITING_FOR_PRODUCTION', toStatus: 'WAITING_FOR_PRODUCTION', reason: 'Direct Job Initiation' }]
       });
       jest.spyOn(productionJobRepository, 'create').mockResolvedValue(mockCreated as any);
 
@@ -202,6 +240,8 @@ describe('Production Job Domain & 12-Stage Lifecycle State Machine', () => {
         .set('x-tenant-id', testTenant)
         .set('Authorization', `Bearer ${plannerToken}`)
         .send({
+          poId: 'po_001',
+          grnId: 'grn_001',
           customerId: 'cust_001',
           itemId: 'item_4140',
           recipeId: 'rec_001',
@@ -216,14 +256,15 @@ describe('Production Job Domain & 12-Stage Lifecycle State Machine', () => {
 
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
-      expect(res.body.data.jobNumber).toBe('JOB-202608-0001');
-      expect(res.body.data.status).toBe('DRAFT');
+      expect(res.body.data.status).toBe('WAITING_FOR_PRODUCTION');
       expect(auditSpy).toHaveBeenCalled();
     });
 
     it('should reject direct job creation if recipe is unapproved', async () => {
       const plannerToken = generateToken('usr_planner', ['PLANT_MANAGER']);
 
+      jest.spyOn(purchaseOrderRepository, 'findById').mockResolvedValue(mockPo as any);
+      jest.spyOn(grnRepository, 'findGrnById').mockResolvedValue(mockGrn as any);
       jest.spyOn(customerRepository, 'findById').mockResolvedValue(mockCustomer as any);
       jest.spyOn(itemRepository, 'findById').mockResolvedValue(mockItem as any);
       jest.spyOn(recipeRepository, 'findById').mockResolvedValue({
@@ -237,6 +278,8 @@ describe('Production Job Domain & 12-Stage Lifecycle State Machine', () => {
         .set('x-tenant-id', testTenant)
         .set('Authorization', `Bearer ${plannerToken}`)
         .send({
+          poId: 'po_001',
+          grnId: 'grn_001',
           customerId: 'cust_001',
           itemId: 'item_4140',
           recipeId: 'rec_001',

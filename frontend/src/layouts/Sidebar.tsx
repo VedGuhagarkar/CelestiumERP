@@ -27,7 +27,7 @@ export const Sidebar: React.FC = () => {
 
   const navItems: NavItem[] = [
     { label: 'Command Center', path: '/', icon: <LayoutDashboard size={18} /> },
-    { label: 'Production Jobs', path: '/jobs', icon: <Flame size={18} /> },
+    { label: 'Planning & Batch Orders', path: '/jobs', icon: <Flame size={18} /> },
     { label: 'Quality & Lab', path: '/quality', icon: <ShieldCheck size={18} /> },
     { label: 'Furnaces & Pyrometry', path: '/machines', icon: <Cpu size={18} /> },
     { label: 'Inventory & Heat Lots', path: '/inventory', icon: <Boxes size={18} /> },

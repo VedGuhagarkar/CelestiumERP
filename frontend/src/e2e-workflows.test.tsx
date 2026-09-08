@@ -125,7 +125,7 @@ describe('End-to-End Manufacturing ERP Interaction Suite', () => {
       renderWithProviders(<Sidebar />);
 
       expect(screen.getByText('Command Center')).toBeDefined();
-      expect(screen.getByText('Production Jobs')).toBeDefined();
+      expect(screen.getByText('Planning & Batch Orders')).toBeDefined();
       expect(screen.getByText('Quality & Lab')).toBeDefined();
       expect(screen.getByText('Furnaces & Pyrometry')).toBeDefined();
       expect(screen.getByText('Inventory & Heat Lots')).toBeDefined();
@@ -152,41 +152,126 @@ describe('End-to-End Manufacturing ERP Interaction Suite', () => {
     });
   });
 
-  describe('3. Production Jobs & Thermal Cycles', () => {
-    it('opens New Thermal Job dialog and creates a new batch', async () => {
-      globalThis.fetch = vi.fn().mockImplementation(() =>
-        Promise.resolve({
+  describe('3. Planning Phase & Batch Order Lifecycle', () => {
+    it('executes authoritative PO -> GRN -> Part -> BO planning flow into WAITING_FOR_PRODUCTION state', async () => {
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/planning/eligible-pos')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              success: true,
+              data: [
+                {
+                  id: 'po_test_101',
+                  poNumber: 'PO-2026-00101',
+                  supplierName: 'Titanium Alloys Global Ltd',
+                  completedGrnCount: 1
+                }
+              ]
+            })
+          });
+        }
+        if (url.includes('/planning/pos/')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              success: true,
+              data: [
+                {
+                  id: 'grn_test_501',
+                  grnNumber: 'GRN-202609-0501',
+                  poId: 'po_test_101',
+                  poNumber: 'PO-2026-00101',
+                  status: 'AVAILABLE_FOR_PLANNING',
+                  supplierName: 'Titanium Alloys Global Ltd'
+                }
+              ]
+            })
+          });
+        }
+        if (url.includes('/planning/grns/')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              success: true,
+              data: [
+                {
+                  itemId: 'item_ti64',
+                  itemCode: 'MAT-TI-6AL4V',
+                  itemName: 'Titanium Grade 5 Round Bar',
+                  materialGrade: 'Ti-6Al-4V',
+                  recipeId: 'rec_ti_aging',
+                  recipeCode: 'REC-TI-AGING',
+                  acceptedQuantity: 150,
+                  availableQuantity: 150,
+                  uom: 'KG',
+                  supplierHeatNumber: 'HEAT-TI-9912'
+                }
+              ]
+            })
+          });
+        }
+        // Batch Order creation
+        return Promise.resolve({
           ok: true,
           status: 201,
           json: async () => ({
             success: true,
-            data: { id: 'job_new_01', jobNumber: 'JOB-202608-9999' }
+            data: { id: 'bo_new_01', boNumber: 'BO-202609-9999', status: 'WAITING_FOR_PRODUCTION' }
           })
-        })
-      );
+        });
+      });
 
       renderWithProviders(<JobsPage />);
 
+      // Open Planning Dialog
       const newJobBtn = screen.getByRole('button', { name: /new thermal job/i });
       fireEvent.click(newJobBtn);
 
-      expect(screen.getByText(/create direct thermal processing job/i)).toBeDefined();
+      expect(screen.getByText(/Planning Phase: PO → GRN → Batch Order Creation/i)).toBeDefined();
 
+      // Step 1: Select PO
+      await waitFor(() => {
+        expect(screen.getAllByText('PO-2026-00101').length).toBeGreaterThan(0);
+      });
+      const poCards = screen.getAllByText('PO-2026-00101');
+      fireEvent.click(poCards[poCards.length - 1]);
+
+      // Step 2: Select GRN
+      await waitFor(() => {
+        expect(screen.getAllByText('GRN-202609-0501').length).toBeGreaterThan(0);
+      });
+      const grnCards = screen.getAllByText('GRN-202609-0501');
+      fireEvent.click(grnCards[grnCards.length - 1]);
+
+      // Step 3: Select GRN Part
+      await waitFor(() => {
+        expect(screen.getByText('Titanium Grade 5 Round Bar')).toBeDefined();
+      });
+      fireEvent.click(screen.getByText('Titanium Grade 5 Round Bar'));
+
+      // Step 4: Submit Batch Order
+      await waitFor(() => {
+        expect(screen.getByText(/ESTABLISHED PLANNING HIERARCHY/i)).toBeDefined();
+      });
       const scheduleBtn = screen.getByRole('button', { name: /schedule production job/i });
       fireEvent.click(scheduleBtn);
 
       await waitFor(() => {
-        expect(screen.getByText(/thermal job successfully scheduled/i)).toBeDefined();
+        expect(screen.getByText(/Batch Order successfully created in WAITING_FOR_PRODUCTION status/i)).toBeDefined();
       });
     });
 
-    it('filters production jobs by status tabs', () => {
+    it('filters batch orders by status tabs', () => {
       renderWithProviders(<JobsPage />);
 
       const inProgressBtn = screen.getByRole('button', { name: /in progress/i });
       fireEvent.click(inProgressBtn);
 
-      expect(screen.getByText('JOB-202608-0010')).toBeDefined();
+      expect(screen.getAllByText('BO-202609-0011').length).toBeGreaterThan(0);
     });
 
     it('opens job details drawer and advances thermal cycle stage', async () => {

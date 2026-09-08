@@ -6,9 +6,12 @@ import { PaginatedResult, PaginationOptions } from '../../core/types/pagination.
 
 export interface IProductionJobRepository {
   generateNextJobNumber(tenantId: string): Promise<string>;
+  generateNextBatchOrderNumber(tenantId: string): Promise<string>;
   findJobByNumber(tenantId: string, jobNumber: string): Promise<ProductionJobDocument | null>;
   findByPlanId(tenantId: string, planId: string): Promise<ProductionJobDocument[]>;
   findJobsByPlanId(tenantId: string, planId: string): Promise<ProductionJobDocument[]>;
+  findByPoId(tenantId: string, poId: string): Promise<ProductionJobDocument[]>;
+  findByGrnId(tenantId: string, grnId: string): Promise<ProductionJobDocument[]>;
   findByIdempotencyKey(
     tenantId: string,
     planIdOrKey: string,
@@ -77,6 +80,53 @@ export class ProductionJobRepository
     return `${prefix}${String(nextSeq).padStart(4, '0')}`;
   }
 
+  public async generateNextBatchOrderNumber(tenantId: string): Promise<string> {
+    const now = new Date();
+    const yearMonth = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const prefix = `BO-${yearMonth}-`;
+
+    const latest = await this.model
+      .findOne({
+        tenantId,
+        $or: [
+          { boNumber: { $regex: `^${prefix}` } },
+          { jobNumber: { $regex: `^${prefix}` } }
+        ]
+      })
+      .sort({ createdAt: -1 })
+      .exec();
+
+    if (!latest) {
+      return `${prefix}0001`;
+    }
+
+    const numStr = latest.boNumber || latest.jobNumber || '';
+    const parts = numStr.split('-');
+    const currentSeq = parseInt(parts[parts.length - 1], 10);
+    const nextSeq = isNaN(currentSeq) ? 1 : currentSeq + 1;
+    return `${prefix}${String(nextSeq).padStart(4, '0')}`;
+  }
+
+  public async findByPoId(
+    tenantId: string,
+    poId: string
+  ): Promise<ProductionJobDocument[]> {
+    return this.model
+      .find({ tenantId, poId, isDeleted: false })
+      .sort({ createdAt: -1 })
+      .exec();
+  }
+
+  public async findByGrnId(
+    tenantId: string,
+    grnId: string
+  ): Promise<ProductionJobDocument[]> {
+    return this.model
+      .find({ tenantId, grnId, isDeleted: false })
+      .sort({ createdAt: -1 })
+      .exec();
+  }
+
   public async findJobByNumber(
     tenantId: string,
     jobNumber: string
@@ -127,12 +177,18 @@ export class ProductionJobRepository
     if (filters.furnaceId) query['equipmentAssignment.furnaceId'] = filters.furnaceId;
     if (filters.itemCode) query['item.itemCode'] = filters.itemCode.toUpperCase();
     if (filters.planId) query.planId = filters.planId;
+    if (filters.poId) query.poId = filters.poId;
+    if (filters.grnId) query.grnId = filters.grnId;
+    if (filters.boNumber) query.$or = [{ boNumber: filters.boNumber }, { jobNumber: filters.boNumber }];
     if (filters.priority) query.priority = filters.priority;
 
     if (filters.search) {
       const searchRegex = new RegExp(filters.search, 'i');
       query.$or = [
         { jobNumber: searchRegex },
+        { boNumber: searchRegex },
+        { poNumber: searchRegex },
+        { grnNumber: searchRegex },
         { planNumber: searchRegex },
         { 'item.itemCode': searchRegex },
         { 'item.itemName': searchRegex },
@@ -171,7 +227,7 @@ export class ProductionJobRepository
   ): Promise<ProductionJobDocument[]> {
     const query: any = {
       tenantId,
-      status: { $in: ['DRAFT', 'APPROVED', 'SCHEDULED', 'IN_PROGRESS', 'PAUSED'] },
+      status: { $in: ['WAITING_FOR_PRODUCTION', 'DRAFT', 'APPROVED', 'SCHEDULED', 'IN_PROGRESS', 'PAUSED'] },
       isDeleted: false
     };
 

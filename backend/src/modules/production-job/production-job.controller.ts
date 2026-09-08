@@ -12,6 +12,67 @@ export class ProductionJobController extends BaseController {
     super();
   }
 
+  public createBatchOrder = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const user = this.getUser(req);
+      const job = await this.service.createBatchOrder(
+        tenantId,
+        { userId: user.userId, email: user.email, role: user.roles?.[0] },
+        req.body
+      );
+      this.sendCreated(res, job, 'Batch Order created successfully in WAITING_FOR_PRODUCTION status');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public getEligiblePOs = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const pos = await this.service.getEligiblePOs(tenantId);
+      this.sendSuccess(res, pos, 'Eligible Purchase Orders retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public getEligibleGRNsForPO = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const grns = await this.service.getEligibleGRNsForPO(tenantId, req.params.poId as string);
+      this.sendSuccess(res, grns, 'Eligible Goods Receipt Notes retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public getEligiblePartsForGRN = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const parts = await this.service.getEligiblePartsForGRN(tenantId, req.params.grnId as string);
+      this.sendSuccess(res, parts, 'Eligible GRN parts retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
   public createDirectJob = async (
     req: Request,
     res: Response,

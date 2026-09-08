@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { ValidationSchema } from '../../core/middleware/validate.middleware.js';
 
 const jobStatusEnum = z.enum([
+  'WAITING_FOR_PRODUCTION',
   'DRAFT',
   'PENDING_REVIEW',
   'APPROVED',
@@ -47,30 +48,42 @@ const productionLogTypeEnum = z.enum([
   'ANOMALY_REPORT'
 ]);
 
-export const createDirectJobSchema: ValidationSchema = {
+export const createBatchOrderSchema: ValidationSchema = {
   body: z.object({
-    customerId: z.string().trim().min(1, 'Customer ID is required'),
-    itemId: z.string().trim().min(1, 'Item ID is required'),
-    recipeId: z.string().trim().min(1, 'Recipe ID is required'),
-    specificationId: z.string().trim().min(1, 'Specification ID is required'),
+    poId: z.string().trim().min(1, 'Purchase Order ID (poId) is required'),
+    grnId: z.string().trim().min(1, 'Goods Receipt Note ID (grnId) is required'),
+    itemId: z.string().trim().min(1, 'Part / Item ID (itemId) is required'),
+    recipeId: z.string().trim().optional(),
+    specificationId: z.string().trim().optional(),
     targetQuantity: z.number().min(0.001, 'Target quantity must be greater than zero'),
     priority: jobPriorityEnum.optional().default('NORMAL'),
-    plannedStartDate: z.string().or(z.date()),
-    targetCompletionDate: z.string().or(z.date()),
+    plannedStartDate: z.string().or(z.date()).optional(),
+    targetCompletionDate: z.string().or(z.date()).optional(),
     assignedFurnaceId: z.string().trim().optional(),
     assignedOperatorId: z.string().trim().optional(),
-    shift: shiftEnum.optional(),
-    materialAllocations: z
-      .array(
-        z.object({
-          heatLotId: z.string().trim().optional(),
-          heatLotNumber: z.string().trim().optional(),
-          allocatedQuantity: z.number().min(0.001),
-          uom: z.string().trim().min(1)
-        })
-      )
-      .optional(),
-    notes: z.string().trim().max(500).optional()
+    shift: z.string().trim().optional(),
+    notes: z.string().trim().max(1000).optional(),
+    idempotencyKey: z.string().trim().optional()
+  })
+};
+
+export const createDirectJobSchema: ValidationSchema = {
+  body: z.object({
+    poId: z.string().trim().optional(),
+    grnId: z.string().trim().optional(),
+    customerId: z.string().trim().optional(),
+    itemId: z.string().trim().min(1, 'Item ID is required'),
+    recipeId: z.string().trim().optional(),
+    specificationId: z.string().trim().optional(),
+    targetQuantity: z.number().min(0.001, 'Target quantity must be greater than zero'),
+    priority: jobPriorityEnum.optional().default('NORMAL'),
+    plannedStartDate: z.string().or(z.date()).optional(),
+    targetCompletionDate: z.string().or(z.date()).optional(),
+    assignedFurnaceId: z.string().trim().optional(),
+    assignedOperatorId: z.string().trim().optional(),
+    shift: z.string().trim().optional(),
+    materialAllocations: z.array(z.any()).optional(),
+    notes: z.string().trim().max(1000).optional()
   })
 };
 

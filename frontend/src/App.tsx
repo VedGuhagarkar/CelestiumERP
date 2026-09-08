@@ -38,6 +38,8 @@ export const App: React.FC = () => {
 
               {/* Manufacturing & Operations Domains */}
               <Route path="/jobs" element={<JobsPage />} />
+              <Route path="/planning" element={<JobsPage />} />
+              <Route path="/batch-orders" element={<JobsPage />} />
               <Route path="/production-jobs" element={<JobsPage />} />
               <Route path="/production-jobs/:id" element={<JobsPage />} />
 
