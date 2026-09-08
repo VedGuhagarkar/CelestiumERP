@@ -5,6 +5,9 @@ import {
 import {
   CreateDirectJobDto,
   CreateBatchOrderDto,
+  UpdateProcessDetailsDto,
+  IProcessDetailRow,
+  ProcessRowStatus,
   UpdateJobDto,
   AssignOperatorDto,
   RemoveOperatorDto,
@@ -36,6 +39,7 @@ import { purchaseOrderRepository } from '../purchase-order/purchase-order.reposi
 import { grnRepository } from '../grn/grn.repository.js';
 import { furnaceCapacityRepository } from '../furnace-capacity/furnace-capacity.repository.js';
 import { workforceCapacityRepository } from '../workforce-capacity/workforce-capacity.repository.js';
+import { userRepository } from '../auth/user.repository.js';
 import { constraintAnalysisService } from '../constraint-analysis/constraint-analysis.service.js';
 import { auditService } from '../audit/audit.service.js';
 import { DomainEventBus } from '../../core/events/domain-event-bus.js';
@@ -318,6 +322,16 @@ export class ProductionJobService {
       ? new Date(dto.targetCompletionDate)
       : new Date(Date.now() + 24 * 3600000);
 
+    // 10b. Authoritative Process Planning Table (15 Positions)
+    const processDetails = await this.validateAndNormalizeProcessTable(
+      tenantId,
+      actor,
+      grn,
+      item,
+      recipe,
+      dto.processDetails
+    );
+
     // 11. Create Batch Order Document with Concurrency Safety and Retry
     let retries = 5;
     let job: ProductionJobDocument | null = null;
@@ -385,6 +399,7 @@ export class ProductionJobService {
             downtimeLog: [],
             productionLogs: []
           },
+          processDetails,
           transitionHistory: [
             {
               fromStatus: 'WAITING_FOR_PRODUCTION',
@@ -497,6 +512,394 @@ export class ProductionJobService {
     throw new BadRequestError(
       'Batch Order creation requires a valid PO (poId) and completed GRN (grnId) reference. Arbitrary job creation without Creation Phase lineage is not permitted.'
     );
+  }
+
+  /**
+   * Generates the authoritative 15-row process table in blank initial state.
+   */
+  public buildDefaultProcessTable(): IProcessDetailRow[] {
+    const rows: IProcessDetailRow[] = [];
+    for (let i = 1; i <= 15; i++) {
+      rows.push({
+        serialNumber: i,
+        partId: null,
+        partCode: null,
+        partName: null,
+        process: null,
+        recipeId: null,
+        recipeCode: null,
+        minhardness: null,
+        maxhardness: null,
+        userId: null,
+        userName: null,
+        status: 'BLANK',
+        notes: null
+      });
+    }
+    return rows;
+  }
+
+  /**
+   * Authoritative validation and normalization for the 15-position process table.
+   * Rejects:
+   * - invalid Part (not present on GRN)
+   * - invalid Recipe / Recipe mismatch with BO Item
+   * - invalid Process (contradicts Recipe stages/processFamily)
+   * - negative hardness or maxhardness < minhardness
+   * - missing user input for hardness on configured rows
+   * - invalid User (not a valid ERP user)
+   * - invalid Status
+   * - malformed rows or altered serial numbers
+   */
+  public async validateAndNormalizeProcessTable(
+    tenantId: string,
+    actor: IActorContext,
+    grn: any,
+    boItem: any,
+    boRecipe: any,
+    inputRows?: Partial<IProcessDetailRow>[]
+  ): Promise<IProcessDetailRow[]> {
+    if (!inputRows || inputRows.length === 0) {
+      return this.buildDefaultProcessTable();
+    }
+
+    if (inputRows.length > 15) {
+      throw new BadRequestError('The process table cannot contain more than 15 rows.');
+    }
+
+    const validStatuses: ProcessRowStatus[] = [
+      'BLANK',
+      'PENDING',
+      'IN_PROGRESS',
+      'COMPLETED',
+      'SKIPPED',
+      'CANCELLED'
+    ];
+
+    const normalizedRows: IProcessDetailRow[] = [];
+
+    for (let i = 0; i < 15; i++) {
+      const expectedSerial = i + 1;
+
+      if (i >= inputRows.length) {
+        // Pad remaining positions with blank initial state rows
+        normalizedRows.push({
+          serialNumber: expectedSerial,
+          partId: null,
+          partCode: null,
+          partName: null,
+          process: null,
+          recipeId: null,
+          recipeCode: null,
+          minhardness: null,
+          maxhardness: null,
+          userId: null,
+          userName: null,
+          status: 'BLANK',
+          notes: null
+        });
+        continue;
+      }
+
+      const row = inputRows[i];
+
+      // 1. Serial number validation
+      if (row.serialNumber !== undefined && row.serialNumber !== null) {
+        if (Number(row.serialNumber) !== expectedSerial) {
+          throw new BadRequestError(
+            `Serial Number Violation: Row at position ${expectedSerial} cannot have serial number ${row.serialNumber}. Serial numbers are system-generated and must be strictly sequential (1, 2, ... 15).`
+          );
+        }
+      }
+
+      // 2. Check if row is blank initial state
+      const isBlankStatus = !row.status || row.status === 'BLANK';
+      const hasNoContent =
+        !row.partId &&
+        !row.partCode &&
+        !row.process &&
+        !row.recipeId &&
+        !row.recipeCode &&
+        row.minhardness === undefined &&
+        row.maxhardness === undefined;
+
+      if (isBlankStatus && hasNoContent) {
+        normalizedRows.push({
+          serialNumber: expectedSerial,
+          partId: null,
+          partCode: null,
+          partName: null,
+          process: null,
+          recipeId: null,
+          recipeCode: null,
+          minhardness: null,
+          maxhardness: null,
+          userId: null,
+          userName: null,
+          status: 'BLANK',
+          notes: row.notes || null
+        });
+        continue;
+      }
+
+      // 3. Status validation
+      const rowStatus = row.status || 'PENDING';
+      if (!validStatuses.includes(rowStatus as ProcessRowStatus)) {
+        throw new BadRequestError(`Invalid Status: '${row.status}' is not a permitted status.`);
+      }
+
+      // 4. Part Validation: Every process row must reference a valid Part present in the corresponding GRN
+      const targetPartId = (row.partId || row.partCode || '').trim();
+      if (!targetPartId) {
+        throw new BadRequestError(
+          `Row ${expectedSerial}: Part reference (partId or partCode) is required for configured process row.`
+        );
+      }
+
+      const matchingGrnItem = grn.items?.find(
+        (item: any) =>
+          String(item.itemId) === targetPartId ||
+          String(item.itemCode).toUpperCase() === targetPartId.toUpperCase() ||
+          String((item as any)._id) === targetPartId
+      );
+
+      if (!matchingGrnItem) {
+        throw new BadRequestError(
+          `Part Membership Violation: Part '${targetPartId}' does not exist in GRN '${grn.grnNumber}'. Available GRN parts: [${grn.items?.map((it: any) => it.itemCode).join(', ')}]. Arbitrary unrelated parts are not allowed.`
+        );
+      }
+
+      const partId = matchingGrnItem.itemId || (matchingGrnItem as any)._id?.toString() || targetPartId;
+      const partCode = matchingGrnItem.itemCode;
+      const partName = matchingGrnItem.itemName || matchingGrnItem.itemDescription || boItem.itemName || partCode;
+
+      // 5. Recipe Validation: Each process row must reference valid Recipe data corresponding to the BO's Item
+      const targetRecipeId = (row.recipeId || row.recipeCode || '').trim();
+      if (!targetRecipeId) {
+        throw new BadRequestError(
+          `Row ${expectedSerial}: Recipe reference (recipeId or recipeCode) is required for configured process row.`
+        );
+      }
+
+      let recipe = await recipeRepository.findById(tenantId, targetRecipeId);
+      if (!recipe || recipe.isDeleted) {
+        recipe = await recipeRepository.findHighestRevision(tenantId, targetRecipeId);
+      }
+
+      // If matching recipe still not found, check if it matches the current BO recipe
+      if (!recipe && (boRecipe?.id === targetRecipeId || boRecipe?.recipeCode === targetRecipeId || (boRecipe as any)?._id?.toString() === targetRecipeId)) {
+        recipe = boRecipe;
+      }
+
+      if (!recipe || (recipe as any).isDeleted) {
+        throw new BadRequestError(`Invalid Recipe: Recipe '${targetRecipeId}' not found.`);
+      }
+
+      // The Recipe must correspond to the BO's Item
+      const recipeItemId = (recipe as any).itemId || (recipe as any).item;
+      const isRecipeItemMatched =
+        !recipeItemId ||
+        String(recipeItemId) === String(boItem.id) ||
+        String(recipeItemId) === String(boItem.itemId) ||
+        String(recipeItemId) === String((boItem as any)._id) ||
+        String(recipeItemId).toUpperCase() === String(boItem.itemCode).toUpperCase();
+
+      const itemGrade = boItem.materialGrade || matchingGrnItem.materialGrade;
+      const isGradeCompatible =
+        recipe.applicableMaterialGrades &&
+        recipe.applicableMaterialGrades.some(
+          (g: string) => g.toUpperCase().trim() === itemGrade?.toUpperCase().trim()
+        );
+      const isLineageBound =
+        String(recipe.id) === String(matchingGrnItem.recipeId) ||
+        recipe.recipeCode === matchingGrnItem.recipeCode;
+
+      if (!isRecipeItemMatched && (!isGradeCompatible && !isLineageBound)) {
+        throw new BadRequestError(
+          `Recipe Mismatch Violation: Recipe '${recipe.recipeCode}' does not correspond to BO Item '${boItem.itemCode || boItem.itemName}'.`
+        );
+      }
+
+      // 6. Process Validation: Must correspond to valid process information in the referenced Recipe
+      const targetProcess = (row.process || '').trim();
+      if (!targetProcess) {
+        throw new BadRequestError(`Row ${expectedSerial}: Process name is required for configured process row.`);
+      }
+
+      const validStages = (recipe.stages || []).map((s: any) => (s.stageName || '').toUpperCase().trim());
+      const recipeFamily = (recipe.processFamily || '').toUpperCase().trim();
+      const recipeName = (recipe.name || '').toUpperCase().trim();
+      const validProcessList = Array.from(new Set([recipeFamily, recipeName, ...validStages].filter(Boolean)));
+
+      const targetProcessUpper = targetProcess.toUpperCase();
+      const isProcessValid = validProcessList.some(
+        (vp) =>
+          vp === targetProcessUpper ||
+          targetProcessUpper.includes(vp) ||
+          vp.includes(targetProcessUpper)
+      );
+
+      if (!isProcessValid) {
+        throw new BadRequestError(
+          `Invalid Process: Process '${targetProcess}' contradicts Recipe '${recipe.recipeCode}'. Available Recipe processes: [${validProcessList.join(', ')}]. Arbitrary process information is not allowed.`
+        );
+      }
+
+      // 7. Hardness Range Validation: User input required, non-negative, max >= min. Do not auto-populate!
+      if (row.minhardness === undefined || row.minhardness === null || typeof row.minhardness !== 'number' || isNaN(row.minhardness)) {
+        throw new BadRequestError(
+          `Row ${expectedSerial}: 'minhardness' is required and must be explicitly provided by user input.`
+        );
+      }
+      if (row.maxhardness === undefined || row.maxhardness === null || typeof row.maxhardness !== 'number' || isNaN(row.maxhardness)) {
+        throw new BadRequestError(
+          `Row ${expectedSerial}: 'maxhardness' is required and must be explicitly provided by user input.`
+        );
+      }
+      if (row.minhardness < 0) {
+        throw new BadRequestError(
+          `Row ${expectedSerial}: 'minhardness' must be non-negative (received ${row.minhardness}).`
+        );
+      }
+      if (row.maxhardness < 0) {
+        throw new BadRequestError(
+          `Row ${expectedSerial}: 'maxhardness' must be non-negative (received ${row.maxhardness}).`
+        );
+      }
+      if (row.maxhardness < row.minhardness) {
+        throw new BadRequestError(
+          `Row ${expectedSerial}: 'maxhardness' (${row.maxhardness}) must be greater than or equal to 'minhardness' (${row.minhardness}).`
+        );
+      }
+
+      // 8. User Validation: Valid ERP user relationship
+      const targetUserId = row.userId ? String(row.userId).trim() : actor.userId;
+      let resolvedUserName = row.userName ? String(row.userName).trim() : null;
+
+      if (targetUserId === actor.userId) {
+        resolvedUserName = resolvedUserName || actor.email || 'Current User';
+      } else {
+        const erpUser =
+          (await userRepository.findById(tenantId, targetUserId)) ||
+          (await userRepository.findByUsername(tenantId, targetUserId)) ||
+          (await userRepository.findByEmail(tenantId, targetUserId));
+
+        if (erpUser && !erpUser.isDeleted) {
+          resolvedUserName =
+            resolvedUserName ||
+            (erpUser as any).fullName ||
+            (erpUser as any).name ||
+            erpUser.username ||
+            erpUser.email;
+        } else {
+          const employee = await workforceCapacityRepository.findEmployeeById(tenantId, targetUserId);
+          if (employee) {
+            resolvedUserName = resolvedUserName || employee.fullName || employee.employeeCode;
+          } else {
+            throw new BadRequestError(
+              `Invalid User: User identifier '${targetUserId}' is not a valid ERP user. Arbitrary user identifiers are prohibited.`
+            );
+          }
+        }
+      }
+
+      normalizedRows.push({
+        serialNumber: expectedSerial,
+        partId,
+        partCode,
+        partName,
+        process: targetProcess,
+        recipeId: recipe.id || (recipe as any)._id?.toString() || targetRecipeId,
+        recipeCode: recipe.recipeCode,
+        minhardness: row.minhardness,
+        maxhardness: row.maxhardness,
+        userId: targetUserId,
+        userName: resolvedUserName,
+        status: (rowStatus === 'BLANK' ? 'PENDING' : rowStatus) as ProcessRowStatus,
+        notes: row.notes || null
+      });
+    }
+
+    return normalizedRows;
+  }
+
+  /**
+   * Retrieves the 15-position process planning details for a Batch Order.
+   */
+  public async getProcessDetails(tenantId: string, jobId: string): Promise<IProcessDetailRow[]> {
+    const job = await this.repo.findById(tenantId, jobId);
+    if (!job || job.isDeleted) {
+      throw new NotFoundError(`Batch Order with ID '${jobId}' not found.`);
+    }
+
+    if (!job.processDetails || job.processDetails.length === 0) {
+      return this.buildDefaultProcessTable();
+    }
+
+    return job.processDetails;
+  }
+
+  /**
+   * Updates the 15-position process planning details for a Batch Order.
+   */
+  public async updateProcessDetails(
+    tenantId: string,
+    actor: IActorContext,
+    jobId: string,
+    dto: UpdateProcessDetailsDto
+  ): Promise<ProductionJobDocument> {
+    const job = await this.repo.findById(tenantId, jobId);
+    if (!job || job.isDeleted) {
+      throw new NotFoundError(`Batch Order with ID '${jobId}' not found.`);
+    }
+
+    if (!job.grnId) {
+      throw new BadRequestError('Batch Order has no associated GRN.');
+    }
+
+    const grn = await grnRepository.findGrnById(tenantId, job.grnId);
+    if (!grn || grn.isDeleted) {
+      throw new NotFoundError(`Associated GRN '${job.grnId}' not found.`);
+    }
+
+    let recipe = await recipeRepository.findById(tenantId, job.recipeSnapshot?.recipeId);
+    if (!recipe || recipe.isDeleted) {
+      recipe = job.recipeSnapshot as any;
+    }
+
+    const normalizedRows = await this.validateAndNormalizeProcessTable(
+      tenantId,
+      actor,
+      grn,
+      job.item,
+      recipe,
+      dto.processDetails
+    );
+
+    const docId = (job as any)._id ? (job as any)._id.toString() : job.id;
+    const updatedJob = await this.repo.updateById(tenantId, docId, {
+      processDetails: normalizedRows
+    });
+
+    if (!updatedJob) {
+      throw new NotFoundError(`Batch Order with ID '${jobId}' not found.`);
+    }
+
+    await auditService.record(tenantId, {
+      actorId: actor.userId,
+      actorEmail: actor.email,
+      actorRole: actor.role,
+      action: 'UPDATE_BATCH_ORDER_PROCESS_DETAILS',
+      entityType: 'BATCH_ORDER',
+      entityId: job.id,
+      afterState: updatedJob.toJSON ? updatedJob.toJSON() : updatedJob,
+      metadata: {
+        boNumber: job.boNumber,
+        configuredRowsCount: normalizedRows.filter((r) => r.status !== 'BLANK').length
+      }
+    });
+
+    return updatedJob;
   }
 
   /**

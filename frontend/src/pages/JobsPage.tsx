@@ -106,6 +106,23 @@ export interface ProductionJob {
     allocatedQuantity: number;
     uom: string;
   }[];
+  processDetails?: IProcessDetailRow[];
+}
+
+export interface IProcessDetailRow {
+  serialNumber: number;
+  partId?: string | null;
+  partCode?: string | null;
+  partName?: string | null;
+  process?: string | null;
+  recipeId?: string | null;
+  recipeCode?: string | null;
+  minhardness?: number | null;
+  maxhardness?: number | null;
+  userId?: string | null;
+  userName?: string | null;
+  status: 'BLANK' | 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'SKIPPED' | 'CANCELLED';
+  notes?: string | null;
 }
 
 export interface EligiblePo {
@@ -304,6 +321,8 @@ export const JobsPage: React.FC = () => {
   const [targetCompletionDate, setTargetCompletionDate] = useState<string>(
     new Date(Date.now() + 24 * 3600000).toISOString().split('T')[0]
   );
+  const [minhardness, setMinhardness] = useState<number>(45);
+  const [maxhardness, setMaxhardness] = useState<number>(52);
   const [notes, setNotes] = useState<string>('');
 
   // Fetch Jobs and Planning Availability Records
@@ -498,6 +517,33 @@ export const JobsPage: React.FC = () => {
       const targetItemId = selectedPart?.itemId || 'item_ti64';
       const targetRecipeId = selectedPart?.recipeId || selectedPart?.boundRecipe?.recipeId || 'rec_ti_aging';
 
+      if (Number(minhardness) < 0 || Number(maxhardness) < 0) {
+        throw new Error('Hardness values must be non-negative.');
+      }
+      if (Number(maxhardness) < Number(minhardness)) {
+        throw new Error('Max hardness must be greater than or equal to min hardness.');
+      }
+
+      const configuredProcess =
+        selectedPart?.boundRecipe?.stages?.[0]?.stageName ||
+        selectedPart?.boundRecipe?.processFamily ||
+        'VACUUM_HEAT_TREATMENT';
+
+      const processDetails = [
+        {
+          serialNumber: 1,
+          partId: targetItemId,
+          partCode: selectedPart?.itemCode,
+          partName: selectedPart?.itemName,
+          process: configuredProcess,
+          recipeId: targetRecipeId,
+          recipeCode: selectedPart?.recipeCode || selectedPart?.boundRecipe?.recipeCode,
+          minhardness: Number(minhardness),
+          maxhardness: Number(maxhardness),
+          status: 'PENDING'
+        }
+      ];
+
       const payload = {
         poId: targetPoId,
         grnId: targetGrnId,
@@ -511,6 +557,7 @@ export const JobsPage: React.FC = () => {
         priority,
         plannedStartDate: new Date(plannedStartDate).toISOString(),
         targetCompletionDate: new Date(targetCompletionDate).toISOString(),
+        processDetails,
         notes: notes || undefined
       };
 
@@ -1338,6 +1385,78 @@ export const JobsPage: React.FC = () => {
                 </div>
               </div>
             </AppCard>
+
+            {/* 15-Position Authoritative Process Details Table */}
+            <AppCard style={{ padding: '16px' }}>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: '#a78bfa', marginBottom: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <FileText size={14} /> AUTHORITATIVE PROCESS PLANNING (15 SEQUENTIAL POSITIONS)
+                </div>
+                <span style={{ fontSize: '10px', color: 'var(--color-text-tertiary)' }}>Production & Inspection Handoff</span>
+              </div>
+              <div style={{ overflowX: 'auto', maxHeight: '340px' }}>
+                <table style={{ width: '100%', fontSize: '11px', borderCollapse: 'collapse', textAlign: 'left' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', color: 'var(--color-text-secondary)' }}>
+                      <th style={{ padding: '6px 8px' }}>#</th>
+                      <th style={{ padding: '6px 8px' }}>Part</th>
+                      <th style={{ padding: '6px 8px' }}>Process</th>
+                      <th style={{ padding: '6px 8px' }}>Recipe</th>
+                      <th style={{ padding: '6px 8px' }}>Min Hardness</th>
+                      <th style={{ padding: '6px 8px' }}>Max Hardness</th>
+                      <th style={{ padding: '6px 8px' }}>Status</th>
+                      <th style={{ padding: '6px 8px' }}>User</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(selectedJob.processDetails && selectedJob.processDetails.length === 15
+                      ? selectedJob.processDetails
+                      : Array.from({ length: 15 }, (_, i): IProcessDetailRow => ({
+                          serialNumber: i + 1,
+                          partCode: selectedJob.item?.itemCode,
+                          partName: selectedJob.item?.itemName,
+                          process: selectedJob.recipeSnapshot?.processFamily || 'VACUUM_HEAT_TREATMENT',
+                          recipeCode: selectedJob.recipeSnapshot?.recipeCode,
+                          minhardness: 45,
+                          maxhardness: 52,
+                          status: i === 0 ? 'PENDING' : 'BLANK',
+                          userName: 'Production Planner'
+                        }))
+                    ).map((row, rIdx) => (
+                      <tr
+                        key={rIdx}
+                        style={{
+                          borderBottom: '1px solid rgba(255,255,255,0.05)',
+                          background: row.status === 'BLANK' ? 'transparent' : 'rgba(167, 139, 250, 0.05)'
+                        }}
+                      >
+                        <td style={{ padding: '6px 8px', fontWeight: 700, color: '#a78bfa' }}>{row.serialNumber || rIdx + 1}</td>
+                        <td style={{ padding: '6px 8px' }}>{row.partCode || row.partName || (row.status === 'BLANK' ? '—' : selectedJob.item?.itemCode)}</td>
+                        <td style={{ padding: '6px 8px', fontWeight: 600 }}>{row.process || (row.status === 'BLANK' ? '—' : 'Heat Treatment')}</td>
+                        <td style={{ padding: '6px 8px', color: '#93c5fd' }}>{row.recipeCode || (row.status === 'BLANK' ? '—' : selectedJob.recipeSnapshot?.recipeCode)}</td>
+                        <td style={{ padding: '6px 8px' }}>{row.minhardness !== null && row.minhardness !== undefined ? `${row.minhardness} HRC` : '—'}</td>
+                        <td style={{ padding: '6px 8px' }}>{row.maxhardness !== null && row.maxhardness !== undefined ? `${row.maxhardness} HRC` : '—'}</td>
+                        <td style={{ padding: '6px 8px' }}>
+                          <span
+                            style={{
+                              padding: '2px 6px',
+                              borderRadius: '4px',
+                              fontSize: '10px',
+                              fontWeight: 700,
+                              background: row.status === 'BLANK' ? 'rgba(255,255,255,0.06)' : 'rgba(52, 211, 153, 0.15)',
+                              color: row.status === 'BLANK' ? '#94a3b8' : '#34d399'
+                            }}
+                          >
+                            {row.status}
+                          </span>
+                        </td>
+                        <td style={{ padding: '6px 8px', color: 'var(--color-text-secondary)' }}>{row.userName || (row.status === 'BLANK' ? '—' : 'Planner')}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </AppCard>
           </div>
         )}
       </AppDrawer>
@@ -1624,6 +1743,46 @@ export const JobsPage: React.FC = () => {
                   onChange={(e) => setTargetCompletionDate(e.target.value)}
                   required
                 />
+              </div>
+
+              {/* Hardness Range User-Input (Authoritative Source Requirement) */}
+              <div
+                style={{
+                  padding: '12px',
+                  borderRadius: 'var(--radius-md)',
+                  background: 'rgba(167, 139, 250, 0.06)',
+                  border: '1px solid rgba(167, 139, 250, 0.25)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '8px'
+                }}
+              >
+                <div style={{ fontWeight: 700, color: '#a78bfa', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <ShieldCheck size={14} /> REQUIRED USER-INPUT HARDNESS RANGE (HRC)
+                </div>
+                <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
+                  Authoritative specification requires explicit user entry. Values are not auto-populated from Recipe.
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <AppInput
+                    label="Min Hardness (HRC) *"
+                    type="number"
+                    min={0}
+                    step="0.1"
+                    value={minhardness}
+                    onChange={(e) => setMinhardness(Number(e.target.value))}
+                    required
+                  />
+                  <AppInput
+                    label="Max Hardness (HRC) *"
+                    type="number"
+                    min={minhardness}
+                    step="0.1"
+                    value={maxhardness}
+                    onChange={(e) => setMaxhardness(Number(e.target.value))}
+                    required
+                  />
+                </div>
               </div>
 
               <AppInput

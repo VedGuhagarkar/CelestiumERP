@@ -8,6 +8,8 @@ import { PERMISSIONS } from '../rbac/rbac.constants.js';
 import {
   createDirectJobSchema,
   createBatchOrderSchema,
+  updateProcessDetailsSchema,
+  getProcessDetailsSchema,
   updateJobSchema,
   assignOperatorSchema,
   removeOperatorSchema,
@@ -62,6 +64,28 @@ productionJobRouter.post(
   requirePermission(PERMISSIONS.BATCH_ORDER_CREATE),
   validateRequest(createBatchOrderSchema),
   asyncHandler(productionJobController.createBatchOrder)
+);
+
+// 0e. Get Process Details for Batch Order (15 sequential positions)
+productionJobRouter.get(
+  ['/batch-orders/:id/process-details', '/:id/process-details'],
+  authenticateJwt,
+  requireAnyPermission(PERMISSIONS.BATCH_ORDER_VIEW, PERMISSIONS.PRODUCTION_JOB_VIEW),
+  validateRequest(getProcessDetailsSchema),
+  asyncHandler(productionJobController.getProcessDetails)
+);
+
+// 0f. Update Process Details for Batch Order (15 sequential positions)
+productionJobRouter.put(
+  ['/batch-orders/:id/process-details', '/:id/process-details'],
+  authenticateJwt,
+  requireAnyPermission(
+    PERMISSIONS.BATCH_ORDER_UPDATE,
+    PERMISSIONS.BATCH_ORDER_CREATE,
+    PERMISSIONS.PRODUCTION_JOB_UPDATE
+  ),
+  validateRequest(updateProcessDetailsSchema),
+  asyncHandler(productionJobController.updateProcessDetails)
 );
 
 // 2. Convert Approved Production Plan to Executable Production Job

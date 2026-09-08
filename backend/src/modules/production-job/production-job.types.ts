@@ -27,6 +27,24 @@ export type JobPriority = 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT' | 'AOG_CRITICAL';
 export type ResourceAssignmentAction = 'ASSIGN' | 'REALLOCATE' | 'REMOVE';
 export type ResourceType = 'OPERATOR' | 'FURNACE';
 
+export type ProcessRowStatus = 'BLANK' | 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'SKIPPED' | 'CANCELLED';
+
+export interface IProcessDetailRow {
+  serialNumber: number; // Strictly sequential 1 to 15
+  partId?: string | null;
+  partCode?: string | null;
+  partName?: string | null;
+  process?: string | null;
+  recipeId?: string | null;
+  recipeCode?: string | null;
+  minhardness?: number | null;
+  maxhardness?: number | null;
+  userId?: string | null;
+  userName?: string | null;
+  status: ProcessRowStatus;
+  notes?: string | null;
+}
+
 export type StageProgressType = 'PREHEAT' | 'SOAK' | 'QUENCH' | 'TEMPER' | 'OTHER';
 
 export type DowntimeCategory =
@@ -310,6 +328,7 @@ export interface IProductionJob {
     dueDate?: Date | null;
   };
   execution?: IJobExecution;
+  processDetails: IProcessDetailRow[];
   transitionHistory: IJobStateTransition[];
   assignmentHistory: IJobResourceAssignmentHistory[];
   idempotencyKey?: string | null;
@@ -343,6 +362,11 @@ export interface CreateBatchOrderDto {
   shift?: string;
   notes?: string;
   idempotencyKey?: string;
+  processDetails?: Partial<IProcessDetailRow>[];
+}
+
+export interface UpdateProcessDetailsDto {
+  processDetails: Partial<IProcessDetailRow>[];
 }
 
 export interface CreateDirectJobDto {

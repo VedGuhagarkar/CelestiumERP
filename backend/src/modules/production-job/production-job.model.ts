@@ -1,6 +1,29 @@
 import mongoose, { Schema } from 'mongoose';
 import { createBaseSchema } from '../../core/models/base.schema.js';
-import { ProductionJobDocument } from './production-job.types.js';
+import { ProductionJobDocument, IProcessDetailRow } from './production-job.types.js';
+
+const processDetailRowSchema = new Schema<IProcessDetailRow>(
+  {
+    serialNumber: { type: Number, required: true, min: 1, max: 15 },
+    partId: { type: String, default: null },
+    partCode: { type: String, default: null },
+    partName: { type: String, default: null },
+    process: { type: String, default: null },
+    recipeId: { type: String, default: null },
+    recipeCode: { type: String, default: null },
+    minhardness: { type: Number, default: null, min: 0 },
+    maxhardness: { type: Number, default: null, min: 0 },
+    userId: { type: String, default: null },
+    userName: { type: String, default: null },
+    status: {
+      type: String,
+      enum: ['BLANK', 'PENDING', 'IN_PROGRESS', 'COMPLETED', 'SKIPPED', 'CANCELLED'],
+      default: 'BLANK'
+    },
+    notes: { type: String, default: null }
+  },
+  { _id: false }
+);
 
 const jobCustomerSchema = new Schema(
   {
@@ -358,6 +381,7 @@ const productionJobSchema = createBaseSchema<ProductionJobDocument>({
   operatorAssignment: { type: jobOperatorAssignmentSchema, default: () => ({}) },
   timeline: { type: jobTimelineSchema, required: true },
   execution: { type: jobExecutionSchema, default: () => ({ stageProgress: [], downtimeLog: [], productionLogs: [] }) },
+  processDetails: { type: [processDetailRowSchema], default: [] },
   transitionHistory: { type: [jobStateTransitionSchema], default: [] },
   assignmentHistory: { type: [jobResourceAssignmentHistorySchema], default: [] },
   idempotencyKey: { type: String, default: null },

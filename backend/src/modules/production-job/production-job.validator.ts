@@ -48,6 +48,47 @@ const productionLogTypeEnum = z.enum([
   'ANOMALY_REPORT'
 ]);
 
+export const processRowStatusEnum = z.enum([
+  'BLANK',
+  'PENDING',
+  'IN_PROGRESS',
+  'COMPLETED',
+  'SKIPPED',
+  'CANCELLED'
+]);
+
+export const processDetailRowValidatorSchema = z
+  .object({
+    serialNumber: z.number().int().min(1).max(15).optional(),
+    partId: z.string().trim().nullable().optional(),
+    partCode: z.string().trim().nullable().optional(),
+    partName: z.string().trim().nullable().optional(),
+    process: z.string().trim().nullable().optional(),
+    recipeId: z.string().trim().nullable().optional(),
+    recipeCode: z.string().trim().nullable().optional(),
+    minhardness: z.number().min(0, 'minhardness must be non-negative').nullable().optional(),
+    maxhardness: z.number().min(0, 'maxhardness must be non-negative').nullable().optional(),
+    userId: z.string().trim().nullable().optional(),
+    userName: z.string().trim().nullable().optional(),
+    status: processRowStatusEnum.optional().default('BLANK'),
+    notes: z.string().trim().max(1000).nullable().optional()
+  })
+  .superRefine((data, ctx) => {
+    if (
+      data.minhardness !== undefined &&
+      data.minhardness !== null &&
+      data.maxhardness !== undefined &&
+      data.maxhardness !== null &&
+      data.maxhardness < data.minhardness
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'maxhardness must be greater than or equal to minhardness',
+        path: ['maxhardness']
+      });
+    }
+  });
+
 export const createBatchOrderSchema: ValidationSchema = {
   body: z
     .object({
@@ -68,7 +109,8 @@ export const createBatchOrderSchema: ValidationSchema = {
       assignedOperatorId: z.string().trim().optional(),
       shift: z.string().trim().optional(),
       notes: z.string().trim().max(1000).optional(),
-      idempotencyKey: z.string().trim().optional()
+      idempotencyKey: z.string().trim().optional(),
+      processDetails: z.array(processDetailRowValidatorSchema).max(15, 'Maximum 15 process rows allowed').optional()
     })
     .superRefine((data, ctx) => {
       const qty = data.quantity !== undefined ? data.quantity : data.targetQuantity;
@@ -335,5 +377,20 @@ export const queryJobsSchema: ValidationSchema = {
 export const getJobByIdSchema: ValidationSchema = {
   params: z.object({
     id: z.string().trim().min(1, 'Job ID is required')
+  })
+};
+
+export const updateProcessDetailsSchema: ValidationSchema = {
+  params: z.object({
+    id: z.string().trim().min(1, 'Batch Order ID is required')
+  }),
+  body: z.object({
+    processDetails: z.array(processDetailRowValidatorSchema).max(15, 'Maximum 15 process rows allowed')
+  })
+};
+
+export const getProcessDetailsSchema: ValidationSchema = {
+  params: z.object({
+    id: z.string().trim().min(1, 'Batch Order ID is required')
   })
 };

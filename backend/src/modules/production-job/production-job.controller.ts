@@ -73,6 +73,43 @@ export class ProductionJobController extends BaseController {
     }
   };
 
+  public getProcessDetails = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const processDetails = await this.service.getProcessDetails(
+        tenantId,
+        req.params.id as string
+      );
+      this.sendSuccess(res, processDetails, 'Batch Order process details retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public updateProcessDetails = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const user = this.getUser(req);
+      const updatedJob = await this.service.updateProcessDetails(
+        tenantId,
+        { userId: user.userId, email: user.email, role: user.roles?.[0] },
+        req.params.id as string,
+        req.body
+      );
+      this.sendSuccess(res, updatedJob, 'Batch Order process details updated successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
   public createDirectJob = async (
     req: Request,
     res: Response,

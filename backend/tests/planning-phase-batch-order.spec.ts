@@ -10,6 +10,8 @@ import { recipeRepository } from '../src/modules/recipe/recipe.repository.js';
 import { auditService } from '../src/modules/audit/audit.service.js';
 import { DEFAULT_FACTORY_ROLES } from '../src/modules/rbac/rbac.constants.js';
 import { roleRepository } from '../src/modules/rbac/role.repository.js';
+import { userRepository } from '../src/modules/auth/user.repository.js';
+import { workforceCapacityRepository } from '../src/modules/workforce-capacity/workforce-capacity.repository.js';
 
 describe('Planning Phase — Authoritative PO -> GRN -> BO Workflow', () => {
   const app = createApp();
@@ -817,4 +819,541 @@ describe('Planning Phase — Authoritative PO -> GRN -> BO Workflow', () => {
       expect(res.body.success).toBe(false);
     });
   });
+
+  // =========================================================================
+  // 4. Batch Order Process Details Structure (15 Sequential Rows)
+  // =========================================================================
+  describe('4. Batch Order Process Details Structure (15 Sequential Rows)', () => {
+    const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+    beforeEach(() => {
+      jest.spyOn(purchaseOrderRepository, 'findById').mockResolvedValue(mockPo as any);
+      jest.spyOn(grnRepository, 'findGrnById').mockResolvedValue(mockGrn as any);
+      jest.spyOn(itemRepository, 'findById').mockResolvedValue(mockItem as any);
+      jest.spyOn(recipeRepository, 'findById').mockResolvedValue(mockRecipe as any);
+      jest.spyOn(productionJobRepository, 'generateNextBatchOrderNumber').mockResolvedValue('BO-202609-0001');
+      jest.spyOn(productionJobRepository, 'create').mockImplementation(async (_tenantId, data: any) => {
+        return {
+          id: 'job_created_001',
+          _id: 'job_created_001',
+          ...data,
+          toJSON: function () {
+            return { ...this };
+          }
+        } as any;
+      });
+      jest.spyOn(grnRepository, 'allocateUnit').mockResolvedValue({} as any);
+    });
+
+    it('should initialize all 15 process positions with sequential serial numbers (1..15) and BLANK initial state on BO creation when processDetails is omitted', async () => {
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      const { processDetails } = res.body.data;
+      expect(processDetails).toBeDefined();
+      expect(processDetails).toHaveLength(15);
+
+      // Verify strictly sequential serial numbers 1 to 15
+      const serials = processDetails.map((r: any) => r.serialNumber);
+      expect(serials).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+
+      // Verify all positions start in BLANK initial state
+      processDetails.forEach((row: any, idx: number) => {
+        expect(row.serialNumber).toBe(idx + 1);
+        expect(row.status).toBe('BLANK');
+        expect(row.partId).toBeNull();
+        expect(row.process).toBeNull();
+        expect(row.recipeId).toBeNull();
+        expect(row.minhardness).toBeNull();
+        expect(row.maxhardness).toBeNull();
+      });
+    });
+
+    it('should accept valid configured process rows and pad remaining positions to 15 sequential rows with BLANK status', async () => {
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50,
+          processDetails: [
+            {
+              serialNumber: 1,
+              partId: 'item_ti64',
+              process: 'Solution Treat Soak',
+              recipeId: 'rec_ti_01',
+              minhardness: 45,
+              maxhardness: 52,
+              userId: 'usr_mgr'
+            },
+            {
+              serialNumber: 2,
+              partId: 'item_ti64',
+              process: 'VACUUM_HEAT_TREATMENT',
+              recipeId: 'rec_ti_01',
+              minhardness: 48,
+              maxhardness: 55,
+              userId: 'usr_mgr'
+            }
+          ]
+        });
+
+      expect(res.status).toBe(201);
+      const { processDetails } = res.body.data;
+      expect(processDetails).toHaveLength(15);
+
+      // Row 1
+      expect(processDetails[0].serialNumber).toBe(1);
+      expect(processDetails[0].partId).toBe('item_ti64');
+      expect(processDetails[0].partCode).toBe('MAT-TI-6AL4V');
+      expect(processDetails[0].process).toBe('Solution Treat Soak');
+      expect(processDetails[0].recipeId).toBe('rec_ti_01');
+      expect(processDetails[0].recipeCode).toBe('REC-TI-AGING');
+      expect(processDetails[0].minhardness).toBe(45);
+      expect(processDetails[0].maxhardness).toBe(52);
+      expect(processDetails[0].status).toBe('PENDING');
+
+      // Row 2
+      expect(processDetails[1].serialNumber).toBe(2);
+      expect(processDetails[1].process).toBe('VACUUM_HEAT_TREATMENT');
+      expect(processDetails[1].status).toBe('PENDING');
+
+      // Rows 3 through 15 are padded as BLANK
+      for (let i = 2; i < 15; i++) {
+        expect(processDetails[i].serialNumber).toBe(i + 1);
+        expect(processDetails[i].status).toBe('BLANK');
+      }
+    });
+
+    it('should reject BO creation if process row references a Part not present in the GRN', async () => {
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50,
+          processDetails: [
+            {
+              serialNumber: 1,
+              partId: 'item_unrelated_999',
+              process: 'Solution Treat Soak',
+              recipeId: 'rec_ti_01',
+              minhardness: 45,
+              maxhardness: 52
+            }
+          ]
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('Part Membership Violation');
+    });
+
+    it('should reject BO creation if process row references a Recipe that contradicts/mismatches the BO Item', async () => {
+      jest.spyOn(recipeRepository, 'findById').mockImplementation(async (_t, id) => {
+        if (id === 'rec_steel_02') {
+          return {
+            id: 'rec_steel_02',
+            recipeCode: 'REC-STEEL-CARB',
+            processFamily: 'CARBURIZING',
+            itemId: 'item_steel_unrelated',
+            applicableMaterialGrades: ['AISI 8620'],
+            stages: []
+          } as any;
+        }
+        return mockRecipe as any;
+      });
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50,
+          processDetails: [
+            {
+              serialNumber: 1,
+              partId: 'item_ti64',
+              process: 'CARBURIZING',
+              recipeId: 'rec_steel_02',
+              minhardness: 45,
+              maxhardness: 52
+            }
+          ]
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('Recipe Mismatch');
+    });
+
+    it('should reject BO creation if process name contradicts the referenced Recipe', async () => {
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50,
+          processDetails: [
+            {
+              serialNumber: 1,
+              partId: 'item_ti64',
+              process: 'ANODIZING_PROCESS_UNKNOWN',
+              recipeId: 'rec_ti_01',
+              minhardness: 45,
+              maxhardness: 52
+            }
+          ]
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('Invalid Process');
+    });
+
+    it('should reject BO creation if minhardness or maxhardness is negative', async () => {
+      const res1 = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50,
+          processDetails: [
+            {
+              serialNumber: 1,
+              partId: 'item_ti64',
+              process: 'Solution Treat Soak',
+              recipeId: 'rec_ti_01',
+              minhardness: -5,
+              maxhardness: 52
+            }
+          ]
+        });
+
+      expect([400, 422]).toContain(res1.status);
+      expect(res1.body.success).toBe(false);
+
+      const res2 = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50,
+          processDetails: [
+            {
+              serialNumber: 1,
+              partId: 'item_ti64',
+              process: 'Solution Treat Soak',
+              recipeId: 'rec_ti_01',
+              minhardness: 45,
+              maxhardness: -10
+            }
+          ]
+        });
+
+      expect([400, 422]).toContain(res2.status);
+      expect(res2.body.success).toBe(false);
+    });
+
+    it('should reject BO creation if maxhardness is lower than minhardness', async () => {
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50,
+          processDetails: [
+            {
+              serialNumber: 1,
+              partId: 'item_ti64',
+              process: 'Solution Treat Soak',
+              recipeId: 'rec_ti_01',
+              minhardness: 55,
+              maxhardness: 45
+            }
+          ]
+        });
+
+      expect([400, 422]).toContain(res.status);
+      expect(res.body.success).toBe(false);
+    });
+
+    it('should reject BO creation if hardness values are omitted on configured row (user-input required)', async () => {
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50,
+          processDetails: [
+            {
+              serialNumber: 1,
+              partId: 'item_ti64',
+              process: 'Solution Treat Soak',
+              recipeId: 'rec_ti_01'
+            }
+          ]
+        });
+
+      expect([400, 422]).toContain(res.status);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('minhardness');
+    });
+
+    it('should reject BO creation if process row references an invalid/arbitrary user identifier', async () => {
+      jest.spyOn(userRepository, 'findById').mockResolvedValue(null);
+      jest.spyOn(userRepository, 'findByUsername').mockResolvedValue(null);
+      jest.spyOn(userRepository, 'findByEmail').mockResolvedValue(null);
+      jest.spyOn(workforceCapacityRepository, 'findEmployeeById').mockResolvedValue(null);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50,
+          processDetails: [
+            {
+              serialNumber: 1,
+              partId: 'item_ti64',
+              process: 'Solution Treat Soak',
+              recipeId: 'rec_ti_01',
+              minhardness: 45,
+              maxhardness: 52,
+              userId: 'usr_ghost_intruder'
+            }
+          ]
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('Invalid User');
+    });
+
+    it('should reject BO creation if process row has an uncontrolled/arbitrary status', async () => {
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50,
+          processDetails: [
+            {
+              serialNumber: 1,
+              partId: 'item_ti64',
+              process: 'Solution Treat Soak',
+              recipeId: 'rec_ti_01',
+              minhardness: 45,
+              maxhardness: 52,
+              status: 'ARBITRARY_STATUS' as any
+            }
+          ]
+        });
+
+      expect([400, 422]).toContain(res.status);
+      expect(res.body.success).toBe(false);
+    });
+
+    it('should reject BO creation if serial number is modified arbitrarily out of sequence', async () => {
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50,
+          processDetails: [
+            {
+              serialNumber: 8, // Non-sequential (expected 1)
+              partId: 'item_ti64',
+              process: 'Solution Treat Soak',
+              recipeId: 'rec_ti_01',
+              minhardness: 45,
+              maxhardness: 52
+            }
+          ]
+        });
+
+      expect([400, 422]).toContain(res.status);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('Serial Number Violation');
+    });
+
+    it('should reject BO creation if more than 15 process rows are provided', async () => {
+      const sixteenRows = Array.from({ length: 16 }, (_, i) => ({
+        serialNumber: i + 1,
+        status: 'BLANK' as const
+      }));
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50,
+          processDetails: sixteenRows
+        });
+
+      expect([400, 422]).toContain(res.status);
+      expect(res.body.success).toBe(false);
+    });
+
+    it('should update process details via PUT and retrieve via GET /batch-orders/:id/process-details', async () => {
+      const mockJobDoc = {
+        id: 'job_bo_101',
+        _id: 'job_bo_101',
+        jobNumber: 'BO-202609-0001',
+        boNumber: 'BO-202609-0001',
+        poId: mockPo.id,
+        grnId: mockGrn.id,
+        item: mockItem,
+        recipeSnapshot: {
+          recipeId: mockRecipe.id,
+          recipeCode: mockRecipe.recipeCode,
+          stages: mockRecipe.stages,
+          processFamily: mockRecipe.processFamily
+        },
+        processDetails: Array.from({ length: 15 }, (_, i) => ({
+          serialNumber: i + 1,
+          status: 'BLANK'
+        })),
+        isDeleted: false,
+        toJSON: function () {
+          return { ...this };
+        }
+      };
+
+      jest.spyOn(productionJobRepository, 'findById').mockResolvedValue(mockJobDoc as any);
+      jest.spyOn(productionJobRepository, 'updateById').mockImplementation(async (_t, _id, update: any) => {
+        return {
+          ...mockJobDoc,
+          ...update,
+          toJSON: function () {
+            return { ...this };
+          }
+        } as any;
+      });
+
+      // PUT: Update process details with configured row at position 1
+      const updateRes = await request(app)
+        .put('/api/v1/batch-orders/job_bo_101/process-details')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          processDetails: [
+            {
+              serialNumber: 1,
+              partId: 'item_ti64',
+              process: 'Solution Treat Soak',
+              recipeId: 'rec_ti_01',
+              minhardness: 48,
+              maxhardness: 54,
+              userId: 'usr_mgr'
+            }
+          ]
+        });
+
+      expect(updateRes.status).toBe(200);
+      expect(updateRes.body.success).toBe(true);
+      expect(updateRes.body.data.processDetails).toHaveLength(15);
+      expect(updateRes.body.data.processDetails[0].minhardness).toBe(48);
+      expect(updateRes.body.data.processDetails[0].maxhardness).toBe(54);
+
+      // Mock findById returning updated doc
+      mockJobDoc.processDetails = updateRes.body.data.processDetails;
+
+      // GET: Retrieve process details
+      const getRes = await request(app)
+        .get('/api/v1/batch-orders/job_bo_101/process-details')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`);
+
+      expect(getRes.status).toBe(200);
+      expect(getRes.body.success).toBe(true);
+      expect(getRes.body.data).toHaveLength(15);
+      expect(getRes.body.data[0].serialNumber).toBe(1);
+      expect(getRes.body.data[0].process).toBe('Solution Treat Soak');
+      expect(getRes.body.data[0].minhardness).toBe(48);
+      expect(getRes.body.data[0].maxhardness).toBe(54);
+
+      // Verify structure is directly consumable by Production and Inspection
+      const inspectionHandoffRow = getRes.body.data[0];
+      expect(inspectionHandoffRow.minhardness).toBeGreaterThanOrEqual(0);
+      expect(inspectionHandoffRow.maxhardness).toBeGreaterThanOrEqual(inspectionHandoffRow.minhardness);
+      expect(inspectionHandoffRow.recipeCode).toBe(mockRecipe.recipeCode);
+      expect(inspectionHandoffRow.status).toBe('PENDING');
+    });
+  });
 });
+
