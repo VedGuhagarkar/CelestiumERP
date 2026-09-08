@@ -106,15 +106,22 @@ const GRNItemSchema = new Schema<IGRNItem>(
     itemId: { type: String, required: true },
     itemCode: { type: String, required: true, uppercase: true, trim: true },
     itemName: { type: String, required: true, trim: true },
+    particulars: { type: String, trim: true },
+    hsnCode: { type: String, trim: true, uppercase: true },
+    rate: { type: Number, default: 0, min: 0 },
+    unitPrice: { type: Number, default: 0, min: 0 },
     materialGrade: { type: String, required: true, trim: true },
     processFamily: { type: String, required: true },
     recipeId: { type: String, required: true },
     recipeCode: { type: String, required: true, uppercase: true, trim: true },
     recipeRevision: { type: Number, required: true },
+    challanQuantity: { type: Number, default: 0, min: 0 },
+    receivedQuantity: { type: Number, default: 0, min: 0 },
     acceptedQuantity: { type: Number, required: true, min: 0.0001 },
     uom: { type: String, required: true, trim: true },
     unitCount: { type: Number, required: true, min: 1 },
     supplierHeatNumber: { type: String, required: true, uppercase: true, trim: true },
+    supplierLotNumber: { type: String, uppercase: true, trim: true },
     mtrNumber: { type: String, uppercase: true, trim: true },
     unitIdentifiers: { type: [String], required: true }
   },
@@ -124,17 +131,20 @@ const GRNItemSchema = new Schema<IGRNItem>(
 // 4. GRN Schema (Every GRN belongs to exactly one PO)
 const GRNSchema = createBaseSchema<GRNDocument>({
   grnNumber: { type: String, required: true, uppercase: true, trim: true },
+  idempotencyKey: { type: String, trim: true },
   poId: { type: String, required: true },
   poNumber: { type: String, required: true, uppercase: true, trim: true },
-  materialReceiptId: { type: String, required: true },
-  receiptNumber: { type: String, required: true, uppercase: true, trim: true },
+  materialReceiptId: { type: String },
+  receiptNumber: { type: String, uppercase: true, trim: true },
   supplierName: { type: String, required: true, trim: true },
+  supplierCode: { type: String, uppercase: true, trim: true },
   supplierChallanNumber: { type: String, required: true, uppercase: true, trim: true },
+  supplierChallanDate: { type: Date, required: true, default: Date.now },
   supplierInvoiceNumber: { type: String, uppercase: true, trim: true },
   carrierVehicle: { type: String, uppercase: true, trim: true },
-  warehouseId: { type: String, required: true },
-  warehouseCode: { type: String, required: true, uppercase: true, trim: true },
-  storageLocationCode: { type: String, required: true, uppercase: true, trim: true },
+  warehouseId: { type: String },
+  warehouseCode: { type: String, uppercase: true, trim: true },
+  storageLocationCode: { type: String, uppercase: true, trim: true },
   items: { type: [GRNItemSchema], required: true },
   totalUnitsGenerated: { type: Number, required: true, min: 1 },
   status: {
@@ -154,6 +164,10 @@ const GRNSchema = createBaseSchema<GRNDocument>({
 });
 
 IndexRegistry.addTenantUniqueIndex(GRNSchema, 'grnNumber');
+GRNSchema.index(
+  { tenantId: 1, idempotencyKey: 1 },
+  { unique: true, sparse: true, name: 'tenant_idempotency_grn_idx' }
+);
 GRNSchema.index({ tenantId: 1, poId: 1 });
 GRNSchema.index({ tenantId: 1, poNumber: 1 });
 GRNSchema.index({ tenantId: 1, materialReceiptId: 1 });

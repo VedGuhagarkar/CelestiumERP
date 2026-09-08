@@ -23,6 +23,7 @@ export interface IPurchaseOrderItem {
   recipeRevision: number;
   orderedQuantity: number;
   receivedQuantity: number;
+  balanceQuantity?: number;
   uom: UnitOfMeasure;
   unitPrice: number;
   lineTotal: number;

@@ -39,6 +39,11 @@ const itemSchema = createBaseSchema<ItemDocument>(
       trim: true,
       index: true
     },
+    hsnCode: {
+      type: String,
+      trim: true,
+      uppercase: true
+    },
     uom: {
       type: String,
       required: true,

@@ -42,6 +42,7 @@ export interface Item {
   category: string;
   materialGrade: string;
   uom: string;
+  hsnCode?: string;
   currentStock?: number;
   safetyStock?: number;
   unitCost?: number;
@@ -74,6 +75,7 @@ export interface POItem {
   receivedQuantity?: number;
   balanceQuantity?: number;
   uom: string;
+  hsnCode?: string;
   unitPrice: number;
   lineTotal?: number;
 }
@@ -113,15 +115,23 @@ export interface ReceivedItem {
   itemId: string;
   itemCode: string;
   itemName: string;
+  particulars?: string;
   materialGrade: string;
   recipeId: string;
   recipeCode: string;
   recipeRevision?: number;
   supplierHeatNumber: string;
+  supplierLotNumber?: string;
   millTestCertificateNumber: string;
+  mtrNumber?: string;
+  challanQuantity?: number;
   receivedQuantity: number;
+  acceptedQuantity?: number;
   packagesCount?: number;
   uom: string;
+  rate?: number;
+  unitPrice?: number;
+  hsnCode?: string;
   conditionRemarks?: string;
 }
 
@@ -165,9 +175,12 @@ export interface GRN {
   grnNumber: string;
   poId: string;
   poNumber: string;
-  receiptId: string;
-  receiptNumber: string;
+  receiptId?: string;
+  receiptNumber?: string;
   supplierName: string;
+  supplierCode?: string;
+  supplierChallanNumber?: string;
+  supplierChallanDate?: string;
   inspectionRemarks?: string;
   packagingCondition?: string;
   acceptanceStatus: 'ACCEPTED' | 'ACCEPTED_WITH_DEVIATION' | 'REJECTED';
@@ -409,6 +422,7 @@ export const InventoryPage: React.FC = () => {
   const { hasPermission } = usePermission();
   const canCreatePo = hasPermission('purchase_order:order:create');
   const canRecordStorage = hasPermission('inventory:storage:record');
+  const canCreateGrn = hasPermission('inventory:grn:create');
 
   // Form states - Create PO
   const [poSupplierName, setPoSupplierName] = useState('TimkenSteel Specialty Metals');
@@ -473,11 +487,75 @@ export const InventoryPage: React.FC = () => {
     setIsAssignStorageModalOpen(true);
   };
 
-  // Form states - Create GRN
+  // Form states - Create GRN (PO -> GRN Authoritative Workflow)
+  const [selectedPoIdForGrn, setSelectedPoIdForGrn] = useState<string>('po_01');
   const [selectedReceiptForGrn, setSelectedReceiptForGrn] = useState<MaterialReceipt | null>(null);
+  const [grnSupplierChallanNumber, setGrnSupplierChallanNumber] = useState('DC-2026-8819');
+  const [grnSupplierChallanDate, setGrnSupplierChallanDate] = useState(new Date().toISOString().split('T')[0]);
+  const [grnItemEntries, setGrnItemEntries] = useState<
+    Record<
+      string,
+      {
+        selected: boolean;
+        challanQty: number;
+        receivedQty: number;
+        supplierHeatNumber: string;
+        mtrNumber: string;
+      }
+    >
+  >({
+    itm_01: {
+      selected: true,
+      challanQty: 5000,
+      receivedQty: 5000,
+      supplierHeatNumber: 'HEAT-TK-4140-889',
+      mtrNumber: 'MTR-TK-2026-9941'
+    }
+  });
   const [grnInspectionRemarks, setGrnInspectionRemarks] = useState('Metallurgical chemistry and dimension specs fully verified against MTR.');
   const [grnPackagingCondition, setGrnPackagingCondition] = useState('INTACT');
   const [grnAcceptanceStatus, setGrnAcceptanceStatus] = useState<'ACCEPTED' | 'ACCEPTED_WITH_DEVIATION' | 'REJECTED'>('ACCEPTED');
+
+  const populateGrnItemsForPo = (po: PurchaseOrder, receipt?: MaterialReceipt | null) => {
+    const entries: Record<string, { selected: boolean; challanQty: number; receivedQty: number; supplierHeatNumber: string; mtrNumber: string }> = {};
+    po.items?.forEach((item, idx) => {
+      const key = item.itemId || item.itemCode || String(idx);
+      const remQty = item.balanceQuantity ?? (item.orderedQuantity - (item.receivedQuantity || 0));
+      const defaultQty = remQty > 0 ? remQty : item.orderedQuantity;
+      entries[key] = {
+        selected: true,
+        challanQty: defaultQty,
+        receivedQty: defaultQty,
+        supplierHeatNumber: receipt?.receivedItems?.[0]?.supplierHeatNumber || 'TK-HEAT-4140-901',
+        mtrNumber: receipt?.receivedItems?.[0]?.millTestCertificateNumber || 'MTR-TK-2026-8812'
+      };
+    });
+    setGrnItemEntries(entries);
+  };
+
+  const openCreateGrnModal = (po?: PurchaseOrder, receipt?: MaterialReceipt) => {
+    let targetPo: PurchaseOrder | undefined = po;
+    if (!targetPo && receipt) {
+      targetPo = purchaseOrders.find((p) => (p.id || p._id) === receipt.poId || p.poNumber === receipt.poNumber);
+    }
+    if (!targetPo) {
+      targetPo = purchaseOrders.find((p) => p.status === 'ISSUED' || p.status === 'PARTIALLY_RECEIVED') || purchaseOrders[0];
+    }
+
+    const poId = targetPo ? (targetPo.id || targetPo._id || '') : '';
+    setSelectedPoIdForGrn(poId);
+    setSelectedReceiptForGrn(receipt || null);
+    setGrnSupplierChallanNumber(receipt?.supplierChallanNumber || 'DC-2026-8819');
+    setGrnSupplierChallanDate(receipt?.supplierChallanDate ? receipt.supplierChallanDate.split('T')[0] : new Date().toISOString().split('T')[0]);
+    setGrnInspectionRemarks('Metallurgical chemistry and dimension specs fully verified against MTR.');
+    setGrnPackagingCondition('INTACT');
+    setGrnAcceptanceStatus('ACCEPTED');
+
+    if (targetPo) {
+      populateGrnItemsForPo(targetPo, receipt);
+    }
+    setIsCreateGrnModalOpen(true);
+  };
 
   // Drawer & Print selected entities
   const [activeGrnForPrint, setActiveGrnForPrint] = useState<GRN | null>(DEFAULT_GRNS[0]);
@@ -808,22 +886,69 @@ export const InventoryPage: React.FC = () => {
     }
   };
 
-  // 4. Create GRN
+  // 4. Create GRN (Authoritative PO -> GRN workflow)
   const handleCreateGrn = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedReceiptForGrn) return;
+    const po = purchaseOrders.find((p) => (p.id || p._id) === selectedPoIdForGrn);
+    if (!po) {
+      setFeedback({ type: 'error', message: 'Authoritative PO selection is required. Independent GRN creation is prohibited.' });
+      return;
+    }
+
+    const selectedKeys = Object.keys(grnItemEntries).filter((k) => grnItemEntries[k]?.selected);
+    if (selectedKeys.length === 0) {
+      setFeedback({ type: 'error', message: 'Please select at least one item belonging to the PO for this GRN.' });
+      return;
+    }
+
+    // Build payload items from authoritative PO items
+    const itemsPayload = selectedKeys.map((key) => {
+      const poItem = po.items.find((i, idx) => (i.itemId || i.itemCode || String(idx)) === key) || po.items[0];
+      const entry = grnItemEntries[key];
+      const itemMaster = items.find((itm) => (itm.id || itm._id) === poItem.itemId || itm.itemCode === poItem.itemCode);
+
+      return {
+        poItemId: poItem.poItemId || poItem.lineItemId,
+        itemId: poItem.itemId,
+        itemCode: poItem.itemCode,
+        particulars: poItem.itemName,
+        uom: poItem.uom,
+        hsnCode: itemMaster?.hsnCode || poItem.hsnCode || '7228.30.29',
+        rate: poItem.unitPrice,
+        unitPrice: poItem.unitPrice,
+        challanQuantity: Number(entry.challanQty),
+        receivedQuantity: Number(entry.receivedQty),
+        supplierHeatNumber: entry.supplierHeatNumber,
+        mtrNumber: entry.mtrNumber
+      };
+    });
+
+    for (const item of itemsPayload) {
+      if (item.challanQuantity <= 0 || item.receivedQuantity <= 0) {
+        setFeedback({ type: 'error', message: `Challan and received quantities must be greater than zero for item ${item.itemCode}.` });
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     setFeedback(null);
 
     try {
-      const receiptId = selectedReceiptForGrn.id || selectedReceiptForGrn._id;
-      const payload = {
-        poId: selectedReceiptForGrn.poId,
-        receiptId,
+      const idempotencyKey = `grn-sub-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+      const payload: any = {
+        poId: po.id || po._id,
+        supplierChallanNumber: grnSupplierChallanNumber,
+        supplierChallanDate: grnSupplierChallanDate,
+        items: itemsPayload,
         inspectionRemarks: grnInspectionRemarks,
         packagingCondition: grnPackagingCondition,
-        acceptanceStatus: grnAcceptanceStatus
+        acceptanceStatus: grnAcceptanceStatus,
+        idempotencyKey
       };
+
+      if (selectedReceiptForGrn) {
+        payload.materialReceiptId = selectedReceiptForGrn.id || selectedReceiptForGrn._id;
+      }
 
       const res = await authenticatedFetch(`${env.API_BASE_URL}/grn`, {
         method: 'POST',
@@ -841,11 +966,19 @@ export const InventoryPage: React.FC = () => {
         ...payload,
         id: `grn_${Date.now()}`,
         grnNumber: `GRN-${new Date().getFullYear()}09-${String(grns.length + 1).padStart(4, '0')}`,
-        poNumber: selectedReceiptForGrn.poNumber,
-        receiptNumber: selectedReceiptForGrn.receiptNumber,
-        supplierName: selectedReceiptForGrn.supplierName,
-        totalUnitsGenerated: 10,
-        items: selectedReceiptForGrn.receivedItems,
+        poNumber: po.poNumber,
+        receiptNumber: selectedReceiptForGrn?.receiptNumber || 'DIRECT-PO',
+        supplierName: po.supplierName,
+        totalUnitsGenerated: itemsPayload.length * 10,
+        items: itemsPayload.map((p) => ({
+          ...p,
+          itemName: p.particulars,
+          supplierHeatNumber: p.supplierHeatNumber,
+          millTestCertificateNumber: p.mtrNumber,
+          materialGrade: po.items[0]?.materialGrade || '4140 Alloy Steel',
+          recipeId: po.items[0]?.recipeId || 'rec_01',
+          recipeCode: po.items[0]?.recipeCode || 'HT-CARB-4140'
+        })),
         createdAt: new Date().toISOString()
       };
 
@@ -889,7 +1022,7 @@ export const InventoryPage: React.FC = () => {
     (g) =>
       g.grnNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
       g.poNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      g.receiptNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (g.receiptNumber ? g.receiptNumber.toLowerCase().includes(searchQuery.toLowerCase()) : false) ||
       g.supplierName.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
@@ -1179,6 +1312,15 @@ export const InventoryPage: React.FC = () => {
                               Receive
                             </ActionButton>
                             <ActionButton
+                              variant="secondary"
+                              size="sm"
+                              disabled={!canCreateGrn || po.status === 'CLOSED' || po.status === 'CANCELLED' || po.status === 'DRAFT'}
+                              leftIcon={<PackageCheck size={14} />}
+                              onClick={() => openCreateGrnModal(po)}
+                            >
+                              Create GRN
+                            </ActionButton>
+                            <ActionButton
                               variant="ghost"
                               size="sm"
                               leftIcon={<Eye size={14} />}
@@ -1350,11 +1492,9 @@ export const InventoryPage: React.FC = () => {
                               <ActionButton
                                 variant="primary"
                                 size="sm"
+                                disabled={!canCreateGrn}
                                 leftIcon={<PackageCheck size={14} />}
-                                onClick={() => {
-                                  setSelectedReceiptForGrn(r);
-                                  setIsCreateGrnModalOpen(true);
-                                }}
+                                onClick={() => openCreateGrnModal(undefined, r)}
                               >
                                 Create GRN
                               </ActionButton>
@@ -1386,16 +1526,9 @@ export const InventoryPage: React.FC = () => {
             <AppButton
               variant="primary"
               size="sm"
+              disabled={!canCreateGrn}
               leftIcon={<PackageCheck size={14} />}
-              onClick={() => {
-                const storedReceipt = materialReceipts.find((r) => r.status === 'STORED') || materialReceipts[0];
-                if (storedReceipt) {
-                  setSelectedReceiptForGrn(storedReceipt);
-                  setIsCreateGrnModalOpen(true);
-                } else {
-                  setFeedback({ type: 'error', message: 'No stored material receipts available. Complete Warehouse Storage first.' });
-                }
-              }}
+              onClick={() => openCreateGrnModal()}
             >
               Generate GRN
             </AppButton>
@@ -1431,7 +1564,7 @@ export const InventoryPage: React.FC = () => {
                         {g.poNumber}
                       </td>
                       <td style={{ padding: '14px 16px' }}>
-                        {g.receiptNumber}
+                        {g.receiptNumber || 'DIRECT-PO'}
                       </td>
                       <td style={{ padding: '14px 16px' }}>
                         {g.supplierName}
@@ -2210,61 +2343,334 @@ export const InventoryPage: React.FC = () => {
       <AppDialog
         isOpen={isCreateGrnModalOpen}
         onClose={() => setIsCreateGrnModalOpen(false)}
-        title="Generate Goods Receipt Note (Step 4 of Creation Phase)"
-        size="lg"
+        title="Generate Goods Receipt Note (PO → GRN Authoritative Workflow)"
+        size="xl"
       >
-        <form onSubmit={handleCreateGrn} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <AppAlert variant="success" title="Traceable Unit Generation">
-            Generating this GRN will automatically produce individually identifiable material/part units (UNIT-GRN-YYYYMM-XXXX-NNN) certified for production planning.
-          </AppAlert>
+        {(() => {
+          const eligiblePOs = purchaseOrders.filter((p) => p.status === 'ISSUED' || p.status === 'PARTIALLY_RECEIVED');
+          const currentPo = purchaseOrders.find((p) => (p.id || p._id) === selectedPoIdForGrn) || eligiblePOs[0] || purchaseOrders[0];
 
-          <div>
-            <strong>Material Receipt:</strong> {selectedReceiptForGrn?.receiptNumber} (PO: {selectedReceiptForGrn?.poNumber})
-          </div>
-          <div>
-            <strong>Storage Location:</strong> {selectedReceiptForGrn?.storageLocation?.locationBay} ({selectedReceiptForGrn?.storageLocation?.locationBin})
-          </div>
+          return (
+            <form onSubmit={handleCreateGrn} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <AppAlert variant="info" title="PO → GRN Authoritative Relationship">
+                Every Goods Receipt Note (GRN) is strictly a child transaction of exactly one Purchase Order. The Supplier and selectable items are authoritatively retrieved from the PO.
+              </AppAlert>
 
-          <AppSelect
-            label="Acceptance Decision"
-            required
-            value={grnAcceptanceStatus}
-            onChange={(e) => setGrnAcceptanceStatus(e.target.value as any)}
-            options={[
-              { value: 'ACCEPTED', label: 'ACCEPTED — Meets all metallurgical and physical specifications' },
-              { value: 'ACCEPTED_WITH_DEVIATION', label: 'ACCEPTED WITH DEVIATION — Conditional acceptance' },
-              { value: 'REJECTED', label: 'REJECTED — Quarantine and return to vendor' }
-            ]}
-          />
+              {/* 1. SELECT AUTHORITATIVE PURCHASE ORDER */}
+              <div>
+                <AppSelect
+                  label="Select Authoritative Purchase Order (Mandatory Parent PO)"
+                  required
+                  disabled={!canCreateGrn || isSubmitting}
+                  value={selectedPoIdForGrn}
+                  onChange={(e) => {
+                    const poId = e.target.value;
+                    setSelectedPoIdForGrn(poId);
+                    const po = purchaseOrders.find((p) => (p.id || p._id) === poId);
+                    if (po) {
+                      populateGrnItemsForPo(po, selectedReceiptForGrn);
+                    }
+                  }}
+                  options={(eligiblePOs.length > 0 ? eligiblePOs : purchaseOrders).map((p) => ({
+                    value: p.id || p._id || '',
+                    label: `${p.poNumber} — ${p.supplierName} (${p.status})`
+                  }))}
+                />
+                {eligiblePOs.length === 0 && (
+                  <p style={{ color: 'var(--color-danger, #ef4444)', fontSize: '12px', marginTop: '4px' }}>
+                    ⚠️ No open or partially received Purchase Orders available. An eligible PO is strictly required.
+                  </p>
+                )}
+              </div>
 
-          <AppSelect
-            label="Packaging & Physical Condition"
-            value={grnPackagingCondition}
-            onChange={(e) => setGrnPackagingCondition(e.target.value)}
-            options={[
-              { value: 'INTACT', label: 'INTACT — Sealed, verified bar ends, no corrosion' },
-              { value: 'ACCEPTABLE', label: 'ACCEPTABLE — Minor bundle banding wear' },
-              { value: 'DAMAGED_REJECTED', label: 'DAMAGED / DEVIANT — Moisture or handling marks' }
-            ]}
-          />
+              {/* 2. AUTHORITATIVE SUPPLIER (DERIVED FROM PO - READ ONLY) */}
+              {currentPo && (
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                    gap: '12px',
+                    backgroundColor: 'var(--color-surface-subtle, #f8fafc)',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: '8px',
+                    padding: '12px'
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', textTransform: 'uppercase', fontWeight: 600 }}>
+                      Authoritative Supplier (PO Derived)
+                    </div>
+                    <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--color-primary)' }}>
+                      {currentPo.supplierName}
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
+                      Contact: {currentPo.supplierContact || currentPo.contactEmail || 'Procurement Office'}
+                    </div>
+                  </div>
 
-          <AppInput
-            label="QC Inspection Remarks"
-            required
-            value={grnInspectionRemarks}
-            onChange={(e) => setGrnInspectionRemarks(e.target.value)}
-            placeholder="e.g. Chemistry verified against spectrometer standard and MTR."
-          />
+                  <div>
+                    <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', textTransform: 'uppercase', fontWeight: 600 }}>
+                      PO Status & Commercial Terms
+                    </div>
+                    <div style={{ fontSize: '13px', fontWeight: 600 }}>
+                      <StatusBadge variant="info" status={currentPo.status} /> {currentPo.currency || 'USD'}
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
+                      Terms: {currentPo.paymentTerms || 'NET_30'} • {currentPo.deliveryTerms || 'FOB'}
+                    </div>
+                  </div>
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '12px' }}>
-            <AppButton variant="secondary" onClick={() => setIsCreateGrnModalOpen(false)}>
-              Cancel
-            </AppButton>
-            <AppButton variant="primary" type="submit" isLoading={isSubmitting} leftIcon={<PackageCheck size={16} />}>
-              Issue GRN & Generate Units
-            </AppButton>
-          </div>
-        </form>
+                  <div>
+                    <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', textTransform: 'uppercase', fontWeight: 600 }}>
+                      Traceability Protocol
+                    </div>
+                    <div style={{ fontSize: '12px', fontWeight: 600, color: '#059669' }}>
+                      🔒 PO → Supplier → GRN
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
+                      Supplier is strictly derived by server from PO.
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 3. USER-ENTERED RECEIPT INFORMATION */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+                <AppInput
+                  label="Supplier Challan Number"
+                  required
+                  disabled={!canCreateGrn || isSubmitting}
+                  value={grnSupplierChallanNumber}
+                  onChange={(e) => setGrnSupplierChallanNumber(e.target.value)}
+                  placeholder="e.g. DC-2026-8819"
+                />
+                <AppInput
+                  label="Supplier Challan Date"
+                  type="date"
+                  required
+                  disabled={!canCreateGrn || isSubmitting}
+                  value={grnSupplierChallanDate}
+                  onChange={(e) => setGrnSupplierChallanDate(e.target.value)}
+                />
+              </div>
+
+              {/* 4. PO ITEMS SELECTION & AUTHORITATIVE DATA */}
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 700 }}>
+                    PO Line Items (Select Items to Receive in this GRN)
+                  </span>
+                  <span style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
+                    Particulars, HSN code, rate, UOM, and bound recipe originate authoritatively from PO.
+                  </span>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {currentPo?.items?.map((item, idx) => {
+                    const key = item.itemId || item.itemCode || String(idx);
+                    const entry = grnItemEntries[key] || {
+                      selected: true,
+                      challanQty: item.orderedQuantity,
+                      receivedQty: item.orderedQuantity,
+                      supplierHeatNumber: 'TK-HEAT-4140-901',
+                      mtrNumber: 'MTR-TK-2026-8812'
+                    };
+                    const itemMaster = items.find((itm) => (itm.id || itm._id) === item.itemId || itm.itemCode === item.itemCode);
+                    const hsn = itemMaster?.hsnCode || item.hsnCode || '7228.30.29';
+                    const rate = item.unitPrice;
+
+                    return (
+                      <div
+                        key={key}
+                        style={{
+                          border: entry.selected ? '2px solid var(--color-primary, #0284c7)' : '1px solid var(--color-border)',
+                          borderRadius: '8px',
+                          padding: '14px',
+                          backgroundColor: entry.selected ? 'rgba(2, 132, 199, 0.02)' : 'var(--color-surface-subtle, #f8fafc)'
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                            <input
+                              type="checkbox"
+                              checked={entry.selected}
+                              disabled={!canCreateGrn || isSubmitting}
+                              onChange={(e) => {
+                                setGrnItemEntries((prev) => ({
+                                  ...prev,
+                                  [key]: { ...entry, selected: e.target.checked }
+                                }));
+                              }}
+                              style={{ width: '16px', height: '16px', accentColor: 'var(--color-primary)' }}
+                            />
+                            <span style={{ fontWeight: 700, fontSize: '14px' }}>
+                              {item.itemCode} — {item.itemName}
+                            </span>
+                          </label>
+                          <StatusBadge variant="info" status={`Recipe: ${item.recipeCode || 'HT-CARB-4140'} (Rev ${item.recipeRevision ?? 1})`} />
+                        </div>
+
+                        {/* Authoritative Information (Read-Only) */}
+                        <div
+                          style={{
+                            display: 'grid',
+                            gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+                            gap: '8px',
+                            backgroundColor: '#ffffff',
+                            border: '1px solid var(--color-border)',
+                            borderRadius: '6px',
+                            padding: '10px',
+                            marginBottom: '10px',
+                            fontSize: '12px'
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontSize: '10px', color: 'var(--color-text-secondary)', textTransform: 'uppercase' }}>HSN / SAC Code</div>
+                            <div style={{ fontWeight: 600 }}>{hsn}</div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: '10px', color: 'var(--color-text-secondary)', textTransform: 'uppercase' }}>Contract Rate</div>
+                            <div style={{ fontWeight: 700, color: 'var(--color-primary)' }}>{rate} {currentPo.currency || 'USD'} / {item.uom}</div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: '10px', color: 'var(--color-text-secondary)', textTransform: 'uppercase' }}>Ordered Qty</div>
+                            <div style={{ fontWeight: 600 }}>{item.orderedQuantity.toLocaleString()} {item.uom}</div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: '10px', color: 'var(--color-text-secondary)', textTransform: 'uppercase' }}>Balance Qty</div>
+                            <div style={{ fontWeight: 600, color: 'var(--color-warning)' }}>
+                              {(item.balanceQuantity ?? (item.orderedQuantity - (item.receivedQuantity || 0))).toLocaleString()} {item.uom}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Receipt-Specific User Inputs */}
+                        {entry.selected && (
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '10px' }}>
+                            <AppInput
+                              label={`Challan Qty (${item.uom})`}
+                              type="number"
+                              required
+                              min={0.0001}
+                              step="any"
+                              disabled={!canCreateGrn || isSubmitting}
+                              value={entry.challanQty}
+                              onChange={(e) => {
+                                const val = Number(e.target.value);
+                                setGrnItemEntries((prev) => ({
+                                  ...prev,
+                                  [key]: { ...entry, challanQty: val }
+                                }));
+                              }}
+                            />
+                            <AppInput
+                              label={`Received Qty (${item.uom})`}
+                              type="number"
+                              required
+                              min={0.0001}
+                              step="any"
+                              disabled={!canCreateGrn || isSubmitting}
+                              value={entry.receivedQty}
+                              onChange={(e) => {
+                                const val = Number(e.target.value);
+                                setGrnItemEntries((prev) => ({
+                                  ...prev,
+                                  [key]: { ...entry, receivedQty: val }
+                                }));
+                              }}
+                            />
+                            <AppInput
+                              label="Supplier Heat #"
+                              disabled={!canCreateGrn || isSubmitting}
+                              value={entry.supplierHeatNumber}
+                              onChange={(e) => {
+                                setGrnItemEntries((prev) => ({
+                                  ...prev,
+                                  [key]: { ...entry, supplierHeatNumber: e.target.value }
+                                }));
+                              }}
+                              placeholder="e.g. TK-HEAT-4140-901"
+                            />
+                            <AppInput
+                              label="Mill Test Certificate (MTR) #"
+                              disabled={!canCreateGrn || isSubmitting}
+                              value={entry.mtrNumber}
+                              onChange={(e) => {
+                                setGrnItemEntries((prev) => ({
+                                  ...prev,
+                                  [key]: { ...entry, mtrNumber: e.target.value }
+                                }));
+                              }}
+                              placeholder="e.g. MTR-TK-2026-8812"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 5. QUALITY INSPECTION & REMARKS */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+                <AppSelect
+                  label="Acceptance Decision"
+                  required
+                  disabled={!canCreateGrn || isSubmitting}
+                  value={grnAcceptanceStatus}
+                  onChange={(e) => setGrnAcceptanceStatus(e.target.value as any)}
+                  options={[
+                    { value: 'ACCEPTED', label: 'ACCEPTED — Meets all metallurgical and physical specifications' },
+                    { value: 'ACCEPTED_WITH_DEVIATION', label: 'ACCEPTED WITH DEVIATION — Conditional acceptance' },
+                    { value: 'REJECTED', label: 'REJECTED — Quarantine and return to vendor' }
+                  ]}
+                />
+
+                <AppSelect
+                  label="Packaging & Physical Condition"
+                  disabled={!canCreateGrn || isSubmitting}
+                  value={grnPackagingCondition}
+                  onChange={(e) => setGrnPackagingCondition(e.target.value)}
+                  options={[
+                    { value: 'INTACT', label: 'INTACT — Sealed, verified bar ends, no corrosion' },
+                    { value: 'ACCEPTABLE', label: 'ACCEPTABLE — Minor bundle banding wear' },
+                    { value: 'DAMAGED_REJECTED', label: 'DAMAGED / DEVIANT — Moisture or handling marks' }
+                  ]}
+                />
+              </div>
+
+              <AppInput
+                label="QC Inspection Remarks"
+                required
+                disabled={!canCreateGrn || isSubmitting}
+                value={grnInspectionRemarks}
+                onChange={(e) => setGrnInspectionRemarks(e.target.value)}
+                placeholder="e.g. Chemistry verified against spectrometer standard and MTR."
+              />
+
+              {!canCreateGrn && (
+                <AppAlert variant="warning" title="Permission Required">
+                  You lack the required permission (<code>inventory:grn:create</code>) to generate Goods Receipt Notes.
+                </AppAlert>
+              )}
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '12px' }}>
+                <AppButton variant="secondary" onClick={() => setIsCreateGrnModalOpen(false)}>
+                  Cancel
+                </AppButton>
+                <AppButton
+                  variant="primary"
+                  type="submit"
+                  disabled={!canCreateGrn || !currentPo || isSubmitting || Object.values(grnItemEntries).filter((e) => e.selected).length === 0}
+                  isLoading={isSubmitting}
+                  leftIcon={<PackageCheck size={16} />}
+                >
+                  Issue Authoritative GRN & Generate Traceable Units
+                </AppButton>
+              </div>
+            </form>
+          );
+        })()}
       </AppDialog>
 
       {/* --- MODAL 5: PRINTABLE OFFICIAL GRN DOCUMENT --- */}
@@ -2307,10 +2713,11 @@ export const InventoryPage: React.FC = () => {
             {/* PO & Supplier Metadata */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', fontSize: '12px', marginBottom: '16px' }}>
               <div style={{ background: '#f8fafc', padding: '12px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
-                <div style={{ fontWeight: 700, textTransform: 'uppercase', color: '#475569', marginBottom: '4px' }}>PO & SUPPLIER DETAILS</div>
+                <div style={{ fontWeight: 700, textTransform: 'uppercase', color: '#475569', marginBottom: '4px' }}>PO & SUPPLIER DETAILS (AUTHORITATIVE)</div>
                 <div><strong>Purchase Order:</strong> {activeGrnForPrint?.poNumber}</div>
-                <div><strong>Material Receipt:</strong> {activeGrnForPrint?.receiptNumber}</div>
                 <div><strong>Supplier:</strong> {activeGrnForPrint?.supplierName}</div>
+                <div><strong>Supplier Challan:</strong> {activeGrnForPrint?.supplierChallanNumber || 'DC-2026-8819'} {activeGrnForPrint?.supplierChallanDate ? `(Dated: ${new Date(activeGrnForPrint.supplierChallanDate).toLocaleDateString()})` : ''}</div>
+                {activeGrnForPrint?.receiptNumber && <div><strong>Material Receipt:</strong> {activeGrnForPrint?.receiptNumber}</div>}
               </div>
               <div style={{ background: '#f8fafc', padding: '12px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
                 <div style={{ fontWeight: 700, textTransform: 'uppercase', color: '#475569', marginBottom: '4px' }}>QUALITY & ACCEPTANCE</div>
@@ -2321,14 +2728,16 @@ export const InventoryPage: React.FC = () => {
             </div>
 
             {/* Received Items Table */}
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', marginBottom: '20px' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', marginBottom: '20px' }}>
               <thead>
                 <tr style={{ background: '#f1f5f9', borderBottom: '1px solid #cbd5e1' }}>
                   <th style={{ padding: '8px', textAlign: 'left' }}>ITEM CODE</th>
-                  <th style={{ padding: '8px', textAlign: 'left' }}>GRADE</th>
+                  <th style={{ padding: '8px', textAlign: 'left' }}>PARTICULARS & GRADE</th>
+                  <th style={{ padding: '8px', textAlign: 'left' }}>HSN/SAC</th>
+                  <th style={{ padding: '8px', textAlign: 'right' }}>RATE</th>
                   <th style={{ padding: '8px', textAlign: 'left' }}>BOUND RECIPE</th>
-                  <th style={{ padding: '8px', textAlign: 'left' }}>SUPPLIER HEAT #</th>
-                  <th style={{ padding: '8px', textAlign: 'left' }}>MTR #</th>
+                  <th style={{ padding: '8px', textAlign: 'left' }}>HEAT # / MTR</th>
+                  <th style={{ padding: '8px', textAlign: 'right' }}>CHALLAN QTY</th>
                   <th style={{ padding: '8px', textAlign: 'right' }}>RECEIVED QTY</th>
                 </tr>
               </thead>
@@ -2336,13 +2745,23 @@ export const InventoryPage: React.FC = () => {
                 {activeGrnForPrint?.items?.map((item, idx) => (
                   <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
                     <td style={{ padding: '8px', fontWeight: 600 }}>{item.itemCode}</td>
-                    <td style={{ padding: '8px' }}>{item.materialGrade}</td>
+                    <td style={{ padding: '8px' }}>
+                      <div style={{ fontWeight: 600 }}>{item.particulars || item.itemName}</div>
+                      <div style={{ fontSize: '10px', color: '#64748b' }}>Grade: {item.materialGrade}</div>
+                    </td>
+                    <td style={{ padding: '8px' }}>{item.hsnCode || '7228.30.29'}</td>
+                    <td style={{ padding: '8px', textAlign: 'right', fontWeight: 600 }}>
+                      {item.rate ?? item.unitPrice ?? 4.85}
+                    </td>
                     <td style={{ padding: '8px', fontWeight: 600, color: '#0369a1' }}>
                       {item.recipeCode} (Rev {item.recipeRevision ?? 1})
                     </td>
-                    <td style={{ padding: '8px' }}>{item.supplierHeatNumber}</td>
-                    <td style={{ padding: '8px' }}>{item.millTestCertificateNumber}</td>
-                    <td style={{ padding: '8px', textAlign: 'right', fontWeight: 700 }}>{item.receivedQuantity} {item.uom}</td>
+                    <td style={{ padding: '8px', fontSize: '10px' }}>
+                      <div>Heat: {item.supplierHeatNumber || 'N/A'}</div>
+                      <div>MTR: {item.millTestCertificateNumber || item.mtrNumber || 'N/A'}</div>
+                    </td>
+                    <td style={{ padding: '8px', textAlign: 'right' }}>{item.challanQuantity ?? item.receivedQuantity} {item.uom}</td>
+                    <td style={{ padding: '8px', textAlign: 'right', fontWeight: 700, color: '#0f172a' }}>{item.receivedQuantity} {item.uom}</td>
                   </tr>
                 ))}
               </tbody>

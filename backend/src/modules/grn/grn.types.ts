@@ -81,15 +81,22 @@ export interface IGRNItem {
   itemId: string;
   itemCode: string;
   itemName: string;
+  particulars?: string;
+  hsnCode?: string;
+  rate: number;
+  unitPrice?: number;
   materialGrade: string;
   processFamily: ProcessFamily;
   recipeId: string;
   recipeCode: string;
   recipeRevision: number;
+  challanQuantity: number;
+  receivedQuantity: number;
   acceptedQuantity: number;
   uom: UnitOfMeasure;
   unitCount: number;
   supplierHeatNumber: string;
+  supplierLotNumber?: string;
   mtrNumber?: string;
   unitIdentifiers: string[];
 }
@@ -97,17 +104,20 @@ export interface IGRNItem {
 export interface IGRN {
   tenantId: string;
   grnNumber: string;
+  idempotencyKey?: string;
   poId: string;
   poNumber: string;
-  materialReceiptId: string;
-  receiptNumber: string;
+  materialReceiptId?: string;
+  receiptNumber?: string;
   supplierName: string;
+  supplierCode?: string;
   supplierChallanNumber: string;
+  supplierChallanDate: Date;
   supplierInvoiceNumber?: string;
   carrierVehicle?: string;
-  warehouseId: string;
-  warehouseCode: string;
-  storageLocationCode: string;
+  warehouseId?: string;
+  warehouseCode?: string;
+  storageLocationCode?: string;
   items: IGRNItem[];
   totalUnitsGenerated: number;
   status: GRNStatus;
@@ -196,8 +206,28 @@ export interface StoreMaterialDto {
   storageNotes?: string;
 }
 
+export interface CreateGrnItemDto {
+  poLineItemId?: string;
+  itemId: string;
+  challanQuantity?: number;
+  receivedQuantity?: number;
+  acceptedQuantity?: number;
+  supplierHeatNumber?: string;
+  supplierLotNumber?: string;
+  mtrNumber?: string;
+  chemicalComposition?: Record<string, number>;
+}
+
 export interface CreateGrnDto {
-  materialReceiptId: string;
+  poId?: string;
+  materialReceiptId?: string;
+  idempotencyKey?: string;
+  supplierChallanNumber?: string;
+  supplierChallanDate?: string | Date;
+  carrierVehicle?: string;
+  warehouseId?: string;
+  storageLocationCode?: string;
+  items?: CreateGrnItemDto[];
   inspectedBy?: string;
   approvedBy?: string;
   remarks?: string;

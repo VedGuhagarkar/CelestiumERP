@@ -17,6 +17,7 @@ const PurchaseOrderItemSchema = new Schema<IPurchaseOrderItem>(
     recipeRevision: { type: Number, required: true },
     orderedQuantity: { type: Number, required: true, min: 0.0001 },
     receivedQuantity: { type: Number, required: true, default: 0, min: 0 },
+    balanceQuantity: { type: Number, min: 0 },
     uom: { type: String, required: true, trim: true },
     unitPrice: { type: Number, required: true, default: 0, min: 0 },
     lineTotal: { type: Number, required: true, default: 0, min: 0 },

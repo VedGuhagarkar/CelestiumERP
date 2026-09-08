@@ -33,6 +33,8 @@ export interface IGRNRepository {
   findGrnById(tenantId: string, id: string): Promise<GRNDocument | null>;
   findGrnByNumber(tenantId: string, grnNumber: string): Promise<GRNDocument | null>;
   findGrnByPoNumber(tenantId: string, poNumber: string): Promise<GRNDocument | null>;
+  findGrnsByPoId(tenantId: string, poId: string): Promise<GRNDocument[]>;
+  findGrnByIdempotencyKey(tenantId: string, idempotencyKey: string): Promise<GRNDocument | null>;
   updateGrn(tenantId: string, id: string, data: Partial<GRNDocument>): Promise<GRNDocument | null>;
   generateNextGrnNumber(tenantId: string): Promise<string>;
   queryGrns(tenantId: string, query: QueryGrnDto): Promise<{ grns: GRNDocument[]; total: number }>;
@@ -172,6 +174,14 @@ export class GRNRepository implements IGRNRepository {
 
   public async findGrnByPoNumber(tenantId: string, poNumber: string): Promise<GRNDocument | null> {
     return this.grnModel.findOne({ tenantId, poNumber: poNumber.toUpperCase().trim(), isDeleted: false }).exec();
+  }
+
+  public async findGrnsByPoId(tenantId: string, poId: string): Promise<GRNDocument[]> {
+    return this.grnModel.find({ tenantId, poId, isDeleted: false }).sort({ createdAt: -1 }).exec();
+  }
+
+  public async findGrnByIdempotencyKey(tenantId: string, idempotencyKey: string): Promise<GRNDocument | null> {
+    return this.grnModel.findOne({ tenantId, idempotencyKey: idempotencyKey.trim(), isDeleted: false }).exec();
   }
 
   public async updateGrn(tenantId: string, id: string, data: Partial<GRNDocument>): Promise<GRNDocument | null> {

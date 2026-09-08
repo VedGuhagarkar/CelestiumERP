@@ -39,14 +39,39 @@ export const storeMaterialSchema: ValidationSchema = {
   })
 };
 
+export const createGrnItemSchema = z.object({
+  poLineItemId: z.string().trim().optional(),
+  itemId: z.string().trim().min(1, 'Item ID is required'),
+  challanQuantity: z.number().positive('Challan quantity must be greater than zero').optional(),
+  receivedQuantity: z.number().positive('Received quantity must be greater than zero').optional(),
+  acceptedQuantity: z.number().positive('Accepted quantity must be greater than zero').optional(),
+  supplierHeatNumber: z.string().trim().max(100).optional(),
+  supplierLotNumber: z.string().trim().max(100).optional(),
+  mtrNumber: z.string().trim().max(100).optional(),
+  chemicalComposition: z.record(z.string(), z.number()).optional()
+});
+
 export const createGrnSchema: ValidationSchema = {
-  body: z.object({
-    materialReceiptId: z.string().trim().min(1, 'Material Receipt ID is required'),
-    inspectedBy: z.string().trim().max(100).optional(),
-    approvedBy: z.string().trim().max(100).optional(),
-    remarks: z.string().trim().max(1000).optional(),
-    unitGenerationMode: z.enum(['BY_PCS', 'BY_LOT']).optional()
-  })
+  body: z
+    .object({
+      poId: z.string().trim().min(1, 'Purchase Order ID is required').optional(),
+      materialReceiptId: z.string().trim().min(1, 'Material Receipt ID is required').optional(),
+      idempotencyKey: z.string().trim().max(100).optional(),
+      supplierChallanNumber: z.string().trim().max(100).optional(),
+      supplierChallanDate: z.string().datetime().or(z.string().regex(/^\d{4}-\d{2}-\d{2}/)).optional(),
+      carrierVehicle: z.string().trim().max(100).optional(),
+      warehouseId: z.string().trim().optional(),
+      storageLocationCode: z.string().trim().max(100).optional(),
+      items: z.array(createGrnItemSchema).optional(),
+      inspectedBy: z.string().trim().max(100).optional(),
+      approvedBy: z.string().trim().max(100).optional(),
+      remarks: z.string().trim().max(1000).optional(),
+      unitGenerationMode: z.enum(['BY_PCS', 'BY_LOT']).optional()
+    })
+    .refine((data) => Boolean(data.poId || data.materialReceiptId), {
+      message: 'Either Purchase Order ID (poId) or Material Receipt ID (materialReceiptId) must be provided',
+      path: ['poId']
+    })
 };
 
 export const queryGrnSchema: ValidationSchema = {

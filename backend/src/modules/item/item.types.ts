@@ -29,6 +29,7 @@ export interface IItem {
   description?: string;
   category: ItemCategory;
   materialGrade?: string;
+  hsnCode?: string;
   uom: UnitOfMeasure;
   secondaryUom?: UnitOfMeasure;
   conversionFactor?: number;
@@ -60,6 +61,7 @@ export interface CreateItemDto {
   description?: string;
   category: ItemCategory;
   materialGrade?: string;
+  hsnCode?: string;
   uom: UnitOfMeasure;
   secondaryUom?: UnitOfMeasure;
   conversionFactor?: number;
@@ -81,6 +83,7 @@ export interface UpdateItemDto {
   description?: string;
   category?: ItemCategory;
   materialGrade?: string;
+  hsnCode?: string;
   uom?: UnitOfMeasure;
   secondaryUom?: UnitOfMeasure;
   conversionFactor?: number;

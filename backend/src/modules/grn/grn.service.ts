@@ -2,6 +2,7 @@ import { BaseService } from '../../core/services/base.service.js';
 import { IGRNRepository, grnRepository } from './grn.repository.js';
 import { purchaseOrderService, PurchaseOrderService } from '../purchase-order/purchase-order.service.js';
 import { warehouseService, WarehouseService } from '../warehouse/warehouse.service.js';
+import { itemService, ItemService } from '../item/item.service.js';
 import { auditService, AuditService } from '../audit/audit.service.js';
 import { rbacService, RbacService } from '../rbac/rbac.service.js';
 import {
@@ -38,6 +39,7 @@ export class GRNService extends BaseService {
     private readonly repo: IGRNRepository = grnRepository,
     private readonly poService: PurchaseOrderService = purchaseOrderService,
     private readonly whService: WarehouseService = warehouseService,
+    private readonly itemService?: ItemService,
     private readonly audit: AuditService = auditService,
     private readonly rbac: RbacService = rbacService
   ) {
@@ -486,56 +488,232 @@ export class GRNService extends BaseService {
 
   /**
    * 3. Create Goods Receipt Note (GRN) and generate individually identifiable material/part units
+   * Authoritative Flow: PO -> Supplier -> PO Items -> Populated Info -> User Receipt Info -> Monotonic GRN -> Traceable Units
    */
   public async createGRN(tenantId: string, dto: CreateGrnDto, actor: ActorContext): Promise<GRNDocument> {
-    const receipt = await this.repo.findReceiptById(tenantId, dto.materialReceiptId);
-    if (!receipt) {
-      throw new NotFoundError(`Material Receipt with ID '${dto.materialReceiptId}' not found`);
+    // 0. Dynamic RBAC Check - requires INVENTORY_GRN_CREATE
+    const effectiveRoles = actor.roles && actor.roles.length > 0
+      ? actor.roles
+      : (actor.role ? [actor.role] : []);
+
+    const isSuperAdmin = effectiveRoles.some((r) => r.toUpperCase() === 'ADMIN' || r.toUpperCase() === 'SUPERADMIN');
+    if (!isSuperAdmin) {
+      if (effectiveRoles.length === 0) {
+        throw new ForbiddenError(
+          `User '${actor.userId}' lacks permission '${PERMISSIONS.INVENTORY_GRN_CREATE}' required to generate a Goods Receipt Note`
+        );
+      }
+      const userPerms = await this.rbac.getUserEffectivePermissions(tenantId, actor.userId, effectiveRoles);
+      if (!userPerms.permissions.includes(PERMISSIONS.INVENTORY_GRN_CREATE)) {
+        throw new ForbiddenError(
+          `User '${actor.userId}' lacks permission '${PERMISSIONS.INVENTORY_GRN_CREATE}' required to generate a Goods Receipt Note`
+        );
+      }
     }
 
-    if (receipt.status !== 'STORED') {
+    // 1. Idempotency Check: Prevent duplicate submissions
+    if (dto.idempotencyKey) {
+      const existingGrn = await this.repo.findGrnByIdempotencyKey(tenantId, dto.idempotencyKey);
+      if (existingGrn) {
+        this.logger.info(`♻️ Returning idempotent existing GRN [${existingGrn.grnNumber}]`);
+        return existingGrn;
+      }
+    }
+
+    // 2. Select PO First: Validate PO reference & eligibility
+    let poId = dto.poId?.trim();
+    let receipt: MaterialReceiptDocument | null = null;
+
+    if (dto.materialReceiptId) {
+      receipt = await this.repo.findReceiptById(tenantId, dto.materialReceiptId);
+      if (!receipt) {
+        throw new NotFoundError(`Material Receipt with ID '${dto.materialReceiptId}' not found`);
+      }
+      if (receipt.status !== 'STORED') {
+        throw new BadRequestError(
+          `Cannot create GRN for material receipt in '${receipt.status}' status. Material must be stored in the warehouse first.`
+        );
+      }
+      if (!receipt.warehouseId || !receipt.warehouseCode || !receipt.storageLocationCode) {
+        throw new BadRequestError('Material receipt lacks verified warehouse storage allocation');
+      }
+      if (!poId) {
+        poId = receipt.poId;
+      } else if (receipt.poId !== poId) {
+        throw new BadRequestError(
+          `Material Receipt [${receipt.receiptNumber}] belongs to PO [${receipt.poNumber}], not the selected PO.`
+        );
+      }
+    }
+
+    if (!poId) {
+      throw new BadRequestError('A valid Purchase Order ID (poId) must be selected to create a Goods Receipt Note.');
+    }
+
+    const po = await this.poService.getOrderById(tenantId, poId);
+    if (!po || po.isDeleted) {
+      throw new NotFoundError(`Purchase Order with ID '${poId}' not found`);
+    }
+
+    // Reject non-eligible PO states
+    const eligibleStatuses = ['ISSUED', 'PARTIALLY_RECEIVED'];
+    if (!eligibleStatuses.includes(po.status)) {
       throw new BadRequestError(
-        `Cannot create GRN for material receipt in '${receipt.status}' status. Material must be stored in the warehouse first.`
+        `Purchase Order '${po.poNumber}' is in '${po.status}' status and is not eligible for GRN creation. Only ISSUED or PARTIALLY_RECEIVED purchase orders may receive goods.`
       );
     }
 
-    if (!receipt.warehouseId || !receipt.warehouseCode || !receipt.storageLocationCode) {
-      throw new BadRequestError('Material receipt lacks verified warehouse storage allocation');
+    if (!po.items || po.items.length === 0) {
+      throw new BadRequestError(`Purchase Order '${po.poNumber}' has no line items.`);
     }
 
-    // Verify PO: exactly one PO per GRN
-    const po = await this.poService.getOrderById(tenantId, receipt.poId);
+    // 3. Authoritative Supplier Derivation: PO -> Supplier -> GRN
+    // Client cannot supply or override supplier; derive authoritatively from PO
+    const authoritativeSupplierName = po.supplierName;
+    const authoritativeSupplierCode = po.supplierCode;
+
+    // 4. Warehouse & Storage Resolution
+    let warehouseId = dto.warehouseId || receipt?.warehouseId;
+    let warehouseCode = receipt?.warehouseCode;
+    let storageLocationCode = dto.storageLocationCode?.toUpperCase().trim() || receipt?.storageLocationCode;
+
+    if (receipt) {
+      if (receipt.status !== 'STORED') {
+        throw new BadRequestError(
+          `Cannot create GRN for material receipt in '${receipt.status}' status. Material must be stored in the warehouse first.`
+        );
+      }
+      if (!receipt.warehouseId || !receipt.warehouseCode || !receipt.storageLocationCode) {
+        throw new BadRequestError('Material receipt lacks verified warehouse storage allocation');
+      }
+      warehouseId = receipt.warehouseId;
+      warehouseCode = receipt.warehouseCode;
+      storageLocationCode = receipt.storageLocationCode;
+    } else {
+      // Find existing stored receipt for this PO if exists
+      const existingStoredReceipts = await this.repo.queryReceipts(tenantId, { poId: po.id, status: 'STORED' });
+      if (existingStoredReceipts.length > 0) {
+        receipt = existingStoredReceipts[0];
+        warehouseId = receipt.warehouseId;
+        warehouseCode = receipt.warehouseCode;
+        storageLocationCode = receipt.storageLocationCode;
+      } else if (warehouseId && storageLocationCode) {
+        const wh = await this.whService.getWarehouseById(tenantId, warehouseId);
+        const loc = await this.whService.getLocationByCode(tenantId, storageLocationCode);
+        warehouseCode = wh.code;
+        storageLocationCode = loc.locationCode;
+      }
+    }
+
+    // 5. PO Items as Selection Source & Authoritative Item Info Population
+    const grnItems: IGRNItem[] = [];
+    const unitsToInsert: Array<Partial<IGRNUnit>> = [];
+    let globalUnitSeq = 1;
 
     // Generate Monotonic Sequential GRN Number (GRN-YYYYMM-XXXX)
     const grnNumber = await this.repo.generateNextGrnNumber(tenantId);
     const grnDate = new Date();
 
-    const grnItems: IGRNItem[] = [];
-    const unitsToInsert: Array<Partial<IGRNUnit>> = [];
-    let globalUnitSeq = 1;
+    const supplierChallanNumber = (dto.supplierChallanNumber || receipt?.supplierChallanNumber || 'CHALLAN-INWARD').toUpperCase().trim();
+    const supplierChallanDate = dto.supplierChallanDate
+      ? new Date(dto.supplierChallanDate)
+      : (receipt?.supplierChallanDate || grnDate);
 
-    for (const item of receipt.items) {
-      const unitIdentifiers: string[] = [];
+    interface CandidateItem {
+      poItem: (typeof po.items)[0];
+      dtoItem?: NonNullable<CreateGrnDto['items']>[0];
+      receiptItem?: IMaterialReceiptItem;
+    }
+
+    const candidateItems: CandidateItem[] = [];
+
+    if (dto.items && dto.items.length > 0) {
+      for (const it of dto.items) {
+        const matchingPoItem = po.items.find(
+          (p) => (it.poLineItemId && p.lineItemId === it.poLineItemId) || p.itemId === it.itemId
+        );
+        if (!matchingPoItem) {
+          throw new BadRequestError(
+            `Item [${it.itemId}] does not belong to Purchase Order [${po.poNumber}]. Arbitrary Item Master selection is prohibited.`
+          );
+        }
+        candidateItems.push({ poItem: matchingPoItem, dtoItem: it });
+      }
+    } else if (receipt && receipt.items.length > 0) {
+      for (const rItem of receipt.items) {
+        const matchingPoItem = po.items.find(
+          (p) => (rItem.poLineItemId && p.lineItemId === rItem.poLineItemId) || p.itemId === rItem.itemId
+        );
+        if (matchingPoItem) {
+          candidateItems.push({ poItem: matchingPoItem, receiptItem: rItem });
+        }
+      }
+    } else {
+      for (const pItem of po.items) {
+        candidateItems.push({ poItem: pItem });
+      }
+    }
+
+    if (candidateItems.length === 0) {
+      throw new BadRequestError('At least one valid item from the Purchase Order must be selected for the GRN.');
+    }
+
+    for (const cand of candidateItems) {
+      const { poItem, dtoItem, receiptItem } = cand;
+
+      // Authoritative item info derived from PO and Item Master
+      const itemSvc = this.itemService || itemService;
+      const itemMaster = itemSvc ? await itemSvc.getItemById(tenantId, poItem.itemId).catch(() => null) : null;
+      const hsnCode = itemMaster?.hsnCode || '7204';
+      const rate = poItem.unitPrice || 0;
+
+      // User-entered receipt values
+      const challanQty = dtoItem?.challanQuantity !== undefined
+        ? dtoItem.challanQuantity
+        : (receiptItem?.receivedQuantity || poItem.orderedQuantity);
+
+      const receivedQty = dtoItem?.receivedQuantity !== undefined
+        ? dtoItem.receivedQuantity
+        : (dtoItem?.acceptedQuantity !== undefined ? dtoItem.acceptedQuantity : (receiptItem?.receivedQuantity || poItem.orderedQuantity));
+
+      const acceptedQty = dtoItem?.acceptedQuantity !== undefined
+        ? dtoItem.acceptedQuantity
+        : receivedQty;
+
+      if (challanQty <= 0) {
+        throw new BadRequestError(`Challan quantity for item [${poItem.itemCode}] must be greater than zero.`);
+      }
+      if (receivedQty <= 0 || acceptedQty <= 0) {
+        throw new BadRequestError(`Received quantity for item [${poItem.itemCode}] must be greater than zero.`);
+      }
+
+      const supplierHeatNumber = (
+        dtoItem?.supplierHeatNumber ||
+        receiptItem?.supplierHeatNumber ||
+        `HEAT-${Date.now().toString(36).toUpperCase()}`
+      ).toUpperCase().trim();
+
+      const supplierLotNumber = dtoItem?.supplierLotNumber || receiptItem?.supplierLotNumber;
+      const mtrNumber = dtoItem?.mtrNumber || receiptItem?.mtrNumber;
 
       // Determine unit breakdown count
       let unitCount = 1;
-      let unitQty = item.receivedQuantity;
+      let unitQty = acceptedQty;
 
-      if (item.uom === 'PCS') {
-        // If piece items, generate individual unit records (capped at 50 per receipt to avoid document bloat)
-        if (item.receivedQuantity <= 50) {
-          unitCount = Math.floor(item.receivedQuantity);
+      if (poItem.uom === 'PCS') {
+        if (acceptedQty <= 50) {
+          unitCount = Math.floor(acceptedQty);
           unitQty = 1;
         } else {
-          // If bulk pieces (> 50 pcs), generate traceable batches of units
           unitCount = 5;
-          unitQty = Math.round((item.receivedQuantity / 5) * 1000) / 1000;
+          unitQty = Math.round((acceptedQty / 5) * 1000) / 1000;
         }
       } else {
-        // Bulk raw alloy (KG, MT, LTR): generate 1 traceable unit per heat-lot melt
         unitCount = 1;
-        unitQty = item.receivedQuantity;
+        unitQty = acceptedQty;
       }
+
+      const unitIdentifiers: string[] = [];
 
       for (let u = 0; u < unitCount; u++) {
         const unitIdentifier = `UNIT-${grnNumber}-${String(globalUnitSeq).padStart(3, '0')}`;
@@ -547,81 +725,95 @@ export class GRNService extends BaseService {
           unitIdentifier,
           poId: po.id,
           poNumber: po.poNumber,
-          grnId: '', // Populated after GRN creation
+          grnId: '',
           grnNumber,
-          materialReceiptId: receipt.id,
-          receiptNumber: receipt.receiptNumber,
-          itemId: item.itemId,
-          itemCode: item.itemCode,
-          itemName: item.itemName,
-          materialGrade: item.materialGrade,
-          processFamily: item.processFamily,
-          recipeId: item.recipeId,
-          recipeCode: item.recipeCode,
-          recipeRevision: item.recipeRevision,
-          warehouseId: receipt.warehouseId,
-          warehouseCode: receipt.warehouseCode,
-          storageLocationCode: receipt.storageLocationCode,
-          supplierHeatNumber: item.supplierHeatNumber,
-          supplierLotNumber: item.supplierLotNumber,
-          mtrNumber: item.mtrNumber,
-          supplierChallanNumber: receipt.supplierChallanNumber,
-          chemicalComposition: item.chemicalComposition
-            ? (item.chemicalComposition instanceof Map
-                ? Object.fromEntries(item.chemicalComposition)
-                : (item.chemicalComposition as Record<string, number>))
-            : undefined,
+          materialReceiptId: receipt ? receipt.id : '',
+          receiptNumber: receipt ? receipt.receiptNumber : '',
+          itemId: poItem.itemId,
+          itemCode: poItem.itemCode,
+          itemName: poItem.itemName,
+          materialGrade: poItem.materialGrade,
+          processFamily: poItem.processFamily,
+          recipeId: poItem.recipeId,
+          recipeCode: poItem.recipeCode,
+          recipeRevision: poItem.recipeRevision,
+          warehouseId: warehouseId || 'WH-MAIN',
+          warehouseCode: warehouseCode || 'WH-MAIN',
+          storageLocationCode: storageLocationCode || 'BAY-01-A',
+          supplierHeatNumber,
+          supplierLotNumber,
+          mtrNumber,
+          supplierChallanNumber,
           quantity: unitQty,
-          uom: item.uom,
+          uom: poItem.uom,
           status: 'AVAILABLE_FOR_PLANNING',
           isDeleted: false
         });
       }
 
       grnItems.push({
-        poLineItemId: item.poLineItemId,
-        itemId: item.itemId,
-        itemCode: item.itemCode,
-        itemName: item.itemName,
-        materialGrade: item.materialGrade,
-        processFamily: item.processFamily,
-        recipeId: item.recipeId,
-        recipeCode: item.recipeCode,
-        recipeRevision: item.recipeRevision,
-        acceptedQuantity: item.receivedQuantity,
-        uom: item.uom,
+        poLineItemId: poItem.lineItemId,
+        itemId: poItem.itemId,
+        itemCode: poItem.itemCode,
+        itemName: poItem.itemName,
+        particulars: poItem.itemName,
+        hsnCode,
+        rate,
+        unitPrice: rate,
+        materialGrade: poItem.materialGrade,
+        processFamily: poItem.processFamily,
+        recipeId: poItem.recipeId,
+        recipeCode: poItem.recipeCode,
+        recipeRevision: poItem.recipeRevision,
+        challanQuantity: challanQty,
+        receivedQuantity: receivedQty,
+        acceptedQuantity: acceptedQty,
+        uom: poItem.uom,
         unitCount,
-        supplierHeatNumber: item.supplierHeatNumber,
-        mtrNumber: item.mtrNumber,
+        supplierHeatNumber,
+        supplierLotNumber,
+        mtrNumber,
         unitIdentifiers
       });
     }
 
-    // Create GRN
-    const grn = await this.repo.createGrn(tenantId, {
-      grnNumber,
-      poId: po.id,
-      poNumber: po.poNumber,
-      materialReceiptId: receipt.id,
-      receiptNumber: receipt.receiptNumber,
-      supplierName: receipt.supplierName,
-      supplierChallanNumber: receipt.supplierChallanNumber,
-      supplierInvoiceNumber: receipt.supplierInvoiceNumber,
-      carrierVehicle: receipt.carrierVehicle,
-      warehouseId: receipt.warehouseId,
-      warehouseCode: receipt.warehouseCode,
-      storageLocationCode: receipt.storageLocationCode,
-      items: grnItems,
-      totalUnitsGenerated: unitsToInsert.length,
-      status: 'AVAILABLE_FOR_PLANNING',
-      receivedBy: actor.userId,
-      inspectedBy: dto.inspectedBy || actor.userId,
-      approvedBy: dto.approvedBy,
-      grnDate,
-      printCount: 0,
-      remarks: dto.remarks?.trim(),
-      isDeleted: false
-    });
+    // 6. Persist GRN Document
+    let grn: GRNDocument;
+    try {
+      grn = await this.repo.createGrn(tenantId, {
+        grnNumber,
+        idempotencyKey: dto.idempotencyKey,
+        poId: po.id,
+        poNumber: po.poNumber,
+        materialReceiptId: receipt ? receipt.id : undefined,
+        receiptNumber: receipt ? receipt.receiptNumber : undefined,
+        supplierName: authoritativeSupplierName,
+        supplierCode: authoritativeSupplierCode,
+        supplierChallanNumber,
+        supplierChallanDate,
+        supplierInvoiceNumber: receipt?.supplierInvoiceNumber,
+        carrierVehicle: dto.carrierVehicle || receipt?.carrierVehicle,
+        warehouseId: warehouseId || 'WH-MAIN',
+        warehouseCode: warehouseCode || 'WH-MAIN',
+        storageLocationCode: storageLocationCode || 'BAY-01-A',
+        items: grnItems,
+        totalUnitsGenerated: unitsToInsert.length,
+        status: 'AVAILABLE_FOR_PLANNING',
+        receivedBy: actor.userId,
+        inspectedBy: dto.inspectedBy || actor.userId,
+        approvedBy: dto.approvedBy,
+        grnDate,
+        printCount: 0,
+        remarks: dto.remarks?.trim(),
+        isDeleted: false
+      });
+    } catch (err: any) {
+      if (err.code === 11000 && dto.idempotencyKey) {
+        const existing = await this.repo.findGrnByIdempotencyKey(tenantId, dto.idempotencyKey);
+        if (existing) return existing;
+      }
+      throw err;
+    }
 
     // Populate grnId on units and persist
     unitsToInsert.forEach((u) => {
@@ -629,22 +821,35 @@ export class GRNService extends BaseService {
     });
     await this.repo.createGrnUnits(tenantId, unitsToInsert);
 
-    // Update Material Receipt status
-    receipt.status = 'GRN_CREATED';
-    await receipt.save();
+    // 7. Update Material Receipt status if linked
+    if (receipt) {
+      receipt.status = 'GRN_CREATED';
+      await receipt.save();
+    }
+
+    // 8. Update PO Received Progression (Multiple deliveries / multiple GRNs support)
+    try {
+      const receiptLineUpdates = grnItems.map((gi) => ({
+        poItemId: gi.poLineItemId || gi.itemId,
+        receivedQuantity: gi.receivedQuantity
+      }));
+      await this.poService.recordReceivedMaterial(tenantId, po.id, receiptLineUpdates);
+    } catch (poErr) {
+      this.logger.warn(`Failed to update PO received progression: ${(poErr as any)?.message}`);
+    }
 
     this.logger.info(
-      `📑 GRN created: [${grn.grnNumber}] PO: [${po.poNumber}] Generated ${unitsToInsert.length} certified units (Available for Planning)`
+      `📑 GRN created: [${grn.grnNumber}] PO: [${po.poNumber}] Supplier: [${authoritativeSupplierName}] Generated ${unitsToInsert.length} certified units (Available for Planning)`
     );
 
     await this.audit.record(tenantId, {
       actorId: actor.userId,
       actorEmail: actor.email,
-      actorRole: actor.role,
+      actorRole: actor.role || actor.roles?.[0],
       action: 'GRN_CREATED',
       entityType: 'GRN',
       entityId: grn.id,
-      afterState: grn.toJSON(),
+      afterState: typeof (grn as any).toJSON === 'function' ? (grn as any).toJSON() : grn,
       ipAddress: actor.ipAddress,
       userAgent: actor.userAgent,
       correlationId: actor.correlationId
@@ -654,6 +859,7 @@ export class GRNService extends BaseService {
       grnId: grn.id,
       grnNumber: grn.grnNumber,
       poNumber: grn.poNumber,
+      supplierName: authoritativeSupplierName,
       totalUnits: unitsToInsert.length
     });
 
@@ -726,16 +932,16 @@ export class GRNService extends BaseService {
       <h4>Receipt & Storage Reference</h4>
       <div><strong>GRN Number:</strong> ${grn.grnNumber}</div>
       <div><strong>GRN Date:</strong> ${new Date(grn.grnDate).toLocaleDateString()}</div>
-      <div><strong>Receipt Ref:</strong> ${grn.receiptNumber}</div>
+      <div><strong>Receipt Ref:</strong> ${grn.receiptNumber || 'DIRECT-PO'}</div>
       <div><strong>Warehouse:</strong> ${grn.warehouseCode} (Bay/Bin: ${grn.storageLocationCode})</div>
       <div><strong>Status:</strong> ${grn.status}</div>
     </div>
     <div class="meta-box">
       <h4>Purchase Order & Supplier Traceability</h4>
       <div><strong>PO Number:</strong> ${grn.poNumber}</div>
-      <div><strong>Supplier Name:</strong> ${grn.supplierName}</div>
+      <div><strong>Supplier Name:</strong> ${grn.supplierName} ${grn.supplierCode ? `(${grn.supplierCode})` : ''}</div>
       <div><strong>Delivery Challan:</strong> ${grn.supplierChallanNumber}</div>
-      <div><strong>Supplier Invoice:</strong> ${grn.supplierInvoiceNumber || 'N/A'}</div>
+      <div><strong>Challan Date:</strong> ${grn.supplierChallanDate ? new Date(grn.supplierChallanDate).toLocaleDateString() : 'N/A'}</div>
       <div><strong>Carrier Vehicle:</strong> ${grn.carrierVehicle || 'N/A'}</div>
     </div>
   </div>
@@ -745,8 +951,11 @@ export class GRNService extends BaseService {
     <thead>
       <tr>
         <th>Item / Part Code</th>
+        <th>Particulars / Description</th>
+        <th>HSN/SAC</th>
         <th>Material Grade</th>
         <th>Accepted Qty</th>
+        <th>Unit Rate</th>
         <th>Bound Recipe</th>
         <th>Supplier Heat #</th>
         <th>MTR / Mill Cert</th>
@@ -757,9 +966,12 @@ export class GRNService extends BaseService {
         .map(
           (item) => `
         <tr>
-          <td><strong>${item.itemCode}</strong><br><span style="color: #64748b; font-size: 11px;">${item.itemName}</span></td>
+          <td><strong>${item.itemCode}</strong></td>
+          <td>${item.particulars || item.itemName}</td>
+          <td>${item.hsnCode || '7204'}</td>
           <td>${item.materialGrade}</td>
           <td>${item.acceptedQuantity} ${item.uom}</td>
+          <td>${item.rate ? '₹' + item.rate.toLocaleString() : 'N/A'}</td>
           <td><strong>${item.recipeCode}</strong> (Rev ${item.recipeRevision})<br><span style="color: #0284c7; font-size: 10px;">${item.processFamily}</span></td>
           <td>${item.supplierHeatNumber}</td>
           <td>${item.mtrNumber || 'VERIFIED'}</td>
