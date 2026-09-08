@@ -1012,36 +1012,28 @@ export const InventoryPage: React.FC = () => {
     }
   };
 
-  const handleViewGrn = async (grn: GRN) => {
-    const searchId = grn.id || grn._id || grn.grnNumber;
-    try {
-      const res = await authenticatedFetch(`${env.API_BASE_URL}/grn/${searchId}`);
-      if (res.ok) {
-        const json = await res.json();
-        setActiveGrnForView(json.data || grn);
-      } else {
-        setActiveGrnForView(grn);
-      }
-    } catch {
-      setActiveGrnForView(grn);
-    }
+  const handleViewGrn = (grn: GRN) => {
+    setActiveGrnForView(grn);
     setIsViewGrnModalOpen(true);
+    const searchId = grn.id || grn._id || grn.grnNumber;
+    authenticatedFetch(`${env.API_BASE_URL}/grn/${searchId}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json) => {
+        if (json?.data) setActiveGrnForView(json.data);
+      })
+      .catch(() => {});
   };
 
-  const handleOpenPrintGrn = async (grn: GRN) => {
-    const searchId = grn.id || grn._id || grn.grnNumber;
-    try {
-      const res = await authenticatedFetch(`${env.API_BASE_URL}/grn/${searchId}`);
-      if (res.ok) {
-        const json = await res.json();
-        setActiveGrnForPrint(json.data || grn);
-      } else {
-        setActiveGrnForPrint(grn);
-      }
-    } catch {
-      setActiveGrnForPrint(grn);
-    }
+  const handleOpenPrintGrn = (grn: GRN) => {
+    setActiveGrnForPrint(grn);
     setIsPrintGrnModalOpen(true);
+    const searchId = grn.id || grn._id || grn.grnNumber;
+    authenticatedFetch(`${env.API_BASE_URL}/grn/${searchId}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json) => {
+        if (json?.data) setActiveGrnForPrint(json.data);
+      })
+      .catch(() => {});
   };
 
   const handleExecutePrint = async () => {
