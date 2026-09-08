@@ -225,7 +225,9 @@ export interface EligiblePart {
   recipeCode?: string;
   recipeName?: string;
   recipeRevision?: number;
+  receivedQuantity?: number;
   acceptedQuantity: number;
+  allocatedQuantity?: number;
   availableQuantity: number;
   availableUnitsCount: number;
   canCreateBatchOrder?: boolean;
@@ -560,6 +562,15 @@ export const JobsPage: React.FC = () => {
       const targetGrnId = selectedGrn?.id || 'grn_aero_501';
       const targetItemId = selectedPart?.itemId || 'item_ti64';
       const targetRecipeId = selectedPart?.recipeId || selectedPart?.boundRecipe?.recipeId || 'rec_ti_aging';
+
+      const qtyNum = Number(targetQuantity);
+      if (isNaN(qtyNum) || !isFinite(qtyNum) || qtyNum <= 0) {
+        throw new Error('Batch Order quantity must be a positive finite number.');
+      }
+      const maxAllowed = selectedPart?.availableQuantity ?? selectedPart?.acceptedQuantity ?? 0;
+      if (maxAllowed > 0 && qtyNum > maxAllowed) {
+        throw new Error(`Requested quantity (${qtyNum}) exceeds available GRN quantity (${maxAllowed} ${selectedPart?.uom || ''}).`);
+      }
 
       if (Number(minhardness) < 0 || Number(maxhardness) < 0) {
         throw new Error('Hardness values must be non-negative.');
@@ -1876,15 +1887,50 @@ export const JobsPage: React.FC = () => {
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                <AppInput
-                  label={`Target Batch Quantity (${selectedPart.uom})`}
-                  type="number"
-                  min={1}
-                  max={selectedPart.availableQuantity || selectedPart.acceptedQuantity}
-                  value={targetQuantity}
-                  onChange={(e) => setTargetQuantity(Number(e.target.value))}
-                  required
-                />
+                <div>
+                  <AppInput
+                    label={`Target Batch Quantity (${selectedPart.uom}) *`}
+                    type="number"
+                    min={1}
+                    max={selectedPart.availableQuantity ?? selectedPart.acceptedQuantity}
+                    value={targetQuantity}
+                    onChange={(e) => setTargetQuantity(Number(e.target.value))}
+                    required
+                  />
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      alignItems: 'center',
+                      gap: '6px',
+                      marginTop: '6px',
+                      fontSize: '11px',
+                      color: 'var(--text-muted)'
+                    }}
+                  >
+                    <span>
+                      Received: <strong>{selectedPart.receivedQuantity ?? selectedPart.acceptedQuantity} {selectedPart.uom}</strong>
+                    </span>
+                    <span>•</span>
+                    <span>
+                      Allocated: <strong>{selectedPart.allocatedQuantity ?? Math.max(0, (selectedPart.receivedQuantity ?? selectedPart.acceptedQuantity) - (selectedPart.availableQuantity ?? selectedPart.acceptedQuantity))} {selectedPart.uom}</strong>
+                    </span>
+                    <span>•</span>
+                    <span style={{ color: (selectedPart.availableQuantity ?? selectedPart.acceptedQuantity) > 0 ? '#10b981' : '#ef4444', fontWeight: 600 }}>
+                      Available: {selectedPart.availableQuantity ?? selectedPart.acceptedQuantity} {selectedPart.uom}
+                    </span>
+                  </div>
+                  {targetQuantity > (selectedPart.availableQuantity ?? selectedPart.acceptedQuantity) && (
+                    <div style={{ marginTop: '4px', fontSize: '11px', color: '#ef4444', fontWeight: 500 }}>
+                      ⚠️ Quantity exceeds available GRN received material ({selectedPart.availableQuantity ?? selectedPart.acceptedQuantity} {selectedPart.uom}).
+                    </div>
+                  )}
+                  {targetQuantity <= 0 && (
+                    <div style={{ marginTop: '4px', fontSize: '11px', color: '#ef4444', fontWeight: 500 }}>
+                      ⚠️ Batch Order quantity must be greater than zero.
+                    </div>
+                  )}
+                </div>
 
                 <AppSelect
                   label="Batch Order Priority"

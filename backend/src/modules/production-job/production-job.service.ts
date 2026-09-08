@@ -48,6 +48,7 @@ import { DomainEventBus } from '../../core/events/domain-event-bus.js';
 import { DomainEvents } from '../../core/constants/events.js';
 import { NotFoundError, BadRequestError } from '../../core/errors/app-error.js';
 import { PaginationOptions, PaginatedResult } from '../../core/types/pagination.js';
+import { allocationLockManager } from '../../core/concurrency/allocation-lock.js';
 
 export interface IActorContext {
   userId: string;
@@ -202,89 +203,128 @@ export class ProductionJobService {
       );
     }
 
-    // Verify Item exists in Item master
-    const item = await itemRepository.findById(tenantId, grnItem.itemId);
-    if (!item || item.isDeleted) {
-      throw new NotFoundError(`Item with ID '${grnItem.itemId}' not found in Item Master.`);
-    }
+    const lockKey = `${tenantId}:allocation:grn:${grn.id}:item:${grnItem.itemId || grnItem.itemCode}`;
+    return await allocationLockManager.withLock(lockKey, async () => {
+      // Verify Item exists in Item master
+      const item = await itemRepository.findById(tenantId, grnItem.itemId);
+      if (!item || item.isDeleted) {
+        throw new NotFoundError(`Item with ID '${grnItem.itemId}' not found in Item Master.`);
+      }
 
-    // 3b. Verify Part belongs to parent PO line items (Item -> PO relationship)
-    let poItem: any = null;
-    if (po.items && po.items.length > 0) {
-      poItem = po.items.find(
-        (pi) =>
-          pi.itemId === item.id ||
-          pi.itemCode === item.itemCode ||
-          (pi as any)._id?.toString() === item.id ||
-          pi.itemId === grnItem.itemId ||
-          pi.itemCode === grnItem.itemCode
-      );
-      if (!poItem) {
+      // 3b. Verify Part belongs to parent PO line items (Item -> PO relationship)
+      let poItem: any = null;
+      if (po.items && po.items.length > 0) {
+        poItem = po.items.find(
+          (pi) =>
+            pi.itemId === item.id ||
+            pi.itemCode === item.itemCode ||
+            (pi as any)._id?.toString() === item.id ||
+            pi.itemId === grnItem.itemId ||
+            pi.itemCode === grnItem.itemCode
+        );
+        if (!poItem) {
+          throw new BadRequestError(
+            `Cross-Record Contamination Violation: Part '${item.itemCode}' does not exist on parent PO '${po.poNumber}'. Part must originate from PO line items.`
+          );
+        }
+      }
+
+      // 4. Verify Recipe exists and corresponds to the BO Item
+      const targetRecipeId = dto.recipeId || grnItem.recipeId;
+      if (!targetRecipeId) {
+        throw new BadRequestError('Recipe is required. Every BO must reference a Recipe.');
+      }
+
+      const recipe = await recipeRepository.findById(tenantId, targetRecipeId);
+      if (!recipe || recipe.isDeleted) {
+        throw new NotFoundError(`Recipe with ID '${targetRecipeId}' not found.`);
+      }
+
+      if (recipe.status !== 'APPROVED' && recipe.status !== 'ACTIVE') {
         throw new BadRequestError(
-          `Cross-Record Contamination Violation: Part '${item.itemCode}' does not exist on parent PO '${po.poNumber}'. Part must originate from PO line items.`
+          `Recipe '${recipe.recipeCode}' must be in APPROVED or ACTIVE status (Current: '${recipe.status}').`
         );
       }
-    }
 
-    // 4. Verify Recipe exists and corresponds to the BO Item
-    const targetRecipeId = dto.recipeId || grnItem.recipeId;
-    if (!targetRecipeId) {
-      throw new BadRequestError('Recipe is required. Every BO must reference a Recipe.');
-    }
+      // Enforce Recipe.item === BO.item
+      const recipeItemId = (recipe as any).itemId || (recipe as any).item;
+      const isItemIdMatched =
+        !recipeItemId ||
+        String(recipeItemId) === String(item.id) ||
+        String(recipeItemId) === String(item._id) ||
+        String(recipeItemId) === String(item.itemCode);
 
-    const recipe = await recipeRepository.findById(tenantId, targetRecipeId);
-    if (!recipe || recipe.isDeleted) {
-      throw new NotFoundError(`Recipe with ID '${targetRecipeId}' not found.`);
-    }
+      if (recipeItemId && !isItemIdMatched) {
+        throw new BadRequestError(
+          `Recipe Mismatch Violation: Recipe '${recipe.recipeCode}' belongs to another Item ('${recipeItemId}') and does not correspond to BO Item '${item.itemCode}'. Recipe.item must match BO.item.`
+        );
+      }
 
-    if (recipe.status !== 'APPROVED' && recipe.status !== 'ACTIVE') {
-      throw new BadRequestError(
-        `Recipe '${recipe.recipeCode}' must be in APPROVED or ACTIVE status (Current: '${recipe.status}').`
-      );
-    }
+      // Validate Recipe material grade compatibility
+      const itemGrade = item.materialGrade || grnItem.materialGrade;
+      const isGradeCompatible =
+        recipe.applicableMaterialGrades &&
+        recipe.applicableMaterialGrades.some((g: string) => g.toUpperCase().trim() === itemGrade.toUpperCase().trim());
+      const isLineageBound = String(recipe.id) === String(grnItem.recipeId) || recipe.recipeCode === grnItem.recipeCode;
 
-    // Enforce Recipe.item === BO.item
-    const recipeItemId = (recipe as any).itemId || (recipe as any).item;
-    const isItemIdMatched =
-      !recipeItemId ||
-      String(recipeItemId) === String(item.id) ||
-      String(recipeItemId) === String(item._id) ||
-      String(recipeItemId) === String(item.itemCode);
+      if (!isGradeCompatible && !isLineageBound) {
+        throw new BadRequestError(
+          `Metallurgical Incompatibility: Recipe '${recipe.recipeCode}' does not apply to material grade '${itemGrade}'. Applicable: [${recipe.applicableMaterialGrades?.join(', ')}].`
+        );
+      }
 
-    if (recipeItemId && !isItemIdMatched) {
-      throw new BadRequestError(
-        `Recipe Mismatch Violation: Recipe '${recipe.recipeCode}' belongs to another Item ('${recipeItemId}') and does not correspond to BO Item '${item.itemCode}'. Recipe.item must match BO.item.`
-      );
-    }
+      // 5. Authoritative Quantity Validation & Cumulative Allocation (Prompt 7)
+      const rawQuantity = dto.quantity !== undefined ? dto.quantity : dto.targetQuantity;
+      if (rawQuantity === undefined || rawQuantity === null) {
+        throw new BadRequestError('Batch Order quantity is required.');
+      }
+      const requestedQuantity = Number(rawQuantity);
+      if (typeof rawQuantity !== 'number' || Number.isNaN(requestedQuantity) || !Number.isFinite(requestedQuantity)) {
+        throw new BadRequestError('Malformed quantity: Batch Order quantity must be a valid finite number.');
+      }
+      if (requestedQuantity <= 0) {
+        throw new BadRequestError('Batch Order quantity must be greater than zero.');
+      }
 
-    // Validate Recipe material grade compatibility
-    const itemGrade = item.materialGrade || grnItem.materialGrade;
-    const isGradeCompatible =
-      recipe.applicableMaterialGrades &&
-      recipe.applicableMaterialGrades.some((g: string) => g.toUpperCase().trim() === itemGrade.toUpperCase().trim());
-    const isLineageBound = String(recipe.id) === String(grnItem.recipeId) || recipe.recipeCode === grnItem.recipeCode;
+      const authoritativeReceivedQuantity =
+        grnItem.receivedQuantity !== undefined && grnItem.receivedQuantity !== null
+          ? grnItem.receivedQuantity
+          : grnItem.acceptedQuantity;
 
-    if (!isGradeCompatible && !isLineageBound) {
-      throw new BadRequestError(
-        `Metallurgical Incompatibility: Recipe '${recipe.recipeCode}' does not apply to material grade '${itemGrade}'. Applicable: [${recipe.applicableMaterialGrades?.join(', ')}].`
-      );
-    }
+      if (
+        authoritativeReceivedQuantity === undefined ||
+        authoritativeReceivedQuantity === null ||
+        authoritativeReceivedQuantity <= 0
+      ) {
+        throw new BadRequestError(
+          `Quantity Allocation Violation: Selected GRN item '${grnItem.itemCode}' has no received quantity available for allocation.`
+        );
+      }
 
-    // 5. Validate Quantity
-    const requestedQuantity = dto.quantity !== undefined ? dto.quantity : dto.targetQuantity;
-    if (requestedQuantity === undefined || requestedQuantity === null) {
-      throw new BadRequestError('Batch Order quantity is required.');
-    }
-    if (requestedQuantity <= 0) {
-      throw new BadRequestError('Batch Order quantity must be greater than zero.');
-    }
-    const maxReceivedQuantity =
-      grnItem.receivedQuantity !== undefined ? grnItem.receivedQuantity : grnItem.acceptedQuantity;
-    if (requestedQuantity > maxReceivedQuantity) {
-      throw new BadRequestError(
-        `Requested quantity [${requestedQuantity}] exceeds GRN received quantity [${maxReceivedQuantity}].`
-      );
-    }
+      if (requestedQuantity > authoritativeReceivedQuantity) {
+        throw new BadRequestError(
+          `Quantity Allocation Violation: Requested BO quantity [${requestedQuantity}] exceeds GRN received quantity [${authoritativeReceivedQuantity}] for item '${grnItem.itemCode}'.`
+        );
+      }
+
+      // Cumulative allocation check across all active Batch Orders for this GRN and item
+      const existingJobs = await this.repo.findByGrnId(tenantId, grn.id);
+      const cumulativeAllocatedQuantity = (existingJobs || [])
+        .filter(
+          (j) =>
+            !j.isDeleted &&
+            j.status !== 'CANCELLED' &&
+            (j.item?.itemId === grnItem.itemId || j.item?.itemCode === grnItem.itemCode)
+        )
+        .reduce((sum, j) => sum + (j.quantity?.targetQuantity || 0), 0);
+
+      const availableQuantity = Math.max(0, authoritativeReceivedQuantity - cumulativeAllocatedQuantity);
+
+      if (requestedQuantity > availableQuantity) {
+        throw new BadRequestError(
+          `Quantity Allocation Violation: Requested BO quantity [${requestedQuantity}] exceeds available GRN quantity [${availableQuantity}] for item '${grnItem.itemCode}'. Authoritative received: ${authoritativeReceivedQuantity}, already allocated across active Batch Orders: ${cumulativeAllocatedQuantity}. Cumulative BO quantity cannot exceed GRN received quantity.`
+        );
+      }
 
     // 6. Validate Weight (required, kg, non-negative)
     const requestedWeight = dto.weight !== undefined ? dto.weight : dto.weightKg;
@@ -718,7 +758,8 @@ export class ProductionJobService {
       }
     });
 
-    return job;
+      return job;
+    });
   }
 
   /**
@@ -1321,10 +1362,20 @@ export class ProductionJobService {
           (u) => (u.itemId === item.itemId || u.itemCode === item.itemCode) && u.status === 'AVAILABLE_FOR_PLANNING'
         );
         const allocatedQty = (existingJobs || [])
-          .filter((j) => j.item.itemId === item.itemId && j.status !== 'CANCELLED')
+          .filter(
+            (j) =>
+              !j.isDeleted &&
+              j.status !== 'CANCELLED' &&
+              (j.item?.itemId === item.itemId || j.item?.itemCode === item.itemCode)
+          )
           .reduce((sum, j) => sum + (j.quantity?.targetQuantity || 0), 0);
 
-        const availableQuantity = Math.max(0, item.acceptedQuantity - allocatedQty);
+        const authoritativeReceived =
+          item.receivedQuantity !== undefined && item.receivedQuantity !== null
+            ? item.receivedQuantity
+            : item.acceptedQuantity;
+
+        const availableQuantity = Math.max(0, authoritativeReceived - allocatedQty);
 
         // Fetch authoritative bound recipe details
         let recipeDetails: any = null;
@@ -1372,11 +1423,14 @@ export class ProductionJobService {
           recipeRevision: item.recipeRevision,
           recipeDetails,
           boundRecipe: recipeDetails,
+          receivedQuantity: authoritativeReceived,
           acceptedQuantity: item.acceptedQuantity,
+          allocatedQuantity: allocatedQty,
           availableQuantity,
           availableUnitsCount: itemUnits.length,
           availableUnits: serializedUnits,
-          canCreateBatchOrder: availableQuantity > 0 && itemUnits.length > 0,
+          canCreateBatchOrder:
+            availableQuantity > 0 && ((units && units.length > 0) ? itemUnits.length > 0 : true),
           uom: item.uom,
           supplierHeatNumber: item.supplierHeatNumber,
           readOnly: true

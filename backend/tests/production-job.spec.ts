@@ -163,6 +163,7 @@ describe('Production Job Domain & 12-Stage Lifecycle State Machine', () => {
         status: 'active'
       })) as any;
     });
+    jest.spyOn(productionJobRepository, 'findByGrnId').mockResolvedValue([] as any);
   });
 
   afterEach(() => {

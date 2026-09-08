@@ -2111,5 +2111,503 @@ describe('Planning Phase — Authoritative PO -> GRN -> BO Workflow', () => {
       });
     });
   });
+
+  describe('7. Batch Order Quantity Allocation and GRN Integrity', () => {
+    let jobStore: any[] = [];
+
+    beforeEach(() => {
+      jobStore = [];
+      jest.spyOn(purchaseOrderRepository, 'findById').mockResolvedValue(mockPo as any);
+      jest.spyOn(grnRepository, 'findGrnById').mockResolvedValue(mockGrn as any);
+      jest.spyOn(itemRepository, 'findById').mockResolvedValue(mockItem as any);
+      jest.spyOn(recipeRepository, 'findById').mockResolvedValue(mockRecipe as any);
+      jest.spyOn(grnRepository, 'allocateUnit').mockResolvedValue({} as any);
+
+      let counter = 1;
+      jest.spyOn(productionJobRepository, 'generateNextBatchOrderNumber').mockImplementation(async () => {
+        return `BO-202609-00${counter++}`;
+      });
+
+      jest.spyOn(productionJobRepository, 'findByGrnId').mockImplementation(async (_tenant, grnId) => {
+        return jobStore.filter((j) => j.grnId === grnId) as any;
+      });
+
+      jest.spyOn(productionJobRepository, 'create').mockImplementation(async (_tenant, doc: any) => {
+        const newJob = {
+          id: `job_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+          ...doc,
+          toJSON: function () {
+            return { ...this };
+          }
+        };
+        jobStore.push(newJob);
+        return newJob as any;
+      });
+    });
+
+    // 1. Valid Quantity
+    it('should successfully create BO when quantity is valid and within GRN received quantity', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.quantity.targetQuantity).toBe(100);
+      expect(res.body.data.status).toBe('WAITING_FOR_PRODUCTION');
+      expect(res.body.data.waitingForProduction).toBe(true);
+    });
+
+    // 2. Reject Zero Quantity
+    it('should reject BO creation when quantity is zero', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 0,
+          weight: 50
+        });
+
+      expect([400, 422]).toContain(res.status);
+      expect(res.body.success).toBe(false);
+      expect(JSON.stringify(res.body)).toMatch(/greater than zero/i);
+    });
+
+    // 3. Reject Negative Quantity
+    it('should reject BO creation when quantity is negative', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: -25,
+          weight: 50
+        });
+
+      expect([400, 422]).toContain(res.status);
+      expect(res.body.success).toBe(false);
+      expect(JSON.stringify(res.body)).toMatch(/greater than zero/i);
+    });
+
+    // 4. Reject Malformed Quantity
+    it('should reject BO creation when quantity is malformed or non-finite', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 'not-a-number' as any,
+          weight: 50
+        });
+
+      expect([400, 422]).toContain(res.status);
+      expect(res.body.success).toBe(false);
+      expect(JSON.stringify(res.body)).toMatch(/valid/i);
+    });
+
+    // 5. Reject Quantity Exceeding GRN Received Quantity
+    it('should reject BO creation when requested quantity exceeds GRN received quantity', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      // mockGrn receivedQuantity is 200
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 250, // exceeds 200
+          weight: 50
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/Quantity Allocation Violation.*exceeds.*GRN received quantity/i);
+    });
+
+    // 6. Multiple BOs & Cumulative Allocation Invariant
+    it('should enforce cumulative allocation across multiple BOs and reject when cumulative allocation exceeds available quantity', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      // BO 1: Allocate 120 of 200 (succeeds, 80 remaining)
+      const res1 = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 120,
+          weight: 50
+        });
+
+      expect(res1.status).toBe(201);
+      expect(res1.body.data.quantity.targetQuantity).toBe(120);
+
+      // BO 2: Allocate 80 of remaining 80 (succeeds, 0 remaining)
+      const res2 = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 80,
+          weight: 35
+        });
+
+      expect(res2.status).toBe(201);
+      expect(res2.body.data.quantity.targetQuantity).toBe(80);
+
+      // BO 3: Attempt to allocate 10 more (must be rejected, 200 already allocated)
+      const res3 = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 10,
+          weight: 10
+        });
+
+      expect(res3.status).toBe(400);
+      expect(res3.body.success).toBe(false);
+      expect(res3.body.message).toMatch(/Quantity Allocation Violation.*exceeds available GRN quantity \[0\].*already allocated.*200/i);
+    });
+
+    // 7. Cancelled BOs Excluded from Cumulative Allocation
+    it('should exclude CANCELLED BOs from cumulative allocation calculation', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      // Pre-populate with a cancelled job of 150 KG
+      jobStore.push({
+        id: 'job_cancelled_01',
+        grnId: mockGrn.id,
+        status: 'CANCELLED',
+        isDeleted: false,
+        item: { itemId: mockItem.id, itemCode: mockItem.itemCode },
+        quantity: { targetQuantity: 150 }
+      });
+
+      // Since the 150 KG job was cancelled, all 200 KG remains available
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 180,
+          weight: 50
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.quantity.targetQuantity).toBe(180);
+    });
+
+    // 8. Concurrency Protection (Prevent Simultaneous Over-Allocation)
+    it('should protect against concurrent BO creation and prevent simultaneous over-allocation using allocationLockManager', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      // Total available: 200 KG.
+      // Two users simultaneously submit requests for 150 KG each.
+      // Total requested = 300 KG > 200 KG.
+      // Exactly ONE request must succeed (201) and ONE must fail (400).
+      const [resA, resB] = await Promise.all([
+        request(app)
+          .post('/api/v1/batch-orders')
+          .set('x-tenant-id', testTenant)
+          .set('Authorization', `Bearer ${plannerToken}`)
+          .send({
+            poId: mockPo.id,
+            grnId: mockGrn.id,
+            itemId: mockItem.id,
+            recipeId: mockRecipe.id,
+            quantity: 150,
+            weight: 60
+          }),
+        request(app)
+          .post('/api/v1/batch-orders')
+          .set('x-tenant-id', testTenant)
+          .set('Authorization', `Bearer ${plannerToken}`)
+          .send({
+            poId: mockPo.id,
+            grnId: mockGrn.id,
+            itemId: mockItem.id,
+            recipeId: mockRecipe.id,
+            quantity: 150,
+            weight: 60
+          })
+      ]);
+
+      const statuses = [resA.status, resB.status].sort();
+      expect(statuses).toEqual([201, 400]);
+
+      const failedRes = resA.status === 400 ? resA : resB;
+      const successRes = resA.status === 201 ? resA : resB;
+
+      expect(successRes.body.data.quantity.targetQuantity).toBe(150);
+      expect(failedRes.body.success).toBe(false);
+      expect(failedRes.body.message).toMatch(/Quantity Allocation Violation/i);
+    });
+
+    // 9. Multi-Item GRN Quantity Isolation
+    it('should isolate quantities per GRN Item in multi-item GRNs and prevent cross-item quantity borrowing', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const multiItemGrn = {
+        ...mockGrn,
+        id: 'grn_multi_01',
+        items: [
+          {
+            itemId: 'item_ti64',
+            itemCode: 'MAT-TI-6AL4V',
+            itemName: 'Titanium Grade 5 Bar',
+            materialGrade: 'Ti-6Al-4V',
+            receivedQuantity: 50,
+            acceptedQuantity: 50,
+            uom: 'KG',
+            recipeId: 'rec_ti_01',
+            recipeCode: 'REC-TI-AGING'
+          },
+          {
+            itemId: 'item_in718',
+            itemCode: 'MAT-IN-718',
+            itemName: 'Inconel 718 Bar',
+            materialGrade: 'Inconel 718',
+            receivedQuantity: 150,
+            acceptedQuantity: 150,
+            uom: 'KG',
+            recipeId: 'rec_in_01',
+            recipeCode: 'REC-IN718-AGE'
+          }
+        ],
+        units: []
+      };
+
+      const mockIn718Item = {
+        id: 'item_in718',
+        itemCode: 'MAT-IN-718',
+        itemName: 'Inconel 718 Bar',
+        materialGrade: 'Inconel 718',
+        uom: 'KG',
+        status: 'ACTIVE'
+      };
+
+      const mockIn718Recipe = {
+        id: 'rec_in_01',
+        recipeCode: 'REC-IN718-AGE',
+        name: 'Inconel 718 Age Hardening',
+        processFamily: 'VACUUM_HEAT_TREATMENT',
+        status: 'APPROVED',
+        applicableMaterialGrades: ['Inconel 718'],
+        stages: [{ sequence: 1, stageName: 'Preheat', targetTemperatureC: 620, soakTimeMinutes: 60 }]
+      };
+
+      const multiItemPo = {
+        ...mockPo,
+        items: [
+          mockPo.items[0],
+          {
+            itemId: 'item_in718',
+            itemCode: 'MAT-IN-718',
+            itemName: 'Inconel 718 Bar',
+            materialGrade: 'Inconel 718',
+            orderedQuantity: 150,
+            uom: 'KG'
+          }
+        ]
+      };
+
+      jest.spyOn(purchaseOrderRepository, 'findById').mockResolvedValue(multiItemPo as any);
+      jest.spyOn(grnRepository, 'findGrnById').mockResolvedValue(multiItemGrn as any);
+      jest.spyOn(grnRepository, 'findUnitsByGrnId').mockResolvedValue([]);
+      jest.spyOn(itemRepository, 'findById').mockImplementation(async (_tenant, id) => {
+        if (id === 'item_ti64') return mockItem as any;
+        if (id === 'item_in718') return mockIn718Item as any;
+        return null;
+      });
+      jest.spyOn(recipeRepository, 'findById').mockImplementation(async (_tenant, id) => {
+        if (id === 'rec_ti_01') return mockRecipe as any;
+        if (id === 'rec_in_01') return mockIn718Recipe as any;
+        return null;
+      });
+
+      // Check 1: Attempt to allocate 60 KG for Item 1 (Item 1 only has 50 KG, even though GRN total is 200 KG)
+      const resA = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: multiItemGrn.id,
+          itemId: 'item_ti64',
+          recipeId: 'rec_ti_01',
+          quantity: 60, // exceeds Item 1's 50 KG
+          weight: 50
+        });
+
+      expect(resA.status).toBe(400);
+      expect(resA.body.message).toMatch(/Quantity Allocation Violation.*exceeds.*GRN received quantity \[50\].*MAT-TI-6AL4V/i);
+
+      // Check 2: Allocate 40 KG for Item 1 (succeeds, 10 KG remaining on Item 1)
+      const resB = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: multiItemGrn.id,
+          itemId: 'item_ti64',
+          recipeId: 'rec_ti_01',
+          quantity: 40,
+          weight: 35
+        });
+
+      expect(resB.status).toBe(201);
+      expect(resB.body.data.quantity.targetQuantity).toBe(40);
+
+      // Check 3: Allocate 100 KG for Item 2 (succeeds, Item 2 has 150 KG received, 50 remaining)
+      const resC = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: multiItemGrn.id,
+          itemId: 'item_in718',
+          recipeId: 'rec_in_01',
+          quantity: 100,
+          weight: 80
+        });
+
+      expect(resC.status).toBe(201);
+      expect(resC.body.data.quantity.targetQuantity).toBe(100);
+
+      // Check 4: Attempt to allocate 20 KG more on Item 1 (fails: only 10 KG remaining on Item 1)
+      const resD = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: multiItemGrn.id,
+          itemId: 'item_ti64',
+          recipeId: 'rec_ti_01',
+          quantity: 20,
+          weight: 15
+        });
+
+      expect(resD.status).toBe(400);
+      expect(resD.body.message).toMatch(/Quantity Allocation Violation.*exceeds available GRN quantity \[10\].*MAT-TI-6AL4V/i);
+    });
+
+    // 10. Inventory Integrity: No Phantom Stock or Duplication
+    it('should maintain inventory integrity without creating phantom stock in master catalog', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+      const itemSaveSpy = jest.spyOn(itemRepository, 'create');
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 50,
+          weight: 25
+        });
+
+      expect(res.status).toBe(201);
+      expect(itemSaveSpy).not.toHaveBeenCalled();
+      // Verifies the BO represents derived production allocation, not new inventory item creation
+      expect(res.body.data.quantity.targetQuantity).toBe(50);
+      expect(res.body.data.grnId).toBe(mockGrn.id);
+      expect(res.body.data.item.itemId).toBe(mockItem.id);
+    });
+
+    // 11. getEligiblePartsForGRN reflects dynamic cumulative allocation
+    it('should dynamically update getEligiblePartsForGRN available and allocated quantities as BOs are created', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      // Initially: 0 allocated, 200 available
+      const resInitial = await request(app)
+        .get(`/api/v1/planning/grns/${mockGrn.id}/parts`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`);
+
+      expect(resInitial.status).toBe(200);
+      expect(resInitial.body.data[0].receivedQuantity).toBe(200);
+      expect(resInitial.body.data[0].allocatedQuantity).toBe(0);
+      expect(resInitial.body.data[0].availableQuantity).toBe(200);
+
+      // Create a BO allocating 140 KG
+      jobStore.push({
+        id: 'job_dyn_01',
+        grnId: mockGrn.id,
+        status: 'WAITING_FOR_PRODUCTION',
+        isDeleted: false,
+        item: { itemId: mockItem.id, itemCode: mockItem.itemCode },
+        quantity: { targetQuantity: 140 }
+      });
+
+      // Query parts again: allocated should be 140, available should be 60
+      const resAfter = await request(app)
+        .get(`/api/v1/planning/grns/${mockGrn.id}/parts`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`);
+
+      expect(resAfter.status).toBe(200);
+      expect(resAfter.body.data[0].receivedQuantity).toBe(200);
+      expect(resAfter.body.data[0].allocatedQuantity).toBe(140);
+      expect(resAfter.body.data[0].availableQuantity).toBe(60);
+      expect(resAfter.body.data[0].canCreateBatchOrder).toBe(true);
+    });
+  });
 });
 

@@ -141,6 +141,12 @@ export const createBatchOrderSchema: ValidationSchema = {
           message: 'Batch Order quantity is required',
           path: ['quantity']
         });
+      } else if (typeof qty !== 'number' || Number.isNaN(qty) || !Number.isFinite(qty)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Batch Order quantity must be a valid finite number',
+          path: ['quantity']
+        });
       } else if (qty <= 0) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
