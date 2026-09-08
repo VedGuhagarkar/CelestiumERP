@@ -63,7 +63,7 @@ grnRouter.get(
 
 // 5. Query Individual Material/Part Units
 grnRouter.get(
-  '/units',
+  ['/units', '/units/traceable'],
   authenticateJwt,
   requirePermission(PERMISSIONS.INVENTORY_GRN_VIEW),
   validateRequest(queryGrnUnitSchema),
@@ -107,18 +107,24 @@ grnRouter.get(
   asyncHandler(grnController.getStateMachineLifecycle)
 );
 
-// 10. Get GRN by ID
-grnRouter.get(
-  '/:id',
-  authenticateJwt,
-  requirePermission(PERMISSIONS.INVENTORY_GRN_VIEW),
-  asyncHandler(grnController.getGrnById)
-);
-
-// 8. Print GRN (HTML or structured JSON report)
+// 10. Print GRN (HTML or structured JSON report - supports both GET and POST)
 grnRouter.get(
   '/:id/print',
   authenticateJwt,
   requirePermission(PERMISSIONS.INVENTORY_GRN_PRINT),
   asyncHandler(grnController.printGRN)
+);
+grnRouter.post(
+  '/:id/print',
+  authenticateJwt,
+  requirePermission(PERMISSIONS.INVENTORY_GRN_PRINT),
+  asyncHandler(grnController.printGRN)
+);
+
+// 11. Get Authoritative GRN Record by ID
+grnRouter.get(
+  '/:id',
+  authenticateJwt,
+  requirePermission(PERMISSIONS.INVENTORY_GRN_VIEW),
+  asyncHandler(grnController.getGrnById)
 );

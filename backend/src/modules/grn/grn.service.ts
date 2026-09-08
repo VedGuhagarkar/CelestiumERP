@@ -910,6 +910,78 @@ export class GRNService extends BaseService {
   }
 
   /**
+   * Authoritative GRN Record View (Single Source of Truth)
+   * Retrieves complete GRN with parent PO traceability and individual units breakdown
+   */
+  public async getGRNById(
+    tenantId: string,
+    id: string,
+    actor: ActorContext
+  ): Promise<any> {
+    // 0. Dynamic RBAC Check - requires INVENTORY_GRN_VIEW
+    const effectiveRoles = actor.roles && actor.roles.length > 0
+      ? actor.roles
+      : (actor.role ? [actor.role] : []);
+
+    const isSuperAdmin = effectiveRoles.some((r) => r.toUpperCase() === 'ADMIN' || r.toUpperCase() === 'SUPERADMIN');
+    if (!isSuperAdmin) {
+      if (effectiveRoles.length === 0) {
+        throw new ForbiddenError(
+          `Access Denied: You lack required permission '${PERMISSIONS.INVENTORY_GRN_VIEW}' to view Goods Receipt Notes`
+        );
+      }
+      const userPerms = await this.rbac.getUserEffectivePermissions(tenantId, actor.userId, effectiveRoles);
+      if (!userPerms.permissions.includes(PERMISSIONS.INVENTORY_GRN_VIEW)) {
+        throw new ForbiddenError(
+          `Access Denied: You lack required permission '${PERMISSIONS.INVENTORY_GRN_VIEW}' to view Goods Receipt Notes`
+        );
+      }
+    }
+
+    if (!id || typeof id !== 'string') {
+      throw new BadRequestError('GRN identifier is required');
+    }
+
+    const grn = await this.repo.findGrnById(tenantId, id);
+    if (!grn) {
+      throw new NotFoundError(`GRN '${id}' not found`);
+    }
+
+    // Retrieve full individual units breakdown for this GRN
+    const { units } = await this.repo.queryUnits(tenantId, { grnNumber: grn.grnNumber, limit: 1000 });
+    const fullUnits = units && units.length > 0 ? units : (grn.units || []);
+
+    // Retrieve parent PO for authoritative PO details
+    let parentPO: any = null;
+    if (grn.poId) {
+      parentPO = await this.poService.getOrderById(tenantId, grn.poId).catch(() => null);
+    }
+
+    const grnObj = typeof (grn as any).toObject === 'function' ? (grn as any).toObject() : grn;
+    return {
+      ...grnObj,
+      id: grn.id,
+      units: fullUnits,
+      individualUnits: fullUnits,
+      parentPO: parentPO ? {
+        id: parentPO.id || parentPO._id,
+        poNumber: parentPO.poNumber,
+        status: parentPO.status,
+        orderDate: parentPO.orderDate || parentPO.createdAt,
+        totalAmount: parentPO.totalAmount,
+        currency: parentPO.currency || 'USD',
+        supplierName: parentPO.supplierName,
+        supplierCode: parentPO.supplierCode
+      } : {
+        id: grn.poId,
+        poNumber: grn.poNumber,
+        supplierName: grn.supplierName,
+        supplierCode: grn.supplierCode
+      }
+    };
+  }
+
+  /**
    * 4. Generate formal printable Goods Receipt Note (GRN) document
    */
   public async generatePrintableGRN(
@@ -917,17 +989,44 @@ export class GRNService extends BaseService {
     id: string,
     actor: ActorContext
   ): Promise<{ grn: GRNDocument; htmlReport: string }> {
+    // 0. Dynamic RBAC Check - requires INVENTORY_GRN_PRINT
+    const effectiveRoles = actor.roles && actor.roles.length > 0
+      ? actor.roles
+      : (actor.role ? [actor.role] : []);
+
+    const isSuperAdmin = effectiveRoles.some((r) => r.toUpperCase() === 'ADMIN' || r.toUpperCase() === 'SUPERADMIN');
+    if (!isSuperAdmin) {
+      if (effectiveRoles.length === 0) {
+        throw new ForbiddenError(
+          `Access Denied: You lack required permission '${PERMISSIONS.INVENTORY_GRN_PRINT}' to print Goods Receipt Notes`
+        );
+      }
+      const userPerms = await this.rbac.getUserEffectivePermissions(tenantId, actor.userId, effectiveRoles);
+      if (!userPerms.permissions.includes(PERMISSIONS.INVENTORY_GRN_PRINT)) {
+        throw new ForbiddenError(
+          `Access Denied: You lack required permission '${PERMISSIONS.INVENTORY_GRN_PRINT}' to print Goods Receipt Notes`
+        );
+      }
+    }
+
+    if (!id || typeof id !== 'string') {
+      throw new BadRequestError('GRN identifier is required to generate printable report');
+    }
+
     const grn = await this.repo.findGrnById(tenantId, id);
     if (!grn) {
       throw new NotFoundError(`GRN with ID '${id}' not found`);
     }
 
-    const { units } = await this.repo.queryUnits(tenantId, { grnNumber: grn.grnNumber, limit: 100 });
+    const { units } = await this.repo.queryUnits(tenantId, { grnNumber: grn.grnNumber, limit: 1000 });
+    const fullUnits = units && units.length > 0 ? units : (grn.units || []);
 
-    grn.printCount += 1;
+    grn.printCount = (grn.printCount || 0) + 1;
     grn.printedAt = new Date();
     grn.printedBy = actor.userId;
-    grn.status = 'AVAILABLE_FOR_PLANNING';
+    if (grn.status === 'ISSUED') {
+      grn.status = 'PRINTED';
+    }
     await grn.save();
 
     const htmlReport = `
@@ -938,9 +1037,10 @@ export class GRNService extends BaseService {
   <title>GOODS RECEIPT NOTE — ${grn.grnNumber}</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 30px; color: #1e293b; background: #fff; }
-    .header { border-bottom: 3px solid #0f172a; padding-bottom: 12px; margin-bottom: 24px; display: flex; justify-content: space-between; align-items: flex-end; }
+    .header { border-bottom: 3px solid #0f172a; padding-bottom: 12px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: flex-end; }
     .company-title { font-size: 24px; font-weight: 800; color: #0f172a; text-transform: uppercase; letter-spacing: 0.5px; }
     .doc-badge { background: #0284c7; color: #fff; padding: 6px 14px; font-size: 13px; font-weight: 700; border-radius: 4px; text-transform: uppercase; }
+    .po-banner { background: #e0f2fe; border: 1px solid #7dd3fc; border-radius: 6px; padding: 10px 14px; margin-bottom: 18px; display: flex; justify-content: space-between; align-items: center; }
     .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; font-size: 13px; }
     .meta-box { border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px; background: #f8fafc; }
     .meta-box h4 { margin: 0 0 8px 0; color: #475569; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #cbd5e1; padding-bottom: 4px; }
@@ -952,16 +1052,31 @@ export class GRNService extends BaseService {
     .footer { margin-top: 40px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; text-align: center; }
     .sig-line { border-top: 1px solid #0f172a; margin-top: 50px; padding-top: 6px; font-size: 12px; font-weight: 600; }
     .print-watermark { text-align: center; font-size: 10px; color: #94a3b8; margin-top: 30px; }
+    @media print {
+      @page { margin: 12mm 15mm; size: A4 portrait; }
+      body { margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .no-print { display: none !important; }
+    }
   </style>
 </head>
 <body>
   <div class="header">
     <div>
       <div class="company-title">ASTRALIS MANUFACTURING ERP</div>
-      <div style="font-size: 12px; color: #64748b; margin-top: 2px;">Advanced Thermal Processing & Precision Metallurgical Facility</div>
+      <div style="font-size: 12px; color: #64748b; margin-top: 2px;">Advanced Thermal Processing & Precision Metallurgical Facility • Nadcap / AS9100D Certified</div>
     </div>
     <div>
       <span class="doc-badge">Official Goods Receipt Note</span>
+    </div>
+  </div>
+
+  <div class="po-banner">
+    <div>
+      <span style="font-weight: 800; color: #0369a1; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Authoritative Lineage:</span>
+      <span style="font-weight: 700; color: #0c4a6e; font-size: 13px; margin-left: 6px;">Purchase Order &rarr; GRN &rarr; Traceable Part Units</span>
+    </div>
+    <div style="font-size: 12px; font-weight: 700; color: #0284c7;">
+      Parent PO Reference: <strong>${grn.poNumber}</strong>
     </div>
   </div>
 
@@ -976,8 +1091,8 @@ export class GRNService extends BaseService {
     </div>
     <div class="meta-box">
       <h4>Purchase Order & Supplier Traceability</h4>
-      <div><strong>PO Number:</strong> ${grn.poNumber}</div>
-      <div><strong>Supplier Name:</strong> ${grn.supplierName} ${grn.supplierCode ? `(${grn.supplierCode})` : ''}</div>
+      <div><strong>Parent Purchase Order:</strong> ${grn.poNumber}</div>
+      <div><strong>Authoritative Supplier:</strong> ${grn.supplierName} ${grn.supplierCode ? `(${grn.supplierCode})` : ''}</div>
       <div><strong>Delivery Challan:</strong> ${grn.supplierChallanNumber}</div>
       <div><strong>Challan Date:</strong> ${grn.supplierChallanDate ? new Date(grn.supplierChallanDate).toLocaleDateString() : 'N/A'}</div>
       <div><strong>Carrier Vehicle:</strong> ${grn.carrierVehicle || 'N/A'}</div>
@@ -1034,17 +1149,17 @@ export class GRNService extends BaseService {
       </tr>
     </thead>
     <tbody>
-      ${units
+      ${fullUnits
         .map(
           (u) => `
         <tr>
           <td class="units-list">${u.unitIdentifier}</td>
           <td>${u.itemCode}</td>
-          <td>${u.recipeCode}</td>
+          <td><strong>${u.recipeCode}</strong>${u.recipeRevision ? ` (Rev ${u.recipeRevision})` : ''}</td>
           <td>${u.quantity} ${u.uom}</td>
-          <td>${u.warehouseCode} / ${u.storageLocationCode}</td>
+          <td>${u.warehouseCode || grn.warehouseCode} / ${u.storageLocationCode || grn.storageLocationCode}</td>
           <td>${u.supplierHeatNumber}</td>
-          <td><span style="color: #16a34a; font-weight: 600;">AVAILABLE</span></td>
+          <td><span style="color: ${u.status === 'ALLOCATED_TO_PLAN' ? '#2563eb' : u.status === 'AVAILABLE_FOR_PLANNING' ? '#16a34a' : '#64748b'}; font-weight: 600;">${u.status || 'AVAILABLE_FOR_PLANNING'}</span></td>
         </tr>
       `
         )

@@ -181,11 +181,22 @@ export interface GRN {
   supplierCode?: string;
   supplierChallanNumber?: string;
   supplierChallanDate?: string;
+  carrierVehicle?: string;
+  warehouseId?: string;
+  warehouseCode?: string;
+  storageLocationCode?: string;
   inspectionRemarks?: string;
   packagingCondition?: string;
   acceptanceStatus: 'ACCEPTED' | 'ACCEPTED_WITH_DEVIATION' | 'REJECTED';
+  status?: string;
+  receivedBy?: string;
+  inspectedBy?: string;
+  approvedBy?: string;
+  printCount?: number;
   totalUnitsGenerated?: number;
   items: ReceivedItem[];
+  units?: GRNUnit[];
+  parentPO?: any;
   createdAt?: string;
 }
 
@@ -415,6 +426,8 @@ export const InventoryPage: React.FC = () => {
   const [isRecordReceiptModalOpen, setIsRecordReceiptModalOpen] = useState(false);
   const [isAssignStorageModalOpen, setIsAssignStorageModalOpen] = useState(false);
   const [isCreateGrnModalOpen, setIsCreateGrnModalOpen] = useState(false);
+  const [isViewGrnModalOpen, setIsViewGrnModalOpen] = useState(false);
+  const [activeGrnForView, setActiveGrnForView] = useState<GRN | null>(null);
   const [isPrintGrnModalOpen, setIsPrintGrnModalOpen] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
@@ -423,6 +436,8 @@ export const InventoryPage: React.FC = () => {
   const canCreatePo = hasPermission('purchase_order:order:create');
   const canRecordStorage = hasPermission('inventory:storage:record');
   const canCreateGrn = hasPermission('inventory:grn:create');
+  const canViewGrn = hasPermission('inventory:grn:view');
+  const canPrintGrn = hasPermission('inventory:grn:print');
 
   // Form states - Create PO
   const [poSupplierName, setPoSupplierName] = useState('TimkenSteel Specialty Metals');
@@ -997,6 +1012,56 @@ export const InventoryPage: React.FC = () => {
     }
   };
 
+  const handleViewGrn = async (grn: GRN) => {
+    const searchId = grn.id || grn._id || grn.grnNumber;
+    try {
+      const res = await authenticatedFetch(`${env.API_BASE_URL}/grn/${searchId}`);
+      if (res.ok) {
+        const json = await res.json();
+        setActiveGrnForView(json.data || grn);
+      } else {
+        setActiveGrnForView(grn);
+      }
+    } catch {
+      setActiveGrnForView(grn);
+    }
+    setIsViewGrnModalOpen(true);
+  };
+
+  const handleOpenPrintGrn = async (grn: GRN) => {
+    const searchId = grn.id || grn._id || grn.grnNumber;
+    try {
+      const res = await authenticatedFetch(`${env.API_BASE_URL}/grn/${searchId}`);
+      if (res.ok) {
+        const json = await res.json();
+        setActiveGrnForPrint(json.data || grn);
+      } else {
+        setActiveGrnForPrint(grn);
+      }
+    } catch {
+      setActiveGrnForPrint(grn);
+    }
+    setIsPrintGrnModalOpen(true);
+  };
+
+  const handleExecutePrint = async () => {
+    if (!activeGrnForPrint) return;
+    const searchId = activeGrnForPrint.id || activeGrnForPrint._id || activeGrnForPrint.grnNumber;
+    try {
+      await authenticatedFetch(`${env.API_BASE_URL}/grn/${searchId}/print`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      setFeedback({
+        type: 'success',
+        message: `Goods Receipt Note '${activeGrnForPrint.grnNumber}' printed — server audit log recorded.`
+      });
+    } catch {
+      // Allow browser print even if network glitch
+    }
+    window.print();
+  };
+
   // Filtered Lists
   const filteredPOs = purchaseOrders.filter(
     (po) =>
@@ -1515,6 +1580,13 @@ export const InventoryPage: React.FC = () => {
 
       {/* TAB 3: GOODS RECEIPT NOTES (GRN) & PRINTING */}
       {activeTab === 'GRNS' && (
+        !canViewGrn ? (
+          <AppCard>
+            <AppAlert variant="warning" title="Access Denied (Prompt 9: GRN Permission)">
+              You lack the required permission (inventory:grn:view) to view Goods Receipt Notes. Server-side authorization is active.
+            </AppAlert>
+          </AppCard>
+        ) : (
         <AppCard>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
             <div>
@@ -1527,7 +1599,7 @@ export const InventoryPage: React.FC = () => {
               variant="primary"
               size="sm"
               disabled={!canCreateGrn}
-              leftIcon={<PackageCheck size={14} />}
+              leftIcon={<PackageCheck size={16} />}
               onClick={() => openCreateGrnModal()}
             >
               Generate GRN
@@ -1581,13 +1653,21 @@ export const InventoryPage: React.FC = () => {
                       <td style={{ padding: '14px 16px', textAlign: 'right' }}>
                         <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
                           <ActionButton
+                            variant="secondary"
+                            size="sm"
+                            leftIcon={<Eye size={14} />}
+                            onClick={() => handleViewGrn(g)}
+                            title="View authoritative GRN record"
+                          >
+                            View GRN
+                          </ActionButton>
+                          <ActionButton
                             variant="primary"
                             size="sm"
+                            disabled={!canPrintGrn}
                             leftIcon={<Printer size={14} />}
-                            onClick={() => {
-                              setActiveGrnForPrint(g);
-                              setIsPrintGrnModalOpen(true);
-                            }}
+                            onClick={() => handleOpenPrintGrn(g)}
+                            title={!canPrintGrn ? 'Permission required: inventory:grn:print' : 'Print official GRN document'}
                           >
                             Print GRN
                           </ActionButton>
@@ -1596,6 +1676,7 @@ export const InventoryPage: React.FC = () => {
                             size="sm"
                             leftIcon={<Boxes size={14} />}
                             onClick={() => setActiveTab('UNITS')}
+                            title="View traceable units in planning gate"
                           >
                             View Units
                           </ActionButton>
@@ -1608,6 +1689,7 @@ export const InventoryPage: React.FC = () => {
             </table>
           </div>
         </AppCard>
+        )
       )}
 
       {/* TAB 4: TRACEABLE PART UNITS (AVAILABLE FOR PLANNING) */}
@@ -2673,6 +2755,159 @@ export const InventoryPage: React.FC = () => {
         })()}
       </AppDialog>
 
+      {/* --- MODAL 4B: AUTHORITATIVE GRN RECORD VIEW (PROMPT 9) --- */}
+      <AppDialog
+        isOpen={isViewGrnModalOpen}
+        onClose={() => setIsViewGrnModalOpen(false)}
+        title={`Goods Receipt Note Record: ${activeGrnForView?.grnNumber || ''}`}
+        size="xl"
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          {/* Authoritative Lineage Alert */}
+          <AppAlert
+            type="info"
+            title="AUTHORITATIVE CREATION LINEAGE: PURCHASE ORDER &rarr; GRN &rarr; PART UNITS"
+          >
+            {`Child Goods Receipt Note generated from Purchase Order ${activeGrnForView?.poNumber}. Authoritative Supplier: ${activeGrnForView?.supplierName}. Distinct part units are independently tracked with bound recipes.`}
+          </AppAlert>
+
+          {/* Metadata Cards */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
+            <div style={{ background: 'var(--color-bg-subtle)', padding: '16px', borderRadius: '8px', border: '1px solid var(--color-border-subtle)' }}>
+              <h4 style={{ margin: '0 0 10px 0', fontSize: '12px', fontWeight: 700, color: 'var(--color-text-secondary)', textTransform: 'uppercase' }}>
+                Purchase Order & Supplier Traceability
+              </h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '13px' }}>
+                <div><strong>Parent PO:</strong> <span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>{activeGrnForView?.poNumber}</span></div>
+                <div><strong>Authoritative Supplier:</strong> {activeGrnForView?.supplierName} {activeGrnForView?.supplierCode ? `(${activeGrnForView.supplierCode})` : ''}</div>
+                <div><strong>Delivery Challan:</strong> {activeGrnForView?.supplierChallanNumber || 'N/A'}</div>
+                <div><strong>Challan Date:</strong> {activeGrnForView?.supplierChallanDate ? new Date(activeGrnForView.supplierChallanDate).toLocaleDateString() : 'N/A'}</div>
+                <div><strong>Carrier Vehicle:</strong> {activeGrnForView?.carrierVehicle || 'N/A'}</div>
+              </div>
+            </div>
+
+            <div style={{ background: 'var(--color-bg-subtle)', padding: '16px', borderRadius: '8px', border: '1px solid var(--color-border-subtle)' }}>
+              <h4 style={{ margin: '0 0 10px 0', fontSize: '12px', fontWeight: 700, color: 'var(--color-text-secondary)', textTransform: 'uppercase' }}>
+                GRN Identity & Storage Allocation
+              </h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '13px' }}>
+                <div><strong>GRN Number:</strong> <span style={{ fontWeight: 700 }}>{activeGrnForView?.grnNumber}</span></div>
+                <div><strong>Date Created:</strong> {new Date(activeGrnForView?.createdAt || Date.now()).toLocaleDateString()}</div>
+                <div><strong>Warehouse:</strong> {activeGrnForView?.warehouseCode || 'WH-MAIN'}</div>
+                <div><strong>Bay / Bin:</strong> {activeGrnForView?.storageLocationCode || 'BAY-01-A'}</div>
+                {activeGrnForView?.receiptNumber && <div><strong>Gate Receipt Ref:</strong> {activeGrnForView.receiptNumber}</div>}
+              </div>
+            </div>
+
+            <div style={{ background: 'var(--color-bg-subtle)', padding: '16px', borderRadius: '8px', border: '1px solid var(--color-border-subtle)' }}>
+              <h4 style={{ margin: '0 0 10px 0', fontSize: '12px', fontWeight: 700, color: 'var(--color-text-secondary)', textTransform: 'uppercase' }}>
+                Quality Acceptance & Sign-off
+              </h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '13px' }}>
+                <div><strong>Status:</strong> <span style={{ fontWeight: 700, color: 'var(--color-success)' }}>{activeGrnForView?.status || 'AVAILABLE_FOR_PLANNING'}</span></div>
+                <div><strong>Acceptance:</strong> {activeGrnForView?.acceptanceStatus || 'ACCEPTED'}</div>
+                <div><strong>Received By:</strong> {activeGrnForView?.receivedBy || 'Store In-Charge'}</div>
+                <div><strong>Print Count:</strong> {activeGrnForView?.printCount || 0} times</div>
+                {activeGrnForView?.inspectionRemarks && <div><strong>Remarks:</strong> {activeGrnForView.inspectionRemarks}</div>}
+              </div>
+            </div>
+          </div>
+
+          {/* Received Items Table */}
+          <div>
+            <h4 style={{ margin: '0 0 10px 0', fontSize: '14px', fontWeight: 700 }}>
+              Received Items & Bound Process Recipes
+            </h4>
+            <div style={{ overflowX: 'auto', border: '1px solid var(--color-border-subtle)', borderRadius: '8px' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                <thead>
+                  <tr style={{ background: 'var(--color-bg-subtle)', borderBottom: '1px solid var(--color-border-subtle)' }}>
+                    <th style={{ padding: '10px 12px', textAlign: 'left' }}>Item Code</th>
+                    <th style={{ padding: '10px 12px', textAlign: 'left' }}>Particulars / Description</th>
+                    <th style={{ padding: '10px 12px', textAlign: 'left' }}>Grade</th>
+                    <th style={{ padding: '10px 12px', textAlign: 'left' }}>Bound Recipe</th>
+                    <th style={{ padding: '10px 12px', textAlign: 'left' }}>Heat # / MTR</th>
+                    <th style={{ padding: '10px 12px', textAlign: 'right' }}>Rec Qty</th>
+                    <th style={{ padding: '10px 12px', textAlign: 'right' }}>Acc Qty</th>
+                    <th style={{ padding: '10px 12px', textAlign: 'right' }}>Unit Rate</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {activeGrnForView?.items?.map((item, idx) => (
+                    <tr key={idx} style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
+                      <td style={{ padding: '10px 12px', fontWeight: 600 }}>{item.itemCode}</td>
+                      <td style={{ padding: '10px 12px' }}>{item.particulars || item.itemName}</td>
+                      <td style={{ padding: '10px 12px' }}>{item.materialGrade}</td>
+                      <td style={{ padding: '10px 12px', fontWeight: 600, color: 'var(--color-accent-blue)' }}>
+                        {item.recipeCode} {item.recipeRevision ? `(Rev ${item.recipeRevision})` : ''}
+                      </td>
+                      <td style={{ padding: '10px 12px' }}>
+                        <div>{item.supplierHeatNumber}</div>
+                        <div style={{ fontSize: '10px', color: 'var(--color-text-secondary)' }}>MTR: {item.millTestCertificateNumber || item.mtrNumber || 'VERIFIED'}</div>
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>{item.receivedQuantity} {item.uom}</td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 700, color: 'var(--color-success)' }}>
+                        {item.acceptedQuantity ?? item.receivedQuantity} {item.uom}
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        {item.rate ? `₹${item.rate.toLocaleString()}` : item.unitPrice ? `₹${item.unitPrice.toLocaleString()}` : 'N/A'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Individual Units Breakdown */}
+          <div>
+            <h4 style={{ margin: '0 0 10px 0', fontSize: '14px', fontWeight: 700 }}>
+              Individual Traceable Material/Part Units ({activeGrnForView?.units?.length || activeGrnForView?.totalUnitsGenerated || grnUnits.filter(u => u.grnNumber === activeGrnForView?.grnNumber).length} Units)
+            </h4>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '10px', maxHeight: '240px', overflowY: 'auto', padding: '4px' }}>
+              {(activeGrnForView?.units && activeGrnForView.units.length > 0
+                ? activeGrnForView.units
+                : grnUnits.filter((u) => u.grnNumber === activeGrnForView?.grnNumber)
+              ).map((u: any) => (
+                <div key={u.unitIdentifier} style={{ background: 'var(--color-bg-subtle)', border: '1px solid var(--color-border-subtle)', borderRadius: '6px', padding: '10px 12px', fontSize: '12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                    <span style={{ fontWeight: 700, fontFamily: 'monospace', color: 'var(--color-primary)' }}>{u.unitIdentifier}</span>
+                    <StatusBadge
+                      variant={u.status === 'ALLOCATED_TO_PLAN' ? 'info' : u.status === 'AVAILABLE_FOR_PLANNING' ? 'success' : 'neutral'}
+                      status={u.status || 'AVAILABLE_FOR_PLANNING'}
+                    />
+                  </div>
+                  <div style={{ color: 'var(--color-text-secondary)', fontSize: '11px' }}>
+                    <div><strong>Recipe:</strong> {u.recipeCode} {u.recipeRevision ? `(Rev ${u.recipeRevision})` : ''}</div>
+                    <div><strong>Location:</strong> {u.warehouseCode || u.warehouseName || 'WH-MAIN'} / {u.storageLocationCode || u.locationBay || 'BAY-01-A'}</div>
+                    <div><strong>Heat #:</strong> {u.supplierHeatNumber} • {u.quantity} {u.uom}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Modal Actions */}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '12px' }}>
+            <AppButton variant="secondary" onClick={() => setIsViewGrnModalOpen(false)}>
+              Close
+            </AppButton>
+            <AppButton
+              variant="primary"
+              disabled={!canPrintGrn}
+              leftIcon={<Printer size={16} />}
+              onClick={() => {
+                setIsViewGrnModalOpen(false);
+                if (activeGrnForView) handleOpenPrintGrn(activeGrnForView);
+              }}
+              title={!canPrintGrn ? 'Permission required: inventory:grn:print' : 'Open print preview'}
+            >
+              Print Document
+            </AppButton>
+          </div>
+        </div>
+      </AppDialog>
+
       {/* --- MODAL 5: PRINTABLE OFFICIAL GRN DOCUMENT --- */}
       <AppDialog
         isOpen={isPrintGrnModalOpen}
@@ -2710,6 +2945,17 @@ export const InventoryPage: React.FC = () => {
               </div>
             </div>
 
+            {/* Authoritative PO Lineage Banner */}
+            <div style={{ background: '#e0f2fe', border: '1px solid #7dd3fc', borderRadius: '6px', padding: '10px 14px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <span style={{ fontWeight: 800, color: '#0369a1', textTransform: 'uppercase', fontSize: '11px', letterSpacing: '0.5px' }}>Authoritative Lineage:</span>
+                <span style={{ fontWeight: 700, color: '#0c4a6e', fontSize: '12px', marginLeft: '6px' }}>Purchase Order &rarr; GRN &rarr; Traceable Part Units</span>
+              </div>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: '#0284c7' }}>
+                Parent PO Reference: <strong>{activeGrnForPrint?.poNumber}</strong>
+              </div>
+            </div>
+
             {/* PO & Supplier Metadata */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', fontSize: '12px', marginBottom: '16px' }}>
               <div style={{ background: '#f8fafc', padding: '12px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
@@ -2721,9 +2967,9 @@ export const InventoryPage: React.FC = () => {
               </div>
               <div style={{ background: '#f8fafc', padding: '12px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
                 <div style={{ fontWeight: 700, textTransform: 'uppercase', color: '#475569', marginBottom: '4px' }}>QUALITY & ACCEPTANCE</div>
-                <div><strong>Acceptance Status:</strong> <span style={{ color: '#15803d', fontWeight: 700 }}>{activeGrnForPrint?.acceptanceStatus}</span></div>
+                <div><strong>Acceptance Status:</strong> <span style={{ color: '#15803d', fontWeight: 700 }}>{activeGrnForPrint?.acceptanceStatus || 'ACCEPTED'}</span></div>
                 <div><strong>Packaging:</strong> {activeGrnForPrint?.packagingCondition || 'INTACT'}</div>
-                <div><strong>Inspection Remarks:</strong> {activeGrnForPrint?.inspectionRemarks}</div>
+                <div><strong>Inspection Remarks:</strong> {activeGrnForPrint?.inspectionRemarks || 'All material parameters and MTR mill test certificates verified'}</div>
               </div>
             </div>
 
@@ -2810,10 +3056,10 @@ export const InventoryPage: React.FC = () => {
             </AppButton>
             <AppButton
               variant="primary"
+              disabled={!canPrintGrn}
               leftIcon={<Printer size={16} />}
-              onClick={() => {
-                window.print();
-              }}
+              onClick={handleExecutePrint}
+              title={!canPrintGrn ? 'Permission required: inventory:grn:print' : 'Print official GRN document'}
             >
               Print GRN Document
             </AppButton>

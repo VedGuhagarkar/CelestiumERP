@@ -196,7 +196,16 @@ export class GRNRepository implements IGRNRepository {
   }
 
   public async findGrnById(tenantId: string, id: string): Promise<GRNDocument | null> {
-    return this.grnModel.findOne({ tenantId, _id: id, isDeleted: false }).exec();
+    if (!id || typeof id !== 'string') return null;
+    const isObjectId = mongoose.isValidObjectId(id);
+    const filter: FilterQuery<GRNDocument> = {
+      tenantId,
+      isDeleted: false,
+      ...(isObjectId
+        ? { $or: [{ _id: id }, { grnNumber: id.toUpperCase().trim() }] }
+        : { grnNumber: id.toUpperCase().trim() })
+    };
+    return this.grnModel.findOne(filter).exec();
   }
 
   public async findGrnByNumber(tenantId: string, grnNumber: string): Promise<GRNDocument | null> {

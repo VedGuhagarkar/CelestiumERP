@@ -61,6 +61,7 @@ export class GRNController {
     const result = await this.service.generatePrintableGRN(tenantId, req.params.id as string, {
       userId: user.userId,
       email: user.email,
+      roles: user.roles,
       role: user.roles?.[0],
       ipAddress: req.ip,
       userAgent: req.get('user-agent'),
@@ -76,12 +77,17 @@ export class GRNController {
 
   public getGrnById = async (req: Request, res: Response): Promise<Response> => {
     const tenantId = req.tenantId!;
+    const user = req.user!;
     const searchId = req.params.id as string;
-    const { grns } = await this.service.queryGRNs(tenantId, { search: searchId });
-    const grn = grns.find((g) => g.id === searchId || g.grnNumber === searchId);
-    if (!grn) {
-      return ApiResponse.error(res, `GRN '${searchId}' not found`, 404);
-    }
+    const grn = await this.service.getGRNById(tenantId, searchId, {
+      userId: user.userId,
+      email: user.email,
+      roles: user.roles,
+      role: user.roles?.[0],
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+      correlationId: req.headers['x-correlation-id'] as string
+    });
     return ApiResponse.success(res, grn, 'GRN retrieved successfully');
   };
 
