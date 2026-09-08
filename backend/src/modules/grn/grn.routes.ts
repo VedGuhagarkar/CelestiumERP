@@ -15,9 +15,9 @@ import { PERMISSIONS } from '../rbac/rbac.constants.js';
 
 export const grnRouter = Router();
 
-// 1. Material Receipt: Record arrival against PO
+// 1. Material Receipt: Record arrival against PO (supports both /receipts and /material-receipts)
 grnRouter.post(
-  '/receipts',
+  ['/receipts', '/material-receipts'],
   authenticateJwt,
   requirePermission(PERMISSIONS.INVENTORY_STORAGE_RECORD),
   validateRequest(recordMaterialReceiptSchema),
@@ -26,7 +26,7 @@ grnRouter.post(
 
 // Query Material Receipts
 grnRouter.get(
-  '/receipts',
+  ['/receipts', '/material-receipts'],
   authenticateJwt,
   requirePermission(PERMISSIONS.INVENTORY_STORAGE_RECORD),
   asyncHandler(grnController.queryReceipts)
@@ -34,7 +34,7 @@ grnRouter.get(
 
 // 2. Warehouse Storage: Put away and store received material
 grnRouter.post(
-  '/receipts/:id/store',
+  ['/receipts/:id/store', '/receipts/:id/storage', '/material-receipts/:id/store', '/material-receipts/:id/storage'],
   authenticateJwt,
   requirePermission(PERMISSIONS.INVENTORY_STORAGE_RECORD),
   validateRequest(storeMaterialSchema),

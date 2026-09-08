@@ -12,6 +12,7 @@ export class GRNController {
     const receipt = await this.service.recordMaterialReceipt(tenantId, req.body, {
       userId: user.userId,
       email: user.email,
+      roles: user.roles,
       role: user.roles?.[0],
       ipAddress: req.ip,
       userAgent: req.get('user-agent'),
@@ -26,6 +27,7 @@ export class GRNController {
     const receipt = await this.service.storeMaterialInWarehouse(tenantId, req.params.id as string, req.body, {
       userId: user.userId,
       email: user.email,
+      roles: user.roles,
       role: user.roles?.[0],
       ipAddress: req.ip,
       userAgent: req.get('user-agent'),
@@ -40,6 +42,7 @@ export class GRNController {
     const grn = await this.service.createGRN(tenantId, req.body, {
       userId: user.userId,
       email: user.email,
+      roles: user.roles,
       role: user.roles?.[0],
       ipAddress: req.ip,
       userAgent: req.get('user-agent'),

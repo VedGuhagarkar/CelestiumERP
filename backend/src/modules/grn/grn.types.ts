@@ -28,10 +28,12 @@ export interface IMaterialReceiptItem {
 export interface IMaterialReceipt {
   tenantId: string;
   receiptNumber: string;
+  idempotencyKey?: string;
   poId: string;
   poNumber: string;
   supplierName: string;
   supplierChallanNumber: string;
+  supplierChallanDate: Date;
   supplierInvoiceNumber?: string;
   carrierVehicle?: string;
   driverName?: string;
@@ -142,7 +144,7 @@ export interface GRNUnitDocument extends IGRNUnit, Document {}
 
 // DTOs
 export interface RecordMaterialReceiptItemDto {
-  poLineItemId: string;
+  poLineItemId?: string;
   itemId: string;
   receivedQuantity: number;
   supplierHeatNumber: string;
@@ -154,11 +156,13 @@ export interface RecordMaterialReceiptItemDto {
 
 export interface RecordMaterialReceiptDto {
   poId: string;
+  idempotencyKey?: string;
   supplierChallanNumber: string;
+  supplierChallanDate?: string | Date;
   supplierInvoiceNumber?: string;
   carrierVehicle?: string;
   driverName?: string;
-  receivedDate?: string;
+  receivedDate?: string | Date;
   items: RecordMaterialReceiptItemDto[];
   notes?: string;
 }

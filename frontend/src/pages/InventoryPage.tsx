@@ -396,6 +396,7 @@ export const InventoryPage: React.FC = () => {
   // Authorization Permission Gate (Dynamic RBAC check)
   const { hasPermission } = usePermission();
   const canCreatePo = hasPermission('purchase_order:order:create');
+  const canRecordStorage = hasPermission('inventory:storage:record');
 
   // Form states - Create PO
   const [poSupplierName, setPoSupplierName] = useState('TimkenSteel Specialty Metals');
@@ -415,6 +416,7 @@ export const InventoryPage: React.FC = () => {
   // Form states - Record Receipt
   const [rcptPoId, setRcptPoId] = useState('');
   const [rcptChallanNumber, setRcptChallanNumber] = useState('DC-2026-8819');
+  const [rcptChallanDate, setRcptChallanDate] = useState(new Date().toISOString().split('T')[0]);
   const [rcptInvoiceNumber, setRcptInvoiceNumber] = useState('INV-2026-4402');
   const [rcptVehicleNumber, setRcptVehicleNumber] = useState('MH-12-PQ-4410');
   const [rcptSupplierHeatNumber, setRcptSupplierHeatNumber] = useState('TK-HEAT-4140-901');
@@ -625,12 +627,24 @@ export const InventoryPage: React.FC = () => {
       const poItem = activePo.items[0];
       const payload = {
         poId: activePo.id || activePo._id,
+        idempotencyKey: `rcpt-key-${activePo.id || activePo._id}-${rcptChallanNumber}-${Date.now()}`,
         supplierChallanNumber: rcptChallanNumber,
+        supplierChallanDate: rcptChallanDate,
         supplierInvoiceNumber: rcptInvoiceNumber,
-        vehicleNumber: rcptVehicleNumber,
+        carrierVehicle: rcptVehicleNumber,
+        items: [
+          {
+            poLineItemId: poItem?.poLineItemId || poItem?.lineItemId || 'poi_01',
+            itemId: poItem?.itemId || 'itm_01',
+            receivedQuantity: Number(rcptReceivedQty),
+            supplierHeatNumber: rcptSupplierHeatNumber,
+            mtrNumber: rcptMtrNumber,
+            lineNotes: rcptConditionRemarks
+          }
+        ],
         receivedItems: [
           {
-            poItemId: poItem?.poItemId || 'poi_01',
+            poItemId: poItem?.poItemId || poItem?.lineItemId || 'poi_01',
             itemId: poItem?.itemId || 'itm_01',
             itemCode: poItem?.itemCode || 'MAT-4140-RND-50',
             itemName: poItem?.itemName || 'AISI 4140 Alloy Round Bar',
@@ -1091,6 +1105,7 @@ export const InventoryPage: React.FC = () => {
                             <ActionButton
                               variant="secondary"
                               size="sm"
+                              disabled={!canRecordStorage || po.status === 'CLOSED' || po.status === 'CANCELLED'}
                               leftIcon={<Truck size={14} />}
                               onClick={() => {
                                 setRcptPoId(po.id || po._id || '');
@@ -1166,6 +1181,7 @@ export const InventoryPage: React.FC = () => {
             <AppButton
               variant="primary"
               size="sm"
+              disabled={!canRecordStorage}
               leftIcon={<Truck size={14} />}
               onClick={() => {
                 if (purchaseOrders.length > 0) {
@@ -1777,9 +1793,16 @@ export const InventoryPage: React.FC = () => {
         size="lg"
       >
         <form onSubmit={handleRecordReceipt} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {!canRecordStorage && (
+            <AppAlert variant="warning" title="Storage Permission Required">
+              You lack the authoritative <strong>inventory:storage:record</strong> permission. Receiving incoming material and warehouse storage actions are disabled.
+            </AppAlert>
+          )}
+
           <AppSelect
             label="Target Purchase Order (Strict 1:1 Lineage)"
             required
+            disabled={!canRecordStorage}
             value={rcptPoId}
             onChange={(e) => setRcptPoId(e.target.value)}
             options={purchaseOrders.map((p) => ({
@@ -1788,16 +1811,26 @@ export const InventoryPage: React.FC = () => {
             }))}
           />
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: '12px' }}>
             <AppInput
               label="Supplier Challan / Delivery Note #"
               required
+              disabled={!canRecordStorage}
               value={rcptChallanNumber}
               onChange={(e) => setRcptChallanNumber(e.target.value)}
               placeholder="e.g. DC-2026-8819"
             />
             <AppInput
+              label="Supplier Challan Date"
+              type="date"
+              required
+              disabled={!canRecordStorage}
+              value={rcptChallanDate}
+              onChange={(e) => setRcptChallanDate(e.target.value)}
+            />
+            <AppInput
               label="Supplier Invoice Number"
+              disabled={!canRecordStorage}
               value={rcptInvoiceNumber}
               onChange={(e) => setRcptInvoiceNumber(e.target.value)}
               placeholder="e.g. INV-2026-4402"
@@ -1807,6 +1840,7 @@ export const InventoryPage: React.FC = () => {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
             <AppInput
               label="Delivery Vehicle Number"
+              disabled={!canRecordStorage}
               value={rcptVehicleNumber}
               onChange={(e) => setRcptVehicleNumber(e.target.value)}
               placeholder="e.g. MH-12-PQ-4410"
@@ -1814,6 +1848,7 @@ export const InventoryPage: React.FC = () => {
             <AppInput
               label="Supplier Heat Lot / Melt #"
               required
+              disabled={!canRecordStorage}
               value={rcptSupplierHeatNumber}
               onChange={(e) => setRcptSupplierHeatNumber(e.target.value)}
               placeholder="e.g. TK-HEAT-4140-901"
@@ -1824,6 +1859,7 @@ export const InventoryPage: React.FC = () => {
             <AppInput
               label="Mill Test Certificate (MTR) #"
               required
+              disabled={!canRecordStorage}
               value={rcptMtrNumber}
               onChange={(e) => setRcptMtrNumber(e.target.value)}
               placeholder="e.g. MTR-TK-2026-8812"
@@ -1832,12 +1868,14 @@ export const InventoryPage: React.FC = () => {
               label="Received Quantity"
               type="number"
               required
+              disabled={!canRecordStorage}
               value={rcptReceivedQty}
               onChange={(e) => setRcptReceivedQty(Number(e.target.value))}
             />
             <AppInput
               label="Packages / Bundles Count"
               type="number"
+              disabled={!canRecordStorage}
               value={rcptPackagesCount}
               onChange={(e) => setRcptPackagesCount(Number(e.target.value))}
             />
@@ -1845,6 +1883,7 @@ export const InventoryPage: React.FC = () => {
 
           <AppInput
             label="Inward Inspection & Physical Condition Remarks"
+            disabled={!canRecordStorage}
             value={rcptConditionRemarks}
             onChange={(e) => setRcptConditionRemarks(e.target.value)}
             placeholder="e.g. Prime bundled bars, end tags matched MTR."
@@ -1854,7 +1893,13 @@ export const InventoryPage: React.FC = () => {
             <AppButton variant="secondary" onClick={() => setIsRecordReceiptModalOpen(false)}>
               Cancel
             </AppButton>
-            <AppButton variant="primary" type="submit" isLoading={isSubmitting} leftIcon={<Truck size={16} />}>
+            <AppButton
+              variant="primary"
+              type="submit"
+              disabled={!canRecordStorage}
+              isLoading={isSubmitting}
+              leftIcon={<Truck size={16} />}
+            >
               Save Material Receipt
             </AppButton>
           </div>

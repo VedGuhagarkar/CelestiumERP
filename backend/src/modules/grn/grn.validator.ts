@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { ValidationSchema } from '../../core/middleware/validate.middleware.js';
 
 export const recordMaterialReceiptItemSchema = z.object({
-  poLineItemId: z.string().trim().min(1, 'PO line item ID is required'),
+  poLineItemId: z.string().trim().min(1, 'PO line item ID is required').optional(),
   itemId: z.string().trim().min(1, 'Item ID is required'),
   receivedQuantity: z.number().positive('Received quantity must be greater than zero'),
   supplierHeatNumber: z.string().trim().min(1, 'Supplier Heat Number is required').max(100),
@@ -15,7 +15,9 @@ export const recordMaterialReceiptItemSchema = z.object({
 export const recordMaterialReceiptSchema: ValidationSchema = {
   body: z.object({
     poId: z.string().trim().min(1, 'Purchase Order ID is required'),
+    idempotencyKey: z.string().trim().max(100).optional(),
     supplierChallanNumber: z.string().trim().min(1, 'Supplier Delivery Challan Number is required').max(100),
+    supplierChallanDate: z.string().datetime().or(z.string().regex(/^\d{4}-\d{2}-\d{2}/)).optional(),
     supplierInvoiceNumber: z.string().trim().max(100).optional(),
     carrierVehicle: z.string().trim().max(100).optional(),
     driverName: z.string().trim().max(100).optional(),

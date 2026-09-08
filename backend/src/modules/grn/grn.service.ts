@@ -3,6 +3,7 @@ import { IGRNRepository, grnRepository } from './grn.repository.js';
 import { purchaseOrderService, PurchaseOrderService } from '../purchase-order/purchase-order.service.js';
 import { warehouseService, WarehouseService } from '../warehouse/warehouse.service.js';
 import { auditService, AuditService } from '../audit/audit.service.js';
+import { rbacService, RbacService } from '../rbac/rbac.service.js';
 import {
   MaterialReceiptDocument,
   GRNDocument,
@@ -16,12 +17,14 @@ import {
   IGRNItem,
   IGRNUnit
 } from './grn.types.js';
-import { BadRequestError, NotFoundError } from '../../core/errors/app-error.js';
+import { BadRequestError, NotFoundError, ForbiddenError } from '../../core/errors/app-error.js';
 import { DomainEvents } from '../../core/constants/events.js';
+import { PERMISSIONS } from '../rbac/rbac.constants.js';
 
 export interface ActorContext {
   userId: string;
   email?: string;
+  roles?: string[];
   role?: string;
   ipAddress?: string;
   userAgent?: string;
@@ -33,7 +36,8 @@ export class GRNService extends BaseService {
     private readonly repo: IGRNRepository = grnRepository,
     private readonly poService: PurchaseOrderService = purchaseOrderService,
     private readonly whService: WarehouseService = warehouseService,
-    private readonly audit: AuditService = auditService
+    private readonly audit: AuditService = auditService,
+    private readonly rbac: RbacService = rbacService
   ) {
     super('GRNService');
   }
@@ -46,13 +50,61 @@ export class GRNService extends BaseService {
     dto: RecordMaterialReceiptDto,
     actor: ActorContext
   ): Promise<MaterialReceiptDocument> {
-    // A. Verify PO existence and eligibility
+    // 0. Permission Enforcement (Dynamic RBAC Check - requires INVENTORY_STORAGE_RECORD)
+    const effectiveRoles = actor.roles && actor.roles.length > 0
+      ? actor.roles
+      : (actor.role ? [actor.role] : []);
+
+    const isSuperAdmin = effectiveRoles.some((r) => r.toUpperCase() === 'ADMIN' || r.toUpperCase() === 'SUPERADMIN');
+    if (!isSuperAdmin) {
+      if (effectiveRoles.length === 0) {
+        throw new ForbiddenError(
+          `Access Denied: You lack required permission '${PERMISSIONS.INVENTORY_STORAGE_RECORD}' to record incoming material receipt`
+        );
+      }
+      const userPerms = await this.rbac.getUserEffectivePermissions(tenantId, actor.userId, effectiveRoles);
+      if (!userPerms.permissions.includes(PERMISSIONS.INVENTORY_STORAGE_RECORD)) {
+        throw new ForbiddenError(
+          `Access Denied: You lack required permission '${PERMISSIONS.INVENTORY_STORAGE_RECORD}' to record incoming material receipt`
+        );
+      }
+    }
+
+    // 1. Idempotency & Duplicate Submission Check
+    if (dto.idempotencyKey) {
+      const existing = await this.repo.findReceiptByIdempotencyKey(tenantId, dto.idempotencyKey);
+      if (existing) {
+        this.logger.info(
+          `♻️ Idempotency replay: Returning existing Material Receipt [${existing.receiptNumber}] for key '${dto.idempotencyKey}'`
+        );
+        return existing;
+      }
+    }
+
+    // 2. PO Validation & Eligibility Check
+    if (!dto.poId || !dto.poId.trim()) {
+      throw new BadRequestError('Purchase Order ID is required');
+    }
     const po = await this.poService.getOrderById(tenantId, dto.poId);
+
+    if (po.status === 'DRAFT') {
+      throw new BadRequestError("Cannot record material receipt against Purchase Order in 'DRAFT' status. PO must be issued first.");
+    }
 
     if (po.status === 'CLOSED' || po.status === 'CANCELLED') {
       throw new BadRequestError(`Cannot record material receipt against Purchase Order in '${po.status}' status`);
     }
 
+    // 3. Supplier Challan Information Validation
+    if (!dto.supplierChallanNumber || !dto.supplierChallanNumber.trim()) {
+      throw new BadRequestError('Supplier Delivery Challan Number is required');
+    }
+    const challanDate = dto.supplierChallanDate ? new Date(dto.supplierChallanDate) : new Date();
+    if (isNaN(challanDate.getTime())) {
+      throw new BadRequestError('Invalid supplier challan date');
+    }
+
+    // 4. Material Items Reconciliation against PO
     if (!dto.items || dto.items.length === 0) {
       throw new BadRequestError('At least one item must be received');
     }
@@ -78,7 +130,17 @@ export class GRNService extends BaseService {
         );
       }
 
-      const remainingOrdered = poLine.orderedQuantity - poLine.receivedQuantity;
+      if (!itemDto.supplierHeatNumber || !itemDto.supplierHeatNumber.trim()) {
+        throw new BadRequestError(
+          `Supplier Heat Number is required for incoming material traceability on PO line [${poLine.itemCode}]`
+        );
+      }
+
+      if (!itemDto.receivedQuantity || itemDto.receivedQuantity <= 0) {
+        throw new BadRequestError('Received quantity must be greater than zero');
+      }
+
+      const remainingOrdered = poLine.orderedQuantity - (poLine.receivedQuantity || 0);
       if (itemDto.receivedQuantity > remainingOrdered * 1.1) {
         // 10% over-delivery tolerance
         throw new BadRequestError(
@@ -86,6 +148,7 @@ export class GRNService extends BaseService {
         );
       }
 
+      // Backend authority: all item master and recipe data is derived authoritatively from the PO
       processedItems.push({
         poLineItemId: poLine.lineItemId,
         itemId: poLine.itemId,
@@ -111,10 +174,12 @@ export class GRNService extends BaseService {
 
     const receipt = await this.repo.createReceipt(tenantId, {
       receiptNumber,
+      idempotencyKey: dto.idempotencyKey?.trim(),
       poId: po.id,
       poNumber: po.poNumber,
       supplierName: po.supplierName,
       supplierChallanNumber: dto.supplierChallanNumber.toUpperCase().trim(),
+      supplierChallanDate: challanDate,
       supplierInvoiceNumber: dto.supplierInvoiceNumber?.toUpperCase().trim(),
       carrierVehicle: dto.carrierVehicle?.toUpperCase().trim(),
       driverName: dto.driverName?.trim(),
@@ -126,12 +191,23 @@ export class GRNService extends BaseService {
       isDeleted: false
     });
 
+    // Update PO Received Progression immediately so subsequent partial deliveries validate against accurate remaining quantities
+    try {
+      await this.poService.recordReceiptProgression(
+        tenantId,
+        po.id,
+        processedItems.map((i) => ({ itemId: i.itemId, quantity: i.receivedQuantity }))
+      );
+    } catch (err) {
+      this.logger.warn(`Could not update PO receipt progression for [${po.poNumber}]: ${(err as Error).message}`);
+    }
+
     this.logger.info(`📥 Material receipt recorded: [${receipt.receiptNumber}] against PO [${po.poNumber}] from "${po.supplierName}"`);
 
     await this.audit.record(tenantId, {
       actorId: actor.userId,
       actorEmail: actor.email,
-      actorRole: actor.role,
+      actorRole: actor.role || actor.roles?.[0],
       action: 'MATERIAL_RECEIPT_RECORDED',
       entityType: 'MaterialReceipt',
       entityId: receipt.id,
@@ -161,6 +237,26 @@ export class GRNService extends BaseService {
     dto: StoreMaterialDto,
     actor: ActorContext
   ): Promise<MaterialReceiptDocument> {
+    // 0. Permission Enforcement (Dynamic RBAC Check - requires INVENTORY_STORAGE_RECORD)
+    const effectiveRoles = actor.roles && actor.roles.length > 0
+      ? actor.roles
+      : (actor.role ? [actor.role] : []);
+
+    const isSuperAdmin = effectiveRoles.some((r) => r.toUpperCase() === 'ADMIN' || r.toUpperCase() === 'SUPERADMIN');
+    if (!isSuperAdmin) {
+      if (effectiveRoles.length === 0) {
+        throw new ForbiddenError(
+          `Access Denied: You lack required permission '${PERMISSIONS.INVENTORY_STORAGE_RECORD}' to store received material`
+        );
+      }
+      const userPerms = await this.rbac.getUserEffectivePermissions(tenantId, actor.userId, effectiveRoles);
+      if (!userPerms.permissions.includes(PERMISSIONS.INVENTORY_STORAGE_RECORD)) {
+        throw new ForbiddenError(
+          `Access Denied: You lack required permission '${PERMISSIONS.INVENTORY_STORAGE_RECORD}' to store received material`
+        );
+      }
+    }
+
     const receipt = await this.repo.findReceiptById(tenantId, receiptId);
     if (!receipt) {
       throw new NotFoundError(`Material Receipt with ID '${receiptId}' not found`);
@@ -374,13 +470,6 @@ export class GRNService extends BaseService {
     // Update Material Receipt status
     receipt.status = 'GRN_CREATED';
     await receipt.save();
-
-    // Update PO Received Progression
-    await this.poService.recordReceiptProgression(
-      tenantId,
-      po.id,
-      receipt.items.map((i) => ({ itemId: i.itemId, quantity: i.receivedQuantity }))
-    );
 
     this.logger.info(
       `📑 GRN created: [${grn.grnNumber}] PO: [${po.poNumber}] Generated ${unitsToInsert.length} certified units (Available for Planning)`

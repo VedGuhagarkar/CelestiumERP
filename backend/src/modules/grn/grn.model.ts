@@ -35,10 +35,12 @@ const MaterialReceiptItemSchema = new Schema<IMaterialReceiptItem>(
 // 2. Material Receipt Schema
 const MaterialReceiptSchema = createBaseSchema<MaterialReceiptDocument>({
   receiptNumber: { type: String, required: true, uppercase: true, trim: true },
+  idempotencyKey: { type: String, trim: true },
   poId: { type: String, required: true },
   poNumber: { type: String, required: true, uppercase: true, trim: true },
   supplierName: { type: String, required: true, trim: true },
   supplierChallanNumber: { type: String, required: true, uppercase: true, trim: true },
+  supplierChallanDate: { type: Date, required: true, default: Date.now },
   supplierInvoiceNumber: { type: String, uppercase: true, trim: true },
   carrierVehicle: { type: String, uppercase: true, trim: true },
   driverName: { type: String, trim: true },
@@ -60,6 +62,10 @@ const MaterialReceiptSchema = createBaseSchema<MaterialReceiptDocument>({
 });
 
 IndexRegistry.addTenantUniqueIndex(MaterialReceiptSchema, 'receiptNumber');
+MaterialReceiptSchema.index(
+  { tenantId: 1, idempotencyKey: 1 },
+  { unique: true, sparse: true, name: 'tenant_idempotency_receipt_idx' }
+);
 MaterialReceiptSchema.index({ tenantId: 1, poId: 1 });
 MaterialReceiptSchema.index({ tenantId: 1, poNumber: 1 });
 MaterialReceiptSchema.index({ tenantId: 1, status: 1 });

@@ -13,6 +13,7 @@ export interface IGRNRepository {
   createReceipt(tenantId: string, data: Partial<MaterialReceiptDocument>): Promise<MaterialReceiptDocument>;
   findReceiptById(tenantId: string, id: string): Promise<MaterialReceiptDocument | null>;
   findReceiptByNumber(tenantId: string, receiptNumber: string): Promise<MaterialReceiptDocument | null>;
+  findReceiptByIdempotencyKey(tenantId: string, idempotencyKey: string): Promise<MaterialReceiptDocument | null>;
   updateReceipt(tenantId: string, id: string, data: Partial<MaterialReceiptDocument>): Promise<MaterialReceiptDocument | null>;
   generateNextReceiptNumber(tenantId: string): Promise<string>;
   queryReceipts(tenantId: string, query: { poId?: string; status?: string; search?: string }): Promise<MaterialReceiptDocument[]>;
@@ -60,6 +61,10 @@ export class GRNRepository implements IGRNRepository {
 
   public async findReceiptByNumber(tenantId: string, receiptNumber: string): Promise<MaterialReceiptDocument | null> {
     return this.receiptModel.findOne({ tenantId, receiptNumber: receiptNumber.toUpperCase().trim(), isDeleted: false }).exec();
+  }
+
+  public async findReceiptByIdempotencyKey(tenantId: string, idempotencyKey: string): Promise<MaterialReceiptDocument | null> {
+    return this.receiptModel.findOne({ tenantId, idempotencyKey: idempotencyKey.trim(), isDeleted: false }).exec();
   }
 
   public async updateReceipt(tenantId: string, id: string, data: Partial<MaterialReceiptDocument>): Promise<MaterialReceiptDocument | null> {
