@@ -29,7 +29,8 @@ import {
   PRIORITY_WEIGHTS,
   IJobRecipeSnapshot,
   IJobSpecificationSnapshot,
-  IBatchOrderGenealogy
+  IBatchOrderGenealogy,
+  IBatchOrderWorkflowState
 } from './production-job.types.js';
 import { customerRepository } from '../customer/customer.repository.js';
 import { itemRepository } from '../item/item.repository.js';
@@ -77,6 +78,70 @@ export class ProductionJobService {
       if (existingJob) {
         return existingJob;
       }
+    }
+
+    // 0b. Enforce Initial Workflow State & Anti-Manipulation Invariant (Prompt 6)
+    const rawDto = dto as any;
+    if (
+      rawDto.inProduction ||
+      rawDto.waitingForInspection ||
+      rawDto.inInspection ||
+      rawDto.waitingForDispatch ||
+      rawDto.dispatched ||
+      rawDto.inspection
+    ) {
+      throw new BadRequestError(
+        "Invalid State Manipulation: Newly created Batch Order must strictly enter 'waiting for production'. Manipulating initial state to inProduction, waitingForInspection, inInspection, waitingForDispatch, dispatched, or inspection is strictly rejected."
+      );
+    }
+
+    if (rawDto.waitingForProduction === false) {
+      throw new BadRequestError(
+        "Invalid State Manipulation: 'waitingForProduction' cannot be false on newly created Batch Order."
+      );
+    }
+
+    if (rawDto.status && rawDto.status !== 'WAITING_FOR_PRODUCTION') {
+      throw new BadRequestError(
+        `Invalid State Manipulation: Initial status must be 'WAITING_FOR_PRODUCTION' (received: '${rawDto.status}').`
+      );
+    }
+
+    if (rawDto.workflowState) {
+      const ws = rawDto.workflowState;
+      if (
+        ws.inProduction ||
+        ws.waitingForInspection ||
+        ws.inInspection ||
+        ws.waitingForDispatch ||
+        ws.dispatched ||
+        ws.inspection
+      ) {
+        throw new BadRequestError(
+          "Invalid State Manipulation: Newly created Batch Order must strictly enter 'waiting for production'. Manipulating initial state to inProduction, waitingForInspection, inInspection, waitingForDispatch, dispatched, or inspection is strictly rejected."
+        );
+      }
+      if (ws.waitingForProduction === false) {
+        throw new BadRequestError(
+          "Invalid State Manipulation: 'waitingForProduction' cannot be false on newly created Batch Order."
+        );
+      }
+    }
+
+    const activeFlagsCount = [
+      rawDto.waitingForProduction,
+      rawDto.inProduction,
+      rawDto.waitingForInspection,
+      rawDto.inInspection,
+      rawDto.waitingForDispatch,
+      rawDto.dispatched,
+      rawDto.inspection
+    ].filter((f) => f === true).length;
+
+    if (activeFlagsCount > 1) {
+      throw new BadRequestError(
+        `Mutual Exclusivity Violation: Exactly one BO workflow state flag must be true at any moment. Received ${activeFlagsCount} active flags.`
+      );
     }
 
     if (!dto.poId) {
@@ -511,6 +576,20 @@ export class ProductionJobService {
           weight: requestedWeight,
           dueDate,
           status: 'WAITING_FOR_PRODUCTION',
+          waitingForProduction: true,
+          inProduction: false,
+          waitingForInspection: false,
+          inInspection: false,
+          waitingForDispatch: false,
+          dispatched: false,
+          workflowState: {
+            waitingForProduction: true,
+            inProduction: false,
+            waitingForInspection: false,
+            inInspection: false,
+            waitingForDispatch: false,
+            dispatched: false
+          },
           priority: dto.priority || 'NORMAL',
           recipeSnapshot,
           specificationSnapshot: specSnapshot,
@@ -601,7 +680,17 @@ export class ProductionJobService {
         grnNumber: grn.grnNumber,
         itemCode: grnItem.itemCode,
         recipeCode: recipe.recipeCode,
-        targetQuantity: dto.targetQuantity
+        targetQuantity: dto.targetQuantity,
+        initialWorkflowState: 'WAITING_FOR_PRODUCTION',
+        waitingForProduction: true,
+        workflowState: {
+          waitingForProduction: true,
+          inProduction: false,
+          waitingForInspection: false,
+          inInspection: false,
+          waitingForDispatch: false,
+          dispatched: false
+        }
       }
     });
 
@@ -616,7 +705,16 @@ export class ProductionJobService {
         boNumber: job.boNumber,
         poNumber: po.poNumber,
         grnNumber: grn.grnNumber,
-        status: job.status
+        status: job.status,
+        waitingForProduction: true,
+        workflowState: {
+          waitingForProduction: true,
+          inProduction: false,
+          waitingForInspection: false,
+          inInspection: false,
+          waitingForDispatch: false,
+          dispatched: false
+        }
       }
     });
 

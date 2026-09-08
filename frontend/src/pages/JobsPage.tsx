@@ -71,6 +71,20 @@ export interface ProductionJob {
     | 'DISPATCHED'
     | 'COMPLETED'
     | 'CANCELLED';
+  waitingForProduction?: boolean;
+  inProduction?: boolean;
+  waitingForInspection?: boolean;
+  inInspection?: boolean;
+  waitingForDispatch?: boolean;
+  dispatched?: boolean;
+  workflowState?: {
+    waitingForProduction: boolean;
+    inProduction: boolean;
+    waitingForInspection: boolean;
+    inInspection: boolean;
+    waitingForDispatch: boolean;
+    dispatched: boolean;
+  };
   priority: 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT' | 'AOG_CRITICAL' | 'CRITICAL';
   recipeSnapshot?: {
     recipeId?: string;
@@ -1411,6 +1425,64 @@ export const JobsPage: React.FC = () => {
               </div>
             </AppCard>
 
+            {/* Mutually Exclusive Workflow State Machine Card */}
+            <AppCard style={{ padding: '16px', background: 'rgba(245, 158, 11, 0.04)', border: '1px solid rgba(245, 158, 11, 0.25)' }}>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: '#f59e0b', marginBottom: '10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Clock size={14} /> WORKFLOW STATE MACHINE (MUTUALLY EXCLUSIVE)
+                </div>
+                <span
+                  style={{
+                    fontSize: '10px',
+                    fontWeight: 700,
+                    padding: '2px 8px',
+                    borderRadius: '999px',
+                    background: 'rgba(245, 158, 11, 0.15)',
+                    color: '#fcd34d',
+                    border: '1px solid rgba(245, 158, 11, 0.3)'
+                  }}
+                >
+                  EXACTLY 1 ACTIVE
+                </span>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', fontSize: '11px' }}>
+                {[
+                  { name: 'waitingForProduction', label: 'Waiting for Production', active: selectedJob.waitingForProduction ?? (selectedJob.status === 'WAITING_FOR_PRODUCTION') },
+                  { name: 'inProduction', label: 'In Production', active: selectedJob.inProduction ?? (['IN_PROGRESS', 'SCHEDULED', 'APPROVED'].includes(selectedJob.status)) },
+                  { name: 'waitingForInspection', label: 'Waiting for Inspection', active: selectedJob.waitingForInspection ?? (selectedJob.status === 'QUALITY_CHECK') },
+                  { name: 'inInspection', label: 'In Inspection', active: selectedJob.inInspection ?? (selectedJob.status === ('INSPECTING' as any)) },
+                  { name: 'waitingForDispatch', label: 'Waiting for Dispatch', active: selectedJob.waitingForDispatch ?? (['STORAGE', 'READY_FOR_DISPATCH'].includes(selectedJob.status)) },
+                  { name: 'dispatched', label: 'Dispatched', active: selectedJob.dispatched ?? (['DISPATCHED', 'COMPLETED'].includes(selectedJob.status)) }
+                ].map((st) => (
+                  <div
+                    key={st.name}
+                    style={{
+                      padding: '8px 10px',
+                      borderRadius: '6px',
+                      background: st.active ? 'rgba(245, 158, 11, 0.18)' : 'rgba(255, 255, 255, 0.02)',
+                      border: st.active ? '1px solid #f59e0b' : '1px solid rgba(255, 255, 255, 0.05)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between'
+                    }}
+                  >
+                    <span style={{ color: st.active ? '#ffffff' : 'var(--color-text-muted)', fontWeight: st.active ? 700 : 500 }}>
+                      {st.label}
+                    </span>
+                    <span
+                      style={{
+                        width: '8px',
+                        height: '8px',
+                        borderRadius: '50%',
+                        background: st.active ? '#10b981' : 'rgba(255, 255, 255, 0.2)'
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+            </AppCard>
+
             <AppCard style={{ padding: '16px' }}>
               <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--color-primary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <Flame size={14} /> METALLURGICAL THERMAL RECIPE SNAPSHOT
@@ -1766,6 +1838,41 @@ export const JobsPage: React.FC = () => {
                   <span>Authoritative Customer: <strong style={{ color: '#38bdf8' }}>{selectedGrn.supplierName || selectedPo.supplierName || 'Valued Customer'}</strong> (Derived from GRN)</span>
                   <span>Authoritative Material: <strong style={{ color: '#34d399' }}>{selectedPart.materialGrade || 'Ti-6Al-4V'}</strong> (Locked from Master)</span>
                 </div>
+              </div>
+
+              {/* Initial Workflow State Machine Banner (Prompt 6 Compliance) */}
+              <div
+                style={{
+                  padding: '10px 12px',
+                  borderRadius: 'var(--radius-md)',
+                  background: 'rgba(245, 158, 11, 0.08)',
+                  border: '1px solid rgba(245, 158, 11, 0.3)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  fontSize: '12px'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Clock size={16} color="#f59e0b" />
+                  <div>
+                    <span style={{ fontWeight: 700, color: '#f59e0b' }}>AUTOMATED INITIAL WORKFLOW STATE: </span>
+                    <span style={{ color: '#ffffff', fontWeight: 600 }}>waiting for production</span>
+                  </div>
+                </div>
+                <span
+                  style={{
+                    fontSize: '10px',
+                    fontWeight: 700,
+                    padding: '2px 8px',
+                    borderRadius: '999px',
+                    background: 'rgba(245, 158, 11, 0.2)',
+                    color: '#fcd34d',
+                    border: '1px solid rgba(245, 158, 11, 0.4)'
+                  }}
+                >
+                  MUTUALLY EXCLUSIVE (1/6)
+                </span>
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>

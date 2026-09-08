@@ -123,11 +123,11 @@ productionJobRouter.get(
   asyncHandler(productionJobController.getMachineUtilizationAndDowntime)
 );
 
-// 5. Query and Filter Production Jobs
+// 5. Query and Filter Production Jobs / Batch Orders
 productionJobRouter.get(
-  '/',
+  ['/', '/batch-orders'],
   authenticateJwt,
-  requirePermission(PERMISSIONS.PRODUCTION_JOB_VIEW),
+  requireAnyPermission(PERMISSIONS.PRODUCTION_JOB_VIEW, PERMISSIONS.BATCH_ORDER_VIEW),
   validateRequest(queryJobsSchema),
   asyncHandler(productionJobController.getJobs)
 );

@@ -122,7 +122,16 @@ export const createBatchOrderSchema: ValidationSchema = {
       customerCode: z.string().trim().optional(),
       customerName: z.string().trim().optional(),
       materialGrade: z.string().trim().optional(),
-      material: z.string().trim().optional()
+      material: z.string().trim().optional(),
+      waitingForProduction: z.boolean().optional(),
+      inProduction: z.boolean().optional(),
+      waitingForInspection: z.boolean().optional(),
+      inInspection: z.boolean().optional(),
+      waitingForDispatch: z.boolean().optional(),
+      dispatched: z.boolean().optional(),
+      inspection: z.boolean().optional(),
+      status: z.string().optional(),
+      workflowState: z.record(z.any()).optional()
     })
     .superRefine((data, ctx) => {
       const qty = data.quantity !== undefined ? data.quantity : data.targetQuantity;
@@ -152,6 +161,87 @@ export const createBatchOrderSchema: ValidationSchema = {
           code: z.ZodIssueCode.custom,
           message: 'Batch Order weight must not be negative',
           path: ['weight']
+        });
+      }
+
+      // 3. Workflow State Machine Initial State & Anti-Manipulation Invariant
+      const invalidInitialFlags = [
+        { key: 'inProduction', val: data.inProduction },
+        { key: 'waitingForInspection', val: data.waitingForInspection },
+        { key: 'inInspection', val: data.inInspection },
+        { key: 'waitingForDispatch', val: data.waitingForDispatch },
+        { key: 'dispatched', val: data.dispatched },
+        { key: 'inspection', val: data.inspection }
+      ];
+
+      for (const flag of invalidInitialFlags) {
+        if (flag.val === true) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Invalid State Manipulation: Setting initial workflow state to '${flag.key}' is strictly prohibited. Newly created Batch Order must strictly enter 'waiting for production'.`,
+            path: [flag.key]
+          });
+        }
+      }
+
+      if (data.waitingForProduction === false) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Invalid State Manipulation: 'waitingForProduction' cannot be false on newly created Batch Order.",
+          path: ['waitingForProduction']
+        });
+      }
+
+      if (data.status && data.status !== 'WAITING_FOR_PRODUCTION') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Invalid State Manipulation: Initial status must be 'WAITING_FOR_PRODUCTION' (received '${data.status}').`,
+          path: ['status']
+        });
+      }
+
+      if (data.workflowState) {
+        const ws = data.workflowState;
+        if (
+          ws.inProduction ||
+          ws.waitingForInspection ||
+          ws.inInspection ||
+          ws.waitingForDispatch ||
+          ws.dispatched ||
+          ws.inspection
+        ) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message:
+              "Invalid State Manipulation: Newly created Batch Order must strictly enter 'waiting for production'. Manipulating initial state to inProduction, waitingForInspection, inInspection, waitingForDispatch, dispatched, or inspection is strictly rejected.",
+            path: ['workflowState']
+          });
+        }
+        if (ws.waitingForProduction === false) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Invalid State Manipulation: 'waitingForProduction' cannot be false on newly created Batch Order.",
+            path: ['workflowState', 'waitingForProduction']
+          });
+        }
+      }
+
+      // 4. Mutual Exclusivity Invariant
+      const activeFlags = [
+        data.waitingForProduction,
+        data.inProduction,
+        data.waitingForInspection,
+        data.inInspection,
+        data.waitingForDispatch,
+        data.dispatched,
+        data.inspection
+      ].filter((f) => f === true);
+
+      if (activeFlags.length > 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Mutual Exclusivity Violation: Exactly one BO workflow state flag must be true at any moment (received ${activeFlags.length} active flags).`,
+          path: ['workflowState']
         });
       }
     })

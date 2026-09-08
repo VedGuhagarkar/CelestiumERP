@@ -1,6 +1,18 @@
 import mongoose, { Schema } from 'mongoose';
 import { createBaseSchema } from '../../core/models/base.schema.js';
-import { ProductionJobDocument, IProcessDetailRow } from './production-job.types.js';
+import { ProductionJobDocument, IProcessDetailRow, IBatchOrderWorkflowState } from './production-job.types.js';
+
+const workflowStateSchema = new Schema<IBatchOrderWorkflowState>(
+  {
+    waitingForProduction: { type: Boolean, default: true },
+    inProduction: { type: Boolean, default: false },
+    waitingForInspection: { type: Boolean, default: false },
+    inInspection: { type: Boolean, default: false },
+    waitingForDispatch: { type: Boolean, default: false },
+    dispatched: { type: Boolean, default: false }
+  },
+  { _id: false }
+);
 
 const processDetailRowSchema = new Schema<IProcessDetailRow>(
   {
@@ -410,6 +422,23 @@ const productionJobSchema = createBaseSchema<ProductionJobDocument>({
     ],
     default: 'WAITING_FOR_PRODUCTION'
   },
+  waitingForProduction: { type: Boolean, default: true },
+  inProduction: { type: Boolean, default: false },
+  waitingForInspection: { type: Boolean, default: false },
+  inInspection: { type: Boolean, default: false },
+  waitingForDispatch: { type: Boolean, default: false },
+  dispatched: { type: Boolean, default: false },
+  workflowState: {
+    type: workflowStateSchema,
+    default: () => ({
+      waitingForProduction: true,
+      inProduction: false,
+      waitingForInspection: false,
+      inInspection: false,
+      waitingForDispatch: false,
+      dispatched: false
+    })
+  },
   priority: {
     type: String,
     enum: ['LOW', 'NORMAL', 'HIGH', 'URGENT', 'AOG_CRITICAL'],
@@ -432,6 +461,77 @@ const productionJobSchema = createBaseSchema<ProductionJobDocument>({
 });
 
 productionJobSchema.pre('save', function (next) {
+  // If status was changed but workflow flags were not explicitly modified, keep them synchronized
+  const anyFlagModified =
+    this.isModified('waitingForProduction') ||
+    this.isModified('inProduction') ||
+    this.isModified('waitingForInspection') ||
+    this.isModified('inInspection') ||
+    this.isModified('waitingForDispatch') ||
+    this.isModified('dispatched') ||
+    this.isModified('workflowState');
+
+  if (this.isModified('status') && !anyFlagModified) {
+    const s = this.status;
+    this.waitingForProduction = false;
+    this.inProduction = false;
+    this.waitingForInspection = false;
+    this.inInspection = false;
+    this.waitingForDispatch = false;
+    this.dispatched = false;
+
+    if (s === 'WAITING_FOR_PRODUCTION' || s === 'DRAFT' || s === 'PENDING_REVIEW') {
+      this.waitingForProduction = true;
+    } else if (s === 'IN_PROGRESS' || s === 'SCHEDULED' || s === 'APPROVED' || s === 'PAUSED') {
+      this.inProduction = true;
+    } else if (s === 'QUALITY_CHECK') {
+      this.waitingForInspection = true;
+    } else if (s === 'STORAGE' || s === 'READY_FOR_DISPATCH') {
+      this.waitingForDispatch = true;
+    } else if (s === 'DISPATCHED' || s === 'COMPLETED' || s === 'CANCELLED') {
+      this.dispatched = true;
+    } else {
+      this.waitingForProduction = true;
+    }
+  }
+
+  // Synchronize workflowState subdocument with top-level flags
+  if (this.workflowState) {
+    if (this.isModified('workflowState') && !this.isModified('waitingForProduction')) {
+      this.waitingForProduction = !!this.workflowState.waitingForProduction;
+      this.inProduction = !!this.workflowState.inProduction;
+      this.waitingForInspection = !!this.workflowState.waitingForInspection;
+      this.inInspection = !!this.workflowState.inInspection;
+      this.waitingForDispatch = !!this.workflowState.waitingForDispatch;
+      this.dispatched = !!this.workflowState.dispatched;
+    } else {
+      this.workflowState.waitingForProduction = !!this.waitingForProduction;
+      this.workflowState.inProduction = !!this.inProduction;
+      this.workflowState.waitingForInspection = !!this.waitingForInspection;
+      this.workflowState.inInspection = !!this.inInspection;
+      this.workflowState.waitingForDispatch = !!this.waitingForDispatch;
+      this.workflowState.dispatched = !!this.dispatched;
+    }
+  }
+
+  // Enforce Mutual Exclusivity Invariant: Exactly one workflow flag must be true at any moment
+  const activeFlags = [
+    this.waitingForProduction,
+    this.inProduction,
+    this.waitingForInspection,
+    this.inInspection,
+    this.waitingForDispatch,
+    this.dispatched
+  ].filter(Boolean).length;
+
+  if (activeFlags !== 1) {
+    return next(
+      new Error(
+        `Mutual Exclusivity Violation: Exactly one BO workflow state flag must be true at any moment (received ${activeFlags} active flags).`
+      )
+    );
+  }
+
   if (!this.isNew) {
     if (this.isModified('genealogy') && !this.isModified('isDeleted')) {
       return next(new Error('Genealogy Violation: Batch Order source genealogy is strictly immutable once established.'));

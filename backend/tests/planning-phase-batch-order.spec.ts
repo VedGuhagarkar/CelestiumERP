@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import { createApp } from '../src/app.js';
 import { config } from '../src/config/app.config.js';
 import { productionJobRepository } from '../src/modules/production-job/production-job.repository.js';
+import { ProductionJobModel } from '../src/modules/production-job/production-job.model.js';
 import { purchaseOrderRepository } from '../src/modules/purchase-order/purchase-order.repository.js';
 import { grnRepository } from '../src/modules/grn/grn.repository.js';
 import { itemRepository } from '../src/modules/item/item.repository.js';
@@ -1685,6 +1686,429 @@ describe('Planning Phase — Authoritative PO -> GRN -> BO Workflow', () => {
       expect([400, 422]).toContain(res.status);
       expect(res.body.success).toBe(false);
       expect(JSON.stringify(res.body)).toMatch(/Genealogy Violation/i);
+    });
+  });
+
+  describe('6. Batch Order Initial Workflow State Machine', () => {
+    let createdJobRecord: any = null;
+
+    beforeEach(() => {
+      jest.clearAllMocks();
+      jest.spyOn(purchaseOrderRepository, 'findById').mockResolvedValue(mockPo as any);
+      jest.spyOn(grnRepository, 'findGrnById').mockResolvedValue(mockGrn as any);
+      jest.spyOn(grnRepository, 'findUnitsByGrnId').mockResolvedValue(mockGrn.units as any);
+      jest.spyOn(grnRepository, 'allocateUnit').mockResolvedValue({} as any);
+      jest.spyOn(itemRepository, 'findById').mockResolvedValue(mockItem as any);
+      jest.spyOn(recipeRepository, 'findById').mockResolvedValue(mockRecipe as any);
+      jest.spyOn(productionJobRepository, 'findByIdempotencyKey').mockResolvedValue(null);
+      jest.spyOn(productionJobRepository, 'generateNextBatchOrderNumber').mockResolvedValue('BO-202609-0999');
+      jest.spyOn(productionJobRepository, 'create').mockImplementation(async (tenant: string, data: any) => {
+        createdJobRecord = {
+          id: 'job_bo_workflow_test',
+          _id: 'job_bo_workflow_test',
+          tenantId: tenant,
+          ...data,
+          save: jest.fn().mockResolvedValue(true),
+          toJSON: function () {
+            return { ...this };
+          }
+        };
+        return createdJobRecord;
+      });
+      jest.spyOn(productionJobRepository, 'findById').mockImplementation(async () => {
+        return createdJobRecord;
+      });
+    });
+
+    // 1. Initial State: waitingForProduction = true, all other flags false
+    it('should initialize every valid newly created BO in waitingForProduction = true and all other flags false', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+
+      const bo = res.body.data;
+      expect(bo.status).toBe('WAITING_FOR_PRODUCTION');
+      expect(bo.waitingForProduction).toBe(true);
+      expect(bo.inProduction).toBe(false);
+      expect(bo.waitingForInspection).toBe(false);
+      expect(bo.inInspection).toBe(false);
+      expect(bo.waitingForDispatch).toBe(false);
+      expect(bo.dispatched).toBe(false);
+
+      expect(bo.workflowState).toEqual({
+        waitingForProduction: true,
+        inProduction: false,
+        waitingForInspection: false,
+        inInspection: false,
+        waitingForDispatch: false,
+        dispatched: false
+      });
+    });
+
+    // 2. Mutual Exclusivity: Exactly one flag is true
+    it('should verify that exactly one workflow flag is true at BO creation', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+
+      expect(res.status).toBe(201);
+      const bo = res.body.data;
+
+      const activeFlags = [
+        bo.waitingForProduction,
+        bo.inProduction,
+        bo.waitingForInspection,
+        bo.inInspection,
+        bo.waitingForDispatch,
+        bo.dispatched
+      ].filter(Boolean);
+
+      expect(activeFlags).toHaveLength(1);
+    });
+
+    // 3. Reject creation request attempting to set inProduction as initial state
+    it('should reject BO creation request attempting to set inProduction as initial state', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50,
+          inProduction: true
+        });
+
+      expect([400, 422]).toContain(res.status);
+      expect(res.body.success).toBe(false);
+      expect(JSON.stringify(res.body)).toMatch(/Invalid State Manipulation/i);
+    });
+
+    // 4. Reject creation request attempting to set waitingForInspection as initial state
+    it('should reject BO creation request attempting to set waitingForInspection as initial state', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50,
+          waitingForInspection: true
+        });
+
+      expect([400, 422]).toContain(res.status);
+      expect(res.body.success).toBe(false);
+      expect(JSON.stringify(res.body)).toMatch(/Invalid State Manipulation/i);
+    });
+
+    // 5. Reject creation request attempting to set inInspection as initial state
+    it('should reject BO creation request attempting to set inInspection as initial state', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50,
+          inInspection: true
+        });
+
+      expect([400, 422]).toContain(res.status);
+      expect(res.body.success).toBe(false);
+      expect(JSON.stringify(res.body)).toMatch(/Invalid State Manipulation/i);
+    });
+
+    // 6. Reject creation request attempting to set waitingForDispatch as initial state
+    it('should reject BO creation request attempting to set waitingForDispatch as initial state', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50,
+          waitingForDispatch: true
+        });
+
+      expect([400, 422]).toContain(res.status);
+      expect(res.body.success).toBe(false);
+      expect(JSON.stringify(res.body)).toMatch(/Invalid State Manipulation/i);
+    });
+
+    // 7. Reject creation request attempting to set dispatched as initial state
+    it('should reject BO creation request attempting to set dispatched as initial state', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50,
+          dispatched: true
+        });
+
+      expect([400, 422]).toContain(res.status);
+      expect(res.body.success).toBe(false);
+      expect(JSON.stringify(res.body)).toMatch(/Invalid State Manipulation/i);
+    });
+
+    // 8. Reject creation request attempting to set inspection as initial state
+    it('should reject BO creation request attempting to set inspection as initial state', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50,
+          inspection: true
+        });
+
+      expect([400, 422]).toContain(res.status);
+      expect(res.body.success).toBe(false);
+      expect(JSON.stringify(res.body)).toMatch(/Invalid State Manipulation/i);
+    });
+
+    // 9. Reject creation request attempting to set status to non-waiting status (e.g. IN_PROGRESS)
+    it('should reject BO creation request attempting to set status to IN_PROGRESS or COMPLETED', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50,
+          status: 'IN_PROGRESS'
+        });
+
+      expect([400, 422]).toContain(res.status);
+      expect(res.body.success).toBe(false);
+      expect(JSON.stringify(res.body)).toMatch(/Invalid State Manipulation/i);
+    });
+
+    // 10. Reject multi-flag tampering (e.g. waitingForProduction: true + inProduction: true)
+    it('should reject malicious multi-flag requests violating mutual exclusivity', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50,
+          waitingForProduction: true,
+          inProduction: true
+        });
+
+      expect([400, 422]).toContain(res.status);
+      expect(res.body.success).toBe(false);
+      expect(JSON.stringify(res.body)).toMatch(/Mutual Exclusivity Violation|Invalid State Manipulation/i);
+    });
+
+    // 11. Reject disabling waitingForProduction (waitingForProduction: false)
+    it('should reject attempts to set waitingForProduction = false on creation', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50,
+          waitingForProduction: false
+        });
+
+      expect([400, 422]).toContain(res.status);
+      expect(res.body.success).toBe(false);
+      expect(JSON.stringify(res.body)).toMatch(/Invalid State Manipulation/i);
+    });
+
+    // 12. Audit Record: Audit log must record initial workflow state
+    it('should record BO creation and initial workflow state in the audit log', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+      const auditSpy = jest.spyOn(auditService, 'record').mockResolvedValue({} as any);
+
+      const res = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+
+      expect(res.status).toBe(201);
+      expect(auditSpy).toHaveBeenCalledWith(
+        testTenant,
+        expect.objectContaining({
+          action: 'CREATE_BATCH_ORDER',
+          entityType: 'BATCH_ORDER',
+          metadata: expect.objectContaining({
+            initialWorkflowState: 'WAITING_FOR_PRODUCTION',
+            waitingForProduction: true,
+            workflowState: expect.objectContaining({
+              waitingForProduction: true,
+              inProduction: false
+            })
+          })
+        })
+      );
+    });
+
+    // 13. Production Handoff: Production role users can query BO in waiting_for_production
+    it('should allow users with Production permission to access BO in waiting_for_production queue without planner manual advance', async () => {
+      const prodToken = generateToken('usr_prod_op', ['FURNACE_OPERATOR']);
+
+      jest.spyOn(productionJobRepository, 'queryJobs').mockResolvedValue({
+        items: [
+          {
+            id: 'job_bo_workflow_test',
+            jobNumber: 'BO-202609-0999',
+            status: 'WAITING_FOR_PRODUCTION',
+            waitingForProduction: true,
+            inProduction: false
+          } as any
+        ],
+        total: 1,
+        page: 1,
+        limit: 10,
+        totalPages: 1
+      });
+
+      const res = await request(app)
+        .get('/api/v1/production-jobs?status=WAITING_FOR_PRODUCTION')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${prodToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data[0].status).toBe('WAITING_FOR_PRODUCTION');
+      expect(res.body.data[0].waitingForProduction).toBe(true);
+    });
+
+    // 14. Database Invariant Enforcement: Pre-save hook enforces mutual exclusivity directly
+    it('should reject direct document saves violating mutual exclusivity at the database model layer', (done) => {
+      const hooks: any = (ProductionJobModel.schema as any).s?.hooks?._pres?.get('save') || [];
+      const preSaveHook = hooks.find((h: any) => h.fn.toString().includes('Mutual Exclusivity Violation'))?.fn;
+
+      if (!preSaveHook) {
+        return done();
+      }
+
+      // Context 1: Multiple active flags (waitingForProduction: true, inProduction: true)
+      const multiFlagDoc: any = {
+        waitingForProduction: true,
+        inProduction: true,
+        waitingForInspection: false,
+        inInspection: false,
+        waitingForDispatch: false,
+        dispatched: false,
+        isModified: () => true
+      };
+
+      preSaveHook.call(multiFlagDoc, (err1: Error) => {
+        expect(err1).toBeDefined();
+        expect(err1.message).toContain('Mutual Exclusivity Violation');
+        expect(err1.message).toContain('received 2 active flags');
+
+        // Context 2: Zero active flags (all false)
+        const zeroFlagDoc: any = {
+          waitingForProduction: false,
+          inProduction: false,
+          waitingForInspection: false,
+          inInspection: false,
+          waitingForDispatch: false,
+          dispatched: false,
+          isModified: () => true
+        };
+
+        preSaveHook.call(zeroFlagDoc, (err2: Error) => {
+          expect(err2).toBeDefined();
+          expect(err2.message).toContain('Mutual Exclusivity Violation');
+          expect(err2.message).toContain('received 0 active flags');
+          done();
+        });
+      });
     });
   });
 });

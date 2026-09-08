@@ -319,6 +319,15 @@ export interface IBatchOrderGenealogy {
   isImmutable: boolean;
 }
 
+export interface IBatchOrderWorkflowState {
+  waitingForProduction: boolean;
+  inProduction: boolean;
+  waitingForInspection: boolean;
+  inInspection: boolean;
+  waitingForDispatch: boolean;
+  dispatched: boolean;
+}
+
 export interface IProductionJob {
   jobNumber: string;
   tenantId: string;
@@ -352,6 +361,13 @@ export interface IProductionJob {
   weight?: number;
   dueDate?: Date | null;
   status: JobStatus;
+  waitingForProduction?: boolean;
+  inProduction?: boolean;
+  waitingForInspection?: boolean;
+  inInspection?: boolean;
+  waitingForDispatch?: boolean;
+  dispatched?: boolean;
+  workflowState?: IBatchOrderWorkflowState;
   priority: JobPriority;
   recipeSnapshot: IJobRecipeSnapshot;
   specificationSnapshot: IJobSpecificationSnapshot;
@@ -411,6 +427,15 @@ export interface CreateBatchOrderDto {
   customerCode?: string;
   customerName?: string;
   materialGrade?: string;
+  waitingForProduction?: boolean;
+  inProduction?: boolean;
+  waitingForInspection?: boolean;
+  inInspection?: boolean;
+  waitingForDispatch?: boolean;
+  dispatched?: boolean;
+  inspection?: boolean;
+  workflowState?: Partial<IBatchOrderWorkflowState>;
+  status?: JobStatus;
 }
 
 export interface UpdateProcessDetailsDto {
