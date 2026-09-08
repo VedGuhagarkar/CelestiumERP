@@ -546,10 +546,10 @@ export class GRNService extends BaseService {
     }
 
     // Reject non-eligible PO states
-    const eligibleStatuses = ['ISSUED', 'PARTIALLY_RECEIVED'];
+    const eligibleStatuses = ['ISSUED', 'PARTIALLY_RECEIVED', 'RECEIVED'];
     if (!eligibleStatuses.includes(po.status)) {
       throw new BadRequestError(
-        `Purchase Order '${po.poNumber}' is in '${po.status}' status and is not eligible for GRN creation. Only ISSUED or PARTIALLY_RECEIVED purchase orders may receive goods.`
+        `Purchase Order '${po.poNumber}' is in '${po.status}' status and is not eligible for GRN creation. Only ISSUED, PARTIALLY_RECEIVED, or RECEIVED purchase orders may generate goods receipt notes.`
       );
     }
 
