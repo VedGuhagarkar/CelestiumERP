@@ -2360,6 +2360,10 @@ export class ProductionJobService {
 
     const prevStatus = job.status;
     job.status = 'QUALITY_CHECK';
+    (job as any).inProduction = false;
+    if (job.workflowState) {
+      job.workflowState.inProduction = false;
+    }
     job.timeline.actualCompletionDate = completionTime;
     job.quantity.completedQuantity = dto.completedQuantity;
     job.quantity.scrappedQuantity = dto.scrappedQuantity || 0;
@@ -3476,6 +3480,7 @@ export class ProductionJobService {
 
     job.execution.furnaceCharge = {
       chargeNumber: dto.chargeNumber.trim().toUpperCase(),
+      operatorId: actor.userId,
       loadedWeightKg: dto.loadedWeightKg,
       loadedPieceCount: dto.loadedPieceCount,
       fixtureId: dto.fixtureId || null,

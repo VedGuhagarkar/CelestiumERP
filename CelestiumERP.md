@@ -95,8 +95,10 @@
    - 8.1 Database Seeding Engine (`backend/src/scripts/seed.ts`)
    - 8.2 Centralized Configuration Subsystem (`backend/src/config/`)
    - 8.3 Operational Runbooks & Technical Specifications (`docs/`)
-   - 8.4 Automated Test Suite Matrix (64 Backend Specs + Frontend Suites)
-     - *New:* `production-operator-workspace.spec.ts`
+   - 8.4 Automated Test Suite Matrix (66 Backend Specs + Frontend Suites)
+     - *Prompt 8:* `production-operator-workspace.spec.ts`
+     - *Prompt 9:* `production-security-concurrency.spec.ts`
+     - *Prompt 10:* `production-e2e-integration.spec.ts`
 
 ---
 
@@ -2689,6 +2691,65 @@ The codebase features comprehensive test suites validating layer boundaries, dat
   - Invariant 15 (Stale Edit Rejection - Non-In-Production Mutation Guard): Server strictly rejects production data saves when BO is not in active production (`400 Bad Request`).
   - Invariant 16 (Furnace Charge Parameter Update & Persistence): Asserts `recordFurnaceCharge` updates and persists charge parameters (`shift`, `notes`, `loadedPieces`, `loadedWeightKg`, `initialFurnaceTempC`).
   - Invariant 17 (Authentication & RBAC Permission Enforcement): Enforces authentication (`401`) and requires `PRODUCTION_JOB_VIEW`, `BATCH_ORDER_VIEW`, or `MACHINES_FURNACE_OPERATE` (`403`).
+- `backend/tests/production-security-concurrency.spec.ts` (20 tests — Prompt 9):
+  - Invariant 1 (Invalid Initial State Transition Rejection): Strictly rejects transitioning directly from `WAITING_FOR_PRODUCTION` to `QUALITY_CHECK`, `WAITING_FOR_DISPATCH`, `DISPATCHED`, or `COMPLETED` (`400 Bad Request`).
+  - Invariant 2 (Invalid Post-Production State Transition Rejection): Prohibits rolling back from `WAITING_FOR_INSPECTION` back to `WAITING_FOR_PRODUCTION` or `IN_PRODUCTION`.
+  - Invariant 3 (Atomic Take Concurrency & Race Protection): Grants exclusive ownership to the first of concurrent operators and rejects second with `409 Conflict`.
+  - Invariant 4 (Distributed Allocation Lock Expiry & Recovery): Validates automatic lock expiration after configured TTL (60s) allowing recovery from network partitioning or crashed worker nodes.
+  - Invariant 5 (Stage Progress Recording Concurrency): Serializes concurrent stage progress updates via distributed stage mutex preventing lost telemetry updates.
+  - Invariant 6 (Approval Concurrency Single-Winner Guarantee): Ensures only one approval succeeds during concurrent requests (`409 Conflict` on second attempt).
+  - Invariant 7 (Mid-Production Equipment Fault Emergency Hold): Safely transitions in-production BO to `ON_HOLD` with `PAUSED_EQUIPMENT_HOLD` reason upon furnace tripping, preserving all partial thermal progress.
+  - Invariant 8 (Safe Mid-Production Resume): Resumes paused execution back to `IN_PRODUCTION` retaining existing completed stages and unbroken thermal history.
+  - Invariant 9 (Emergency Cancellation with Mandatory Supervisory Audit & Quarantine): Rejects unauthorized cancellations; requires supervisory reason and automatically initiates heat-lot quarantine handoff.
+  - Invariant 10 (Multi-Tenant Isolation on Take): Rejects operations across tenant boundaries (`403 Forbidden` / `404 Not Found`).
+  - Invariant 11 (Multi-Tenant Isolation on Stage Progress): Rejects cross-tenant telemetry updates.
+  - Invariant 12 (Multi-Tenant Isolation on Approval): Prevents cross-tenant quality inspection approvals.
+  - Invariant 13 (Role-Based Access Control on Take): Rejects users without production operator/supervisor permissions with `403 Forbidden`.
+  - Invariant 14 (Role-Based Access Control on Stage Logging): Rejects unauthorized stage telemetry logging.
+  - Invariant 15 (Role-Based Access Control on Approval): Rejects non-production users attempting to approve jobs for inspection.
+  - Invariant 16 (Enterprise Idempotency Protection on Take): Replays cached transition response on duplicate requests with identical `Idempotency-Key` without re-executing state mutation.
+  - Invariant 17 (Enterprise Idempotency Protection on Stage Logging): Replays cached stage logging response on duplicate idempotent submission.
+  - Invariant 18 (Enterprise Idempotency Protection on Approval): Replays cached inspection handoff on duplicate approval requests.
+  - Invariant 19 (High-Concurrency Simultaneous Take Hammer): Verifies exactly 1 winner and $N-1$ conflicts under high-frequency parallel requests.
+  - Invariant 20 (High-Concurrency Simultaneous Approval Hammer): Verifies exactly 1 winner under high-frequency parallel approval requests.
+- `backend/tests/production-e2e-integration.spec.ts` (20 tests — Prompt 10):
+  - Invariant 1 (Authoritative Unbroken Lineage): Verifies complete, immutable lineage `PO -> GRN -> BO -> Recipe -> Production` with verified genealogy (`isImmutable: true`).
+  - Invariant 2 (Tamper-Proof Genealogy & Recipe Protection): Strictly rejects client attempts to modify source genealogy or recipe relationships.
+  - Invariant 3 (Realistic 17-Step Production Lifecycle Execution): Executes the complete authoritative manufacturing lifecycle:
+    1. Query eligible batch orders in `WAITING_FOR_PRODUCTION`.
+    2. Inspect authoritative genealogy card (`PO`, `GRN`, `Part`, `Recipe`).
+    3. Review read-only Recipe parameters (`isMasterDataProtected: true`).
+    4. Compile full Operator Workspace payload (`GET /operator-workspace`).
+    5. Authorized operator claims BO via atomic take (`POST /take-for-production`).
+    6. System atomically updates status to `IN_PRODUCTION` and sets single active flag.
+    7. Clear all previous workflow state flags ($\sum \text{flag}_i = 1$).
+    8. Confirm second operator receives `409 Conflict` on concurrent take attempt.
+    9. Operator records Stage 1 actuals with in-tolerance telemetry (`isCompliant: true`).
+    10. Operator attempts out-of-spec Stage 2 excursion; system records non-silent warning.
+    11. Operator records Stage 3 actuals; validates sequential process gating ($S_1 \rightarrow S_2 \rightarrow S_3$).
+    12. Operator logs furnace charge parameters and saves partial production data (`saveProductionData`).
+    13. System evaluates production execution readiness (`GET /production-execution-readiness`).
+    14. Supervisor approves BO for inspection with explicit concession authorization for Stage 2 excursion.
+    15. System transitions BO to `WAITING_FOR_INSPECTION`, clearing `inProduction` flag.
+    16. Confirm BO is completely removed from active production queues (`/in-production`).
+    17. Confirm BO immediately surfaces in Quality Inspection queue (`/waiting-for-inspection`).
+  - Invariant 4 (Invalid Workflow Rejection - Already In Production): Rejects taking an already in-production BO (`400 Bad Request`).
+  - Invariant 5 (Invalid Workflow Rejection - Waiting for Inspection): Rejects taking a completed post-production BO.
+  - Invariant 6 (Invalid Workflow Rejection - Dispatched BO): Rejects taking a dispatched BO.
+  - Invariant 7 (Invalid Workflow Rejection - Waiting for Production Approval): Rejects approving a BO that was never taken into production (`Eligibility Violation`).
+  - Invariant 8 (Invalid Workflow Rejection - Incomplete Telemetry Approval): Rejects approving a BO lacking furnace charge or stage execution telemetry.
+  - Invariant 9 (Invalid Workflow Rejection - Direct Dispatch Bypass): Rejects advancing directly from Production to Dispatch.
+  - Invariant 10 (Invalid Workflow Rejection - Multiple Active Workflow Flags): Strips client attempts to manipulate multiple state flags simultaneously.
+  - Invariant 11 (Strict Role Authorization on Production Take): Permits authorized production supervisors and operators.
+  - Invariant 12 (Strict Role Authorization Rejection): Rejects unprivileged or non-production users with `403 Forbidden`.
+  - Invariant 13 (Recipe Revision Pinning Enforcement): Binds production execution strictly to the pinned recipe revision (`revisionNumber`).
+  - Invariant 14 (Recipe Replacement Prohibition): Prohibits recipe substitution or revision tampering during production.
+  - Invariant 15 (Schema Validation on Furnace Charge): Rejects invalid numeric values (negative pieces) and missing mandatory parameters (`422 Unprocessable Entity`).
+  - Invariant 16 (Strict Operator Identity Attribution): Overrides spoofed client operator IDs with verified JWT identity claims (`actor.userId`).
+  - Invariant 17 (Single-Winner Concurrency Guarantee): Rejects second concurrent taker with `409 Conflict`.
+  - Invariant 18 (Idempotent Request Replay): Safely returns cached responses on duplicate idempotent submissions.
+  - Invariant 19 (Historical Post-Handoff Lock): Permanently locks production records once the BO enters `WAITING_FOR_INSPECTION`.
+  - Invariant 20 (Cross-Phase Boundary Strictness): Guarantees strict isolation of Production strictly bounded between `WAITING_FOR_PRODUCTION` and `WAITING_FOR_INSPECTION`.
 
 #### 4. Domain Integration Suites (47 Core Specs in `backend/tests/`)
 - Production Execution & Lifecycle: `production-job.spec.ts`, `production-execution-workflow.spec.ts`, `production-scheduling.spec.ts`, `plan-to-job-handoff.spec.ts`.

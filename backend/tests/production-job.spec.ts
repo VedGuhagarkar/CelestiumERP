@@ -346,28 +346,40 @@ describe('Production Job Domain & 12-Stage Lifecycle State Machine', () => {
 
       // 5. IN_PROGRESS -> PAUSED
       res = await request(app)
-        .post(`/api/v1/production-jobs/${job.id}/transition`)
+        .post(`/api/v1/production-jobs/${job.id}/pause`)
         .set('x-tenant-id', testTenant)
         .set('Authorization', `Bearer ${operatorToken}`)
-        .send({ toStatus: 'PAUSED', reason: 'Temporary atmosphere adjustment' });
+        .send({ reason: 'Temporary atmosphere adjustment', category: 'ATMOSPHERE_LOSS' });
       expect(res.status).toBe(200);
       expect(job.status).toBe('PAUSED');
 
       // 6. PAUSED -> IN_PROGRESS
       res = await request(app)
-        .post(`/api/v1/production-jobs/${job.id}/transition`)
+        .post(`/api/v1/production-jobs/${job.id}/resume`)
         .set('x-tenant-id', testTenant)
         .set('Authorization', `Bearer ${operatorToken}`)
-        .send({ toStatus: 'IN_PROGRESS', reason: 'Resuming soak cycle' });
+        .send({ actionTaken: 'Atmosphere restored and pressure stabilized' });
       expect(res.status).toBe(200);
       expect(job.status).toBe('IN_PROGRESS');
 
       // 7. IN_PROGRESS -> QUALITY_CHECK
+      job.execution = {
+        cycleTimer: { totalRunDurationMinutes: 240, totalDowntimeDurationMinutes: 10 },
+        stageProgress: [
+          {
+            sequence: 1,
+            stageName: 'Carburize Soak',
+            actualTemperatureC: 920,
+            actualDurationMinutes: 240,
+            recordedAt: new Date()
+          }
+        ]
+      };
       res = await request(app)
-        .post(`/api/v1/production-jobs/${job.id}/transition`)
+        .post(`/api/v1/production-jobs/${job.id}/complete`)
         .set('x-tenant-id', testTenant)
         .set('Authorization', `Bearer ${operatorToken}`)
-        .send({ toStatus: 'QUALITY_CHECK', reason: 'Quenched & Tempered; sent to QC' });
+        .send({ completedQuantity: 500, scrappedQuantity: 0 });
       expect(res.status).toBe(200);
       expect(job.status).toBe('QUALITY_CHECK');
 
@@ -508,29 +520,36 @@ describe('Production Job Domain & 12-Stage Lifecycle State Machine', () => {
     it('should rank AOG_CRITICAL jobs ahead of URGENT, HIGH, and NORMAL priority jobs', async () => {
       const plannerToken = generateToken('usr_planner', ['PLANT_MANAGER']);
 
-      const normalJob = createMockJobDocument({
-        id: 'job_norm',
-        jobNumber: 'JOB-202608-0001',
-        priority: 'NORMAL',
-        status: 'SCHEDULED',
-        timeline: { targetCompletionDate: new Date('2026-09-02T10:00:00.000Z') }
-      });
-      const aogJob = createMockJobDocument({
-        id: 'job_aog',
-        jobNumber: 'JOB-202608-0002',
-        priority: 'AOG_CRITICAL',
-        status: 'SCHEDULED',
-        timeline: { targetCompletionDate: new Date('2026-09-05T10:00:00.000Z') }
-      });
-      const highJob = createMockJobDocument({
-        id: 'job_high',
-        jobNumber: 'JOB-202608-0003',
-        priority: 'HIGH',
-        status: 'IN_PROGRESS',
-        timeline: { targetCompletionDate: new Date('2026-09-01T10:00:00.000Z') }
-      });
+      const createQueueJob = (id: string, jobNumber: string, priority: string, dateStr: string) =>
+        createMockJobDocument({
+          id,
+          jobNumber,
+          priority,
+          status: 'WAITING_FOR_PRODUCTION',
+          waitingForProduction: true,
+          workflowState: { waitingForProduction: true },
+          poId: 'po_01',
+          poNumber: 'PO-001',
+          grnId: 'grn_01',
+          grnNumber: 'GRN-001',
+          weightKg: 100,
+          quantity: { targetQuantity: 10, loadedQuantity: 10, completedQuantity: 0, scrappedQuantity: 0 },
+          recipeSnapshot: { recipeCode: 'REC-01', stages: [] },
+          timeline: { targetCompletionDate: new Date(dateStr) },
+          processDetails: Array.from({ length: 15 }, (_, i) => ({
+            serialNumber: i + 1,
+            position: i + 1,
+            stageName: `Stage ${i + 1}`,
+            process: 'VACUUM_HEAT_TREATMENT'
+          }))
+        });
 
-      jest.spyOn(productionJobRepository, 'findActiveQueueJobs').mockResolvedValue([normalJob, aogJob, highJob] as any);
+      const normalJob = createQueueJob('job_norm', 'JOB-202608-0001', 'NORMAL', '2026-09-02T10:00:00.000Z');
+      const aogJob = createQueueJob('job_aog', 'JOB-202608-0002', 'AOG_CRITICAL', '2026-09-05T10:00:00.000Z');
+      const highJob = createQueueJob('job_high', 'JOB-202608-0003', 'HIGH', '2026-09-01T10:00:00.000Z');
+
+      jest.spyOn(productionJobRepository, 'findWaitingForProductionQueue').mockResolvedValue([aogJob, highJob, normalJob] as any);
+      jest.spyOn(productionJobRepository, 'findActiveQueueJobs').mockResolvedValue([aogJob, highJob, normalJob] as any);
 
       const res = await request(app)
         .get('/api/v1/production-jobs/queue')
