@@ -23,6 +23,19 @@ export interface IProductionJobRepository {
     pagination: PaginationOptions
   ): Promise<PaginatedResult<ProductionJobDocument>>;
   findActiveQueueJobs(tenantId: string, filters?: any): Promise<ProductionJobDocument[]>;
+  findWaitingForProductionQueue(tenantId: string, filters?: any): Promise<ProductionJobDocument[]>;
+  findInProductionQueue(tenantId: string, filters?: any): Promise<ProductionJobDocument[]>;
+  findWaitingForInspectionQueue(tenantId: string, filters?: any): Promise<ProductionJobDocument[]>;
+  atomicTakeForProduction(
+    tenantId: string,
+    jobId: string,
+    updateData: any
+  ): Promise<ProductionJobDocument | null>;
+  atomicApproveForInspection(
+    tenantId: string,
+    jobId: string,
+    updateData: any
+  ): Promise<ProductionJobDocument | null>;
   findConflictingJobs(
     tenantId: string,
     furnaceId: string,
@@ -242,6 +255,112 @@ export class ProductionJobRepository
       .exec();
   }
 
+  public async findWaitingForProductionQueue(
+    tenantId: string,
+    filters: any = {}
+  ): Promise<ProductionJobDocument[]> {
+    const query: any = {
+      tenantId,
+      $or: [
+        { waitingForProduction: true },
+        { status: 'WAITING_FOR_PRODUCTION' }
+      ],
+      inProduction: { $ne: true },
+      isDeleted: false
+    };
+
+    if (filters.furnaceId) query['equipmentAssignment.furnaceId'] = filters.furnaceId;
+    if (filters.priority) query.priority = filters.priority;
+
+    return this.model
+      .find(query)
+      .sort({ priority: 1, 'timeline.targetCompletionDate': 1, createdAt: -1 })
+      .exec();
+  }
+
+  public async findInProductionQueue(
+    tenantId: string,
+    filters: any = {}
+  ): Promise<ProductionJobDocument[]> {
+    const query: any = {
+      tenantId,
+      $or: [
+        { inProduction: true },
+        { status: 'IN_PRODUCTION' },
+        { status: 'IN_PROGRESS' }
+      ],
+      waitingForInspection: { $ne: true },
+      isDeleted: false
+    };
+
+    if (filters.furnaceId) query['equipmentAssignment.furnaceId'] = filters.furnaceId;
+
+    return this.model
+      .find(query)
+      .sort({ 'timeline.actualStartDate': -1, updatedAt: -1 })
+      .exec();
+  }
+
+  public async findWaitingForInspectionQueue(
+    tenantId: string,
+    filters: any = {}
+  ): Promise<ProductionJobDocument[]> {
+    const query: any = {
+      tenantId,
+      $or: [
+        { waitingForInspection: true },
+        { status: 'WAITING_FOR_INSPECTION' },
+        { status: 'QUALITY_CHECK' }
+      ],
+      inProduction: { $ne: true },
+      isDeleted: false
+    };
+
+    return this.model
+      .find(query)
+      .sort({ updatedAt: -1 })
+      .exec();
+  }
+
+  public async atomicTakeForProduction(
+    tenantId: string,
+    jobId: string,
+    updateData: any
+  ): Promise<ProductionJobDocument | null> {
+    const identifierMatches: any[] = [{ jobNumber: jobId.toUpperCase() }, { boNumber: jobId.toUpperCase() }];
+    if (mongoose.isValidObjectId(jobId)) {
+      identifierMatches.unshift({ _id: jobId });
+    }
+
+    const filter: any = {
+      tenantId,
+      $or: identifierMatches,
+      inProduction: { $ne: true },
+      isDeleted: false
+    };
+
+    return this.model.findOneAndUpdate(filter, updateData, { new: true }).exec();
+  }
+
+  public async atomicApproveForInspection(
+    tenantId: string,
+    jobId: string,
+    updateData: any
+  ): Promise<ProductionJobDocument | null> {
+    const identifierMatches: any[] = [{ jobNumber: jobId.toUpperCase() }, { boNumber: jobId.toUpperCase() }];
+    if (mongoose.isValidObjectId(jobId)) {
+      identifierMatches.unshift({ _id: jobId });
+    }
+
+    const filter: any = {
+      tenantId,
+      $or: identifierMatches,
+      isDeleted: false
+    };
+
+    return this.model.findOneAndUpdate(filter, updateData, { new: true }).exec();
+  }
+
   public async findConflictingJobs(
     tenantId: string,
     furnaceId: string,
@@ -252,7 +371,7 @@ export class ProductionJobRepository
     const query: any = {
       tenantId,
       'equipmentAssignment.furnaceId': furnaceId,
-      status: { $in: ['SCHEDULED', 'IN_PROGRESS', 'PAUSED'] },
+      status: { $in: ['SCHEDULED', 'IN_PROGRESS', 'IN_PRODUCTION', 'PAUSED'] },
       'timeline.plannedStartDate': { $lt: endDate },
       'timeline.targetCompletionDate': { $gt: startDate },
       isDeleted: false

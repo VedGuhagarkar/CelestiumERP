@@ -9,7 +9,8 @@ import {
   FileText,
   ChevronRight,
   Layers,
-  Award
+  Award,
+  Clock
 } from 'lucide-react';
 import { PageContainer } from '../layouts/PageContainer.js';
 import { PageHeader } from '../design-system/navigation/PageHeader.js';
@@ -152,7 +153,7 @@ const DEFAULT_NCRS: NCRReport[] = [
 ];
 
 export const QualityPage: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'INSPECTIONS' | 'NCRS'>('INSPECTIONS');
+  const [activeTab, setActiveTab] = useState<'WAITING_FOR_INSPECTION' | 'INSPECTIONS' | 'NCRS'>('WAITING_FOR_INSPECTION');
   const [inspections, setInspections] = useState<QualityInspection[]>(DEFAULT_INSPECTIONS);
   const [ncrs, setNcrs] = useState<NCRReport[]>(DEFAULT_NCRS);
   const [selectedInspection, setSelectedInspection] = useState<QualityInspection | null>(null);
@@ -160,6 +161,31 @@ export const QualityPage: React.FC = () => {
   const [isNewInspectionOpen, setIsNewInspectionOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Batch Orders Awaiting QA Inspection Queue (Handoff from Production Phase)
+  const [waitingInspectionJobs, setWaitingInspectionJobs] = useState<any[]>([
+    {
+      id: 'bo_03',
+      jobNumber: 'BO-202608-0008',
+      boNumber: 'BO-202608-0008',
+      poNumber: 'PO-2026-00303',
+      grnNumber: 'GRN-202608-0703',
+      customer: { customerCode: 'CUST-APEX-03', customerName: 'Apex Automotive Drivetrains' },
+      item: { itemCode: 'PART-GEAR-8620', itemName: 'Case-Hardened Pinion Gears', materialGrade: 'AISI 8620', uom: 'PCS' },
+      quantity: { targetQuantity: 300, loadedQuantity: 300, completedQuantity: 300, scrappedQuantity: 0 },
+      status: 'WAITING_FOR_INSPECTION',
+      waitingForInspection: true,
+      recipeSnapshot: { recipeCode: 'REC-CARB-8620', name: 'Atmospheric Gas Carburizing & Oil Quench' },
+      execution: {
+        qualityHandoff: {
+          inspectionRequestId: 'INSP-REQ-202609-0008',
+          completedQuantity: 300,
+          scrappedQuantity: 0,
+          handoffNotes: 'All carburizing boost/diffuse stages complete. Ready for case depth and Rockwell C hardness verification.'
+        }
+      }
+    }
+  ]);
 
   // New Inspection Form State
   const [jobNumber, setJobNumber] = useState('JOB-202608-0010');
@@ -174,10 +200,11 @@ export const QualityPage: React.FC = () => {
   const fetchQualityData = async () => {
     setIsLoading(true);
     try {
-      const [resQc, resNcr, resJobs] = await Promise.all([
+      const [resQc, resNcr, resJobs, resWaiting] = await Promise.all([
         authenticatedFetch(`${env.API_BASE_URL}/quality-inspections`),
         authenticatedFetch(`${env.API_BASE_URL}/ncrs`),
-        authenticatedFetch(`${env.API_BASE_URL}/production-jobs`).catch(() => null)
+        authenticatedFetch(`${env.API_BASE_URL}/production-jobs`).catch(() => null),
+        authenticatedFetch(`${env.API_BASE_URL}/production-jobs/waiting-for-inspection`).catch(() => null)
       ]);
 
       if (resQc.ok) {
@@ -201,11 +228,26 @@ export const QualityPage: React.FC = () => {
           }
         }
       }
+      if (resWaiting && resWaiting.ok) {
+        const jsonWait = await resWaiting.json();
+        if (jsonWait.data && Array.isArray(jsonWait.data) && jsonWait.data.length > 0) {
+          setWaitingInspectionJobs(jsonWait.data);
+        }
+      }
     } catch {
       // Keep fallback
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleInitiateInspectionFromJob = (job: any) => {
+    const jNum = job.boNumber || job.jobNumber;
+    setJobNumber(jNum);
+    const completed = job.quantity?.completedQuantity || job.quantity?.targetQuantity || 100;
+    setSampleSize(Math.max(1, Math.min(10, Math.ceil(completed * 0.05))));
+    setRemarks(`Inspection for Batch Order ${jNum} (${job.item?.itemName || 'Part'} - ${job.item?.materialGrade || 'Grade'}). Recipe: ${job.recipeSnapshot?.recipeCode || 'Standard'}.`);
+    setIsNewInspectionOpen(true);
   };
 
   const handleCreateInspection = async (e: React.FormEvent) => {
@@ -367,7 +409,26 @@ export const QualityPage: React.FC = () => {
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', flexWrap: 'wrap' }}>
+        <button
+          onClick={() => setActiveTab('WAITING_FOR_INSPECTION')}
+          style={{
+            padding: '8px 18px',
+            fontSize: '13px',
+            fontWeight: 700,
+            borderRadius: 'var(--radius-md)',
+            border: 'none',
+            cursor: 'pointer',
+            background: activeTab === 'WAITING_FOR_INSPECTION' ? 'var(--color-primary)' : 'rgba(255, 255, 255, 0.05)',
+            color: activeTab === 'WAITING_FOR_INSPECTION' ? '#ffffff' : 'var(--color-text-secondary)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px'
+          }}
+        >
+          <Clock size={16} /> Batch Orders Awaiting QA Inspection ({waitingInspectionJobs.length})
+        </button>
+
         <button
           onClick={() => setActiveTab('INSPECTIONS')}
           style={{
@@ -406,6 +467,119 @@ export const QualityPage: React.FC = () => {
           <AlertTriangle size={16} /> Non-Conformance Reports (NCR) ({ncrs.length})
         </button>
       </div>
+
+      {/* 1. Batch Orders Awaiting QA Inspection Queue */}
+      {activeTab === 'WAITING_FOR_INSPECTION' && (
+        <AppCard style={{ padding: '0px', overflow: 'hidden' }}>
+          <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--color-border-subtle)', background: 'rgba(52, 211, 153, 0.03)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', borderRadius: '6px', background: 'rgba(52, 211, 153, 0.15)', color: '#34d399' }}>
+                  <Clock size={15} />
+                </span>
+                <span style={{ fontWeight: 800, fontSize: '15px', color: '#ffffff' }}>
+                  Batch Orders Approved from Production & Awaiting QA Inspection ({waitingInspectionJobs.length})
+                </span>
+              </div>
+              <p style={{ margin: '4px 0 0 34px', fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                Production operations have verified recipe completion and piece count balance. These jobs have cleared <code>inProduction</code> and transitioned into <code>waitingForInspection</code>.
+              </p>
+            </div>
+          </div>
+
+          {waitingInspectionJobs.length === 0 ? (
+            <div style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--color-text-muted)' }}>
+              <CheckCircle2 size={32} style={{ margin: '0 auto 10px', color: '#34d399', opacity: 0.6 }} />
+              <div style={{ fontWeight: 600, color: '#ffffff' }}>No Batch Orders Awaiting Inspection</div>
+              <div style={{ fontSize: '12px', marginTop: '4px' }}>All production runs have been inspected or are currently active in furnace processing.</div>
+            </div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                <thead>
+                  <tr style={{ background: 'rgba(255, 255, 255, 0.02)', borderBottom: '1px solid var(--color-border-subtle)' }}>
+                    <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>INSP REQ #</th>
+                    <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>BATCH ORDER & LINEAGE</th>
+                    <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>CUSTOMER & PART</th>
+                    <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>CONFORMING QTY</th>
+                    <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>BOUND RECIPE</th>
+                    <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>STATUS</th>
+                    <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600, textAlign: 'right' }}>ACTION</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {waitingInspectionJobs.map((job) => {
+                    const boDisplay = job.boNumber || job.jobNumber;
+                    const poDisplay = job.poNumber || 'PO-LINKED';
+                    const grnDisplay = job.grnNumber || 'GRN-LINKED';
+                    const inspReq = job.execution?.qualityHandoff?.inspectionRequestId || `INSP-REQ-202609-${boDisplay.slice(-4)}`;
+                    const completedQty = job.quantity?.completedQuantity ?? job.quantity?.targetQuantity ?? 100;
+                    const scrappedQty = job.quantity?.scrappedQuantity ?? 0;
+
+                    return (
+                      <tr key={job._id || job.id || job.jobNumber} style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
+                        <td style={{ padding: '14px 18px' }}>
+                          <div style={{ fontWeight: 700, color: '#34d399' }}>{inspReq}</div>
+                          <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>QA Queue Handed Off</div>
+                        </td>
+                        <td style={{ padding: '14px 18px' }}>
+                          <div style={{ fontWeight: 700, color: 'var(--color-primary)' }}>{boDisplay}</div>
+                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginTop: '4px', padding: '2px 6px', borderRadius: '4px', background: 'rgba(255, 255, 255, 0.04)', fontSize: '11px' }}>
+                            <span style={{ color: '#93c5fd' }}>{poDisplay}</span>
+                            <span>→</span>
+                            <span style={{ color: '#6ee7b7' }}>{grnDisplay}</span>
+                            <span>→</span>
+                            <span style={{ color: '#fca5a5' }}>{boDisplay}</span>
+                          </div>
+                        </td>
+                        <td style={{ padding: '14px 18px' }}>
+                          <div style={{ color: '#ffffff', fontWeight: 600 }}>{job.customer?.customerName || 'Customer Inc.'}</div>
+                          <div style={{ fontSize: '11px', color: '#38bdf8', marginTop: '2px' }}>
+                            {job.item?.itemName} [{job.item?.materialGrade}]
+                          </div>
+                        </td>
+                        <td style={{ padding: '14px 18px' }}>
+                          <div style={{ fontWeight: 800, color: '#34d399', fontSize: '14px' }}>
+                            {completedQty} {job.item?.uom || 'PCS'}
+                          </div>
+                          {scrappedQty > 0 && (
+                            <div style={{ fontSize: '11px', color: '#ef4444', marginTop: '2px' }}>
+                              Scrapped: {scrappedQty}
+                            </div>
+                          )}
+                        </td>
+                        <td style={{ padding: '14px 18px' }}>
+                          <div style={{ fontSize: '12px', fontWeight: 600, color: '#fbbf24' }}>
+                            {job.recipeSnapshot?.recipeCode || 'REC-STANDARD'}
+                          </div>
+                          <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>
+                            {job.recipeSnapshot?.name || 'Standard Thermal Cycle'}
+                          </div>
+                        </td>
+                        <td style={{ padding: '14px 18px' }}>
+                          <span style={{ fontSize: '11px', fontWeight: 700, padding: '3px 8px', borderRadius: '4px', background: 'rgba(52, 211, 153, 0.15)', color: '#34d399', border: '1px solid rgba(52, 211, 153, 0.3)' }}>
+                            WAITING FOR INSPECTION
+                          </span>
+                        </td>
+                        <td style={{ padding: '14px 18px', textAlign: 'right' }}>
+                          <AppButton
+                            variant="primary"
+                            size="sm"
+                            leftIcon={<Microscope size={14} />}
+                            onClick={() => handleInitiateInspectionFromJob(job)}
+                          >
+                            Initiate Inspection
+                          </AppButton>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </AppCard>
+      )}
 
       {/* Inspections Table View */}
       {activeTab === 'INSPECTIONS' && (

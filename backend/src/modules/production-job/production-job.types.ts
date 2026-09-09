@@ -9,6 +9,8 @@ import {
 
 export type JobStatus =
   | 'WAITING_FOR_PRODUCTION'
+  | 'IN_PRODUCTION'
+  | 'WAITING_FOR_INSPECTION'
   | 'DRAFT'
   | 'PENDING_REVIEW'
   | 'APPROVED'
@@ -74,14 +76,16 @@ export const PRIORITY_WEIGHTS: Record<JobPriority, number> = {
 };
 
 export const ALLOWED_STATUS_TRANSITIONS: Record<JobStatus, JobStatus[]> = {
-  WAITING_FOR_PRODUCTION: ['SCHEDULED', 'IN_PROGRESS', 'CANCELLED'],
+  WAITING_FOR_PRODUCTION: ['IN_PRODUCTION', 'IN_PROGRESS', 'SCHEDULED', 'CANCELLED'],
+  IN_PRODUCTION: ['WAITING_FOR_INSPECTION', 'PAUSED', 'QUALITY_CHECK', 'IN_PROGRESS', 'CANCELLED'],
+  WAITING_FOR_INSPECTION: ['STORAGE', 'QUALITY_CHECK', 'IN_PROGRESS', 'CANCELLED'],
   DRAFT: ['PENDING_REVIEW', 'CANCELLED'],
   PENDING_REVIEW: ['APPROVED', 'DRAFT', 'CANCELLED'],
-  APPROVED: ['SCHEDULED', 'IN_PROGRESS', 'CANCELLED'],
-  SCHEDULED: ['IN_PROGRESS', 'APPROVED', 'CANCELLED'],
-  IN_PROGRESS: ['PAUSED', 'QUALITY_CHECK', 'CANCELLED'],
-  PAUSED: ['IN_PROGRESS', 'CANCELLED'],
-  QUALITY_CHECK: ['STORAGE', 'IN_PROGRESS', 'CANCELLED'],
+  APPROVED: ['SCHEDULED', 'IN_PROGRESS', 'IN_PRODUCTION', 'CANCELLED'],
+  SCHEDULED: ['IN_PROGRESS', 'IN_PRODUCTION', 'APPROVED', 'CANCELLED'],
+  IN_PROGRESS: ['PAUSED', 'QUALITY_CHECK', 'WAITING_FOR_INSPECTION', 'CANCELLED'],
+  PAUSED: ['IN_PROGRESS', 'IN_PRODUCTION', 'CANCELLED'],
+  QUALITY_CHECK: ['STORAGE', 'IN_PROGRESS', 'WAITING_FOR_INSPECTION', 'CANCELLED'],
   STORAGE: ['READY_FOR_DISPATCH', 'QUALITY_CHECK', 'CANCELLED'],
   READY_FOR_DISPATCH: ['DISPATCHED', 'STORAGE', 'CANCELLED'],
   DISPATCHED: ['COMPLETED'],
@@ -575,6 +579,65 @@ export interface CompleteJobExecutionDto {
   completedQuantity: number;
   scrappedQuantity?: number;
   operatorNotes?: string;
+}
+
+export interface TakeForProductionDto {
+  furnaceId?: string;
+  assignedFurnaceId?: string;
+  operatorId?: string;
+  assignedOperatorId?: string;
+  shift?: string;
+  chargeNumber?: string;
+  loadedWeightKg?: number;
+  loadedPieceCount?: number;
+  fixtureId?: string;
+  initialFurnaceTempC?: number;
+  initialAtmosphereLevel?: number;
+  thermocoupleLocations?: string[];
+  notes?: string;
+}
+
+export interface RecordRecipeStageProgressDto {
+  stageSequence: number;
+  stageName?: string;
+  actualTemperatureC: number;
+  actualDurationMinutes: number;
+  quenchMedium?: string;
+  quenchAgitationSpeedRpm?: number;
+  quenchMediaInitialTempC?: number;
+  quenchMediaFinalTempC?: number;
+  atmosphereDetails?: {
+    carbonPotential?: number;
+    nitrogenFlow?: number;
+    vacuumPressureMbar?: number;
+  };
+  notes?: string;
+}
+
+export interface ApproveForInspectionDto {
+  completedQuantity?: number;
+  scrappedQuantity?: number;
+  notes?: string;
+  operatorNotes?: string;
+}
+
+export interface IProductionExecutionReadiness {
+  isReadyForInspection: boolean;
+  jobId: string;
+  jobNumber: string;
+  boNumber?: string;
+  status: string;
+  allRecipeStagesCompleted: boolean;
+  totalRecipeStages: number;
+  completedStagesCount: number;
+  chargeRecorded: boolean;
+  cycleTimerRecorded: boolean;
+  pieceCountBalanced: boolean;
+  loadedPieceCount: number;
+  completedQuantity: number;
+  scrappedQuantity: number;
+  missingRequirements: string[];
+  errors: string[];
 }
 
 export interface TransitionToStorageDto {

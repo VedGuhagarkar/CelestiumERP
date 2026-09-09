@@ -3,6 +3,8 @@ import { ValidationSchema } from '../../core/middleware/validate.middleware.js';
 
 const jobStatusEnum = z.enum([
   'WAITING_FOR_PRODUCTION',
+  'IN_PRODUCTION',
+  'WAITING_FOR_INSPECTION',
   'DRAFT',
   'PENDING_REVIEW',
   'APPROVED',
@@ -23,7 +25,10 @@ const shiftEnum = z.enum([
   'SHIFT_1_MORNING',
   'SHIFT_2_EVENING',
   'SHIFT_3_NIGHT',
-  'GENERAL_DAY'
+  'GENERAL_DAY',
+  'SHIFT_A',
+  'SHIFT_B',
+  'SHIFT_C'
 ]);
 
 const stageProgressTypeEnum = z.enum(['PREHEAT', 'SOAK', 'QUENCH', 'TEMPER', 'OTHER']);
@@ -671,4 +676,66 @@ export const getJobByIdSchema: ValidationSchema = {
   params: z.object({
     id: z.string().trim().min(1, 'Job ID is required')
   })
+};
+
+export const takeForProductionSchema: ValidationSchema = {
+  params: z.object({
+    id: z.string().trim().min(1, 'Job ID is required')
+  }),
+  body: z
+    .object({
+      furnaceId: z.string().trim().optional(),
+      furnaceCode: z.string().trim().optional(),
+      assignedFurnaceId: z.string().trim().optional(),
+      operatorId: z.string().trim().optional(),
+      assignedOperatorId: z.string().trim().optional(),
+      shift: shiftEnum.optional(),
+      chargeNumber: z.string().trim().optional(),
+      loadedWeightKg: z.number().min(0).optional(),
+      loadedPieceCount: z.number().min(1).optional(),
+      fixtureId: z.string().trim().optional(),
+      initialFurnaceTempC: z.number().optional(),
+      initialAtmosphereLevel: z.number().optional(),
+      thermocoupleLocations: z.array(z.string().trim()).optional(),
+      notes: z.string().trim().max(500).optional()
+    })
+    .optional()
+};
+
+export const recordRecipeStageProgressSchema: ValidationSchema = {
+  params: z.object({
+    id: z.string().trim().min(1, 'Job ID is required')
+  }),
+  body: z.object({
+    stageSequence: z.number().min(1, 'Stage sequence is required'),
+    stageName: z.string().trim().optional(),
+    actualTemperatureC: z.number().min(0, 'Actual temperature must be non-negative'),
+    actualDurationMinutes: z.number().min(0, 'Actual duration must be non-negative'),
+    quenchMedium: z.string().trim().optional(),
+    quenchAgitationSpeedRpm: z.number().min(0).optional(),
+    quenchMediaInitialTempC: z.number().optional(),
+    quenchMediaFinalTempC: z.number().optional(),
+    atmosphereDetails: z
+      .object({
+        carbonPotential: z.number().optional(),
+        nitrogenFlow: z.number().optional(),
+        vacuumPressureMbar: z.number().optional()
+      })
+      .optional(),
+    notes: z.string().trim().max(500).optional()
+  })
+};
+
+export const approveForInspectionSchema: ValidationSchema = {
+  params: z.object({
+    id: z.string().trim().min(1, 'Job ID is required')
+  }),
+  body: z
+    .object({
+      completedQuantity: z.number().min(0, 'Completed quantity must be non-negative').optional(),
+      scrappedQuantity: z.number().min(0).optional().default(0),
+      notes: z.string().trim().max(500).optional(),
+      operatorNotes: z.string().trim().max(500).optional()
+    })
+    .optional()
 };

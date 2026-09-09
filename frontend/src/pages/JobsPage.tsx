@@ -9,7 +9,6 @@ import {
   ChevronRight,
   PlayCircle,
   GitMerge,
-  PackageCheck,
   ShieldCheck,
   Lock,
   FileText,
@@ -65,6 +64,8 @@ export interface ProductionJob {
   dueDate?: string;
   status:
     | 'WAITING_FOR_PRODUCTION'
+    | 'IN_PRODUCTION'
+    | 'WAITING_FOR_INSPECTION'
     | 'DRAFT'
     | 'PENDING_REVIEW'
     | 'APPROVED'
@@ -188,6 +189,7 @@ export interface ProductionJob {
     boToGrnToPo?: string;
     boToItemToRecipe?: string;
   };
+  execution?: any;
   isReadOnlySourceData?: boolean;
 }
 
@@ -316,6 +318,17 @@ const DEFAULT_JOBS: ProductionJob[] = [
     item: { itemCode: 'PART-SHAFT-4340', itemName: 'Turbine Rotor Shafts 4340', materialGrade: 'AISI 4340', uom: 'PCS' },
     quantity: { targetQuantity: 100, loadedQuantity: 0, completedQuantity: 0, scrappedQuantity: 0 },
     status: 'WAITING_FOR_PRODUCTION',
+    waitingForProduction: true,
+    inProduction: false,
+    waitingForInspection: false,
+    workflowState: {
+      waitingForProduction: true,
+      inProduction: false,
+      waitingForInspection: false,
+      inInspection: false,
+      waitingForDispatch: false,
+      dispatched: false
+    },
     priority: 'HIGH',
     recipeSnapshot: {
       recipeCode: 'REC-VAC-4340',
@@ -342,7 +355,18 @@ const DEFAULT_JOBS: ProductionJob[] = [
     customer: { customerCode: 'CUST-TITAN-02', customerName: 'Titan Precision Defense LLC' },
     item: { itemCode: 'PART-GEAR-8620', itemName: 'Case-Hardened Pinion Gears', materialGrade: 'AISI 8620', uom: 'PCS' },
     quantity: { targetQuantity: 250, loadedQuantity: 250, completedQuantity: 0, scrappedQuantity: 0 },
-    status: 'IN_PROGRESS',
+    status: 'IN_PRODUCTION',
+    waitingForProduction: false,
+    inProduction: true,
+    waitingForInspection: false,
+    workflowState: {
+      waitingForProduction: false,
+      inProduction: true,
+      waitingForInspection: false,
+      inInspection: false,
+      waitingForDispatch: false,
+      dispatched: false
+    },
     priority: 'URGENT',
     recipeSnapshot: {
       recipeCode: 'REC-CARB-8620',
@@ -369,7 +393,18 @@ const DEFAULT_JOBS: ProductionJob[] = [
     customer: { customerCode: 'CUST-APEX-03', customerName: 'Apex Automotive Drivetrains' },
     item: { itemCode: 'PART-GEAR-8620', itemName: 'Case-Hardened Pinion Gears', materialGrade: 'AISI 8620', uom: 'PCS' },
     quantity: { targetQuantity: 300, loadedQuantity: 300, completedQuantity: 300, scrappedQuantity: 0 },
-    status: 'COMPLETED',
+    status: 'WAITING_FOR_INSPECTION',
+    waitingForProduction: false,
+    inProduction: false,
+    waitingForInspection: true,
+    workflowState: {
+      waitingForProduction: false,
+      inProduction: false,
+      waitingForInspection: true,
+      inInspection: false,
+      waitingForDispatch: false,
+      dispatched: false
+    },
     priority: 'NORMAL',
     recipeSnapshot: { recipeCode: 'REC-CARB-8620', name: 'Atmospheric Gas Carburizing & Oil Quench', processFamily: 'CARBURIZING' },
     equipmentAssignment: { furnaceCode: 'FURNACE-SEAL-01', locationBay: 'Bay 3 Sealed Quench Bay' },
@@ -388,6 +423,31 @@ export const JobsPage: React.FC = () => {
     'PRODUCTION_JOB_CREATE'
   ]);
 
+  const canOperateProduction = hasAnyPermission([
+    'production:job:start',
+    'production:job:update',
+    'production:job:transition',
+    'machines:furnace:operate',
+    'PRODUCTION_JOB_START',
+    'PRODUCTION_JOB_UPDATE',
+    'PRODUCTION_JOB_TRANSITION',
+    'MACHINES_FURNACE_OPERATE'
+  ]);
+
+  const canApproveInspection = hasAnyPermission([
+    'production:job:complete',
+    'production:job:transition',
+    'PRODUCTION_JOB_COMPLETE',
+    'PRODUCTION_JOB_TRANSITION'
+  ]);
+
+  const canViewProduction = hasAnyPermission([
+    'production:job:view',
+    'production:batch_order:view',
+    'PRODUCTION_JOB_VIEW',
+    'BATCH_ORDER_VIEW'
+  ]);
+
   // Production jobs queue state
   const [jobs, setJobs] = useState<ProductionJob[]>(DEFAULT_JOBS);
   const [selectedJob, setSelectedJob] = useState<ProductionJob | null>(null);
@@ -397,6 +457,42 @@ export const JobsPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Revised Authoritative Production Phase State
+  const [activeWorkflowTab, setActiveWorkflowTab] = useState<
+    'WAITING_FOR_PRODUCTION' | 'IN_PRODUCTION' | 'WAITING_FOR_INSPECTION' | 'ALL_BATCH_ORDERS'
+  >('WAITING_FOR_PRODUCTION');
+
+  const [waitingQueue, setWaitingQueue] = useState<any[]>([]);
+  const [inProductionQueue, setInProductionQueue] = useState<any[]>([]);
+  const [waitingInspectionQueue, setWaitingInspectionQueue] = useState<any[]>([]);
+
+  // Take for Production Dialog State
+  const [isTakeModalOpen, setIsTakeModalOpen] = useState(false);
+  const [targetTakeJob, setTargetTakeJob] = useState<ProductionJob | null>(null);
+  const [takeFurnaceCode, setTakeFurnaceCode] = useState('FURNACE-VAC-01');
+  const [takeLoadedPieces, setTakeLoadedPieces] = useState<number>(100);
+  const [takeLoadedWeight, setTakeLoadedWeight] = useState<number>(50);
+  const [takeInitialTemp, setTakeInitialTemp] = useState<number>(25);
+  const [takeChargeNumber, setTakeChargeNumber] = useState('');
+  const [takeShift, setTakeShift] = useState<'SHIFT_A' | 'SHIFT_B' | 'SHIFT_C'>('SHIFT_A');
+  const [takeNotes, setTakeNotes] = useState('');
+
+  // In-Production Execution Panel State
+  const [selectedInProdJob, setSelectedInProdJob] = useState<ProductionJob | null>(null);
+  const [selectedStageSeq, setSelectedStageSeq] = useState<number>(1);
+  const [stageActualTemp, setStageActualTemp] = useState<number>(650);
+  const [stageActualDuration, setStageActualDuration] = useState<number>(45);
+  const [stageAtmosphere, setStageAtmosphere] = useState<string>('0.85% C');
+  const [stageQuenchTemp, setStageQuenchTemp] = useState<number>(55);
+  const [stageOperatorNotes, setStageOperatorNotes] = useState<string>('');
+
+  // Approve for Inspection Dialog State
+  const [isApproveModalOpen, setIsApproveModalOpen] = useState(false);
+  const [targetApproveJob, setTargetApproveJob] = useState<ProductionJob | null>(null);
+  const [approveCompletedQty, setApproveCompletedQty] = useState<number>(100);
+  const [approveScrappedQty, setApproveScrappedQty] = useState<number>(0);
+  const [approveNotes, setApproveNotes] = useState<string>('');
 
   // Authoritative Planning Phase Wizard & Workspace State
   const [isNewJobOpen, setIsNewJobOpen] = useState(false);
@@ -445,6 +541,38 @@ export const JobsPage: React.FC = () => {
       // Retain default demo batch orders
     } finally {
       setIsLoading(false);
+    }
+    fetchQueues();
+  };
+
+  const fetchQueues = async () => {
+    try {
+      const [waitRes, inProdRes, inspRes] = await Promise.all([
+        authenticatedFetch(`${env.API_BASE_URL}/production-jobs/waiting-for-production`).catch(() => null),
+        authenticatedFetch(`${env.API_BASE_URL}/production-jobs/in-production`).catch(() => null),
+        authenticatedFetch(`${env.API_BASE_URL}/production-jobs/waiting-for-inspection`).catch(() => null)
+      ]);
+
+      if (waitRes && waitRes.ok) {
+        const json = await waitRes.json();
+        if (json.data && Array.isArray(json.data)) {
+          setWaitingQueue(json.data);
+        }
+      }
+      if (inProdRes && inProdRes.ok) {
+        const json = await inProdRes.json();
+        if (json.data && Array.isArray(json.data)) {
+          setInProductionQueue(json.data);
+        }
+      }
+      if (inspRes && inspRes.ok) {
+        const json = await inspRes.json();
+        if (json.data && Array.isArray(json.data)) {
+          setWaitingInspectionQueue(json.data);
+        }
+      }
+    } catch {
+      // Fallback
     }
   };
 
@@ -741,43 +869,167 @@ export const JobsPage: React.FC = () => {
     }
   };
 
-  const handleAdvanceStage = async () => {
-    if (!selectedJob) return;
+  const handleOpenTakeModal = (job: ProductionJob) => {
+    setTargetTakeJob(job);
+    const targetPieces = job.quantity?.targetQuantity || 100;
+    const targetWeight = job.weightKg || job.weight || 50;
+    setTakeLoadedPieces(targetPieces);
+    setTakeLoadedWeight(targetWeight);
+    setTakeInitialTemp(25);
+    const now = new Date();
+    setTakeChargeNumber(
+      `CHG-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}-${String(Math.floor(1000 + Math.random() * 9000))}`
+    );
+    setTakeFurnaceCode(job.equipmentAssignment?.furnaceCode || 'FURNACE-VAC-01');
+    setTakeShift('SHIFT_A');
+    setTakeNotes('');
+    setIsTakeModalOpen(true);
+  };
+
+  const handleConfirmTake = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!targetTakeJob) return;
     setIsSubmitting(true);
     setFeedback(null);
-
-    const jobId = selectedJob._id || selectedJob.id || selectedJob.jobNumber;
+    const jobId = targetTakeJob._id || targetTakeJob.id || targetTakeJob.jobNumber;
     try {
-      const res = await authenticatedFetch(`${env.API_BASE_URL}/production-jobs/${jobId}/start`, {
+      const res = await authenticatedFetch(`${env.API_BASE_URL}/production-jobs/${jobId}/take-production`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          shift: 'SHIFT_1_MORNING',
-          operatorNotes: 'Transitioned Batch Order from WAITING_FOR_PRODUCTION to furnace load.'
+          furnaceCode: takeFurnaceCode,
+          loadedPieceCount: Number(takeLoadedPieces),
+          loadedWeightKg: Number(takeLoadedWeight),
+          initialFurnaceTempC: Number(takeInitialTemp),
+          chargeNumber: takeChargeNumber,
+          shift: takeShift,
+          notes: takeNotes || 'Batch Order taken into furnace production'
         })
       });
 
       if (!res.ok) {
-        const progRes = await authenticatedFetch(`${env.API_BASE_URL}/production-jobs/${jobId}/transition`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            toStatus: 'SCHEDULED',
-            reason: 'Production schedule assigned'
-          })
-        });
-
-        if (!progRes.ok) {
-          const err = await progRes.json().catch(() => ({}));
-          throw new Error(err.message || 'Could not advance batch order');
-        }
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || 'Failed to take Batch Order into production');
       }
 
-      setFeedback({ type: 'success', message: `Batch Order ${selectedJob.jobNumber} cycle stage successfully advanced.` });
+      const json = await res.json();
+      setFeedback({
+        type: 'success',
+        message: `Batch Order ${targetTakeJob.boNumber || targetTakeJob.jobNumber} is now IN PRODUCTION! Assigned Furnace: ${takeFurnaceCode}. Previous flags cleared.`
+      });
+      setIsTakeModalOpen(false);
       setSelectedJob(null);
-      fetchJobs();
+      if (json.data) {
+        setSelectedInProdJob(json.data);
+      }
+      await fetchJobs();
+      await fetchQueues();
+      setActiveWorkflowTab('IN_PRODUCTION');
     } catch (err: any) {
-      setFeedback({ type: 'error', message: err.message || 'Failed to advance job status' });
+      setFeedback({ type: 'error', message: err.message || 'Error taking job into production' });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleRecordStageProgress = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedInProdJob) return;
+    setIsSubmitting(true);
+    setFeedback(null);
+    const jobId = selectedInProdJob._id || selectedInProdJob.id || selectedInProdJob.jobNumber;
+    try {
+      const res = await authenticatedFetch(`${env.API_BASE_URL}/production-jobs/${jobId}/recipe-stage-progress`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          stageSequence: Number(selectedStageSeq),
+          actualTemperatureC: Number(stageActualTemp),
+          actualDurationMinutes: Number(stageActualDuration),
+          atmosphereLevel: stageAtmosphere || undefined,
+          quenchParameters: {
+            mediumTemperatureC: Number(stageQuenchTemp)
+          },
+          operatorNotes: stageOperatorNotes || undefined
+        })
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || 'Failed to record recipe stage progress');
+      }
+
+      const json = await res.json();
+      setFeedback({
+        type: 'success',
+        message: `Recipe stage sequence ${selectedStageSeq} execution successfully recorded for ${selectedInProdJob.boNumber || selectedInProdJob.jobNumber}.`
+      });
+      if (json.data) {
+        setSelectedInProdJob(json.data);
+      }
+      await fetchJobs();
+      await fetchQueues();
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Failed to record recipe stage progress' });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleOpenApproveModal = (job: ProductionJob) => {
+    setTargetApproveJob(job);
+    const loaded = job.quantity?.loadedQuantity || job.quantity?.targetQuantity || 100;
+    setApproveCompletedQty(loaded);
+    setApproveScrappedQty(0);
+    setApproveNotes('All recipe stages executed in strict compliance with metallurgical specification. Production operation verified complete.');
+    setIsApproveModalOpen(true);
+  };
+
+  const handleConfirmApprove = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!targetApproveJob) return;
+    setIsSubmitting(true);
+    setFeedback(null);
+    const jobId = targetApproveJob._id || targetApproveJob.id || targetApproveJob.jobNumber;
+    const loaded = targetApproveJob.quantity?.loadedQuantity || targetApproveJob.quantity?.targetQuantity || 100;
+
+    if (Number(approveCompletedQty) + Number(approveScrappedQty) !== loaded) {
+      setFeedback({
+        type: 'error',
+        message: `Piece balance discrepancy: Completed (${approveCompletedQty}) + Scrapped (${approveScrappedQty}) must equal Loaded (${loaded}).`
+      });
+      setIsSubmitting(false);
+      return;
+    }
+
+    try {
+      const res = await authenticatedFetch(`${env.API_BASE_URL}/production-jobs/${jobId}/approve-inspection`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          completedQuantity: Number(approveCompletedQty),
+          scrappedQuantity: Number(approveScrappedQty),
+          notes: approveNotes
+        })
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || 'Failed to approve Batch Order for inspection');
+      }
+
+      setFeedback({
+        type: 'success',
+        message: `Batch Order ${targetApproveJob.boNumber || targetApproveJob.jobNumber} successfully approved for Inspection! inProduction cleared → waitingForInspection set. Job forwarded to Quality Inspection Queue.`
+      });
+      setIsApproveModalOpen(false);
+      setSelectedJob(null);
+      setSelectedInProdJob(null);
+      await fetchJobs();
+      await fetchQueues();
+      setActiveWorkflowTab('WAITING_FOR_INSPECTION');
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Error approving job for inspection' });
     } finally {
       setIsSubmitting(false);
     }
@@ -817,16 +1069,31 @@ export const JobsPage: React.FC = () => {
     return matchesStatus && matchesSearch;
   });
 
-  const waitingCount = jobs.filter((j) => j.status === 'WAITING_FOR_PRODUCTION' || j.status === 'DRAFT').length;
-  const inProgressCount = jobs.filter((j) => j.status === 'IN_PROGRESS').length;
-  const completedCount = jobs.filter((j) => j.status === 'COMPLETED').length;
-  const scheduledCount = jobs.filter((j) => j.status === 'SCHEDULED' || j.status === 'APPROVED').length;
+  const waitingJobs = waitingQueue.length > 0 ? waitingQueue : jobs.filter(
+    (j) => j.waitingForProduction || j.status === 'WAITING_FOR_PRODUCTION'
+  );
+  const inProdJobs = inProductionQueue.length > 0 ? inProductionQueue : jobs.filter(
+    (j) => j.inProduction || j.status === 'IN_PRODUCTION' || j.status === 'IN_PROGRESS'
+  );
+  const waitingInspJobs = waitingInspectionQueue.length > 0 ? waitingInspectionQueue : jobs.filter(
+    (j) => j.waitingForInspection || j.status === 'WAITING_FOR_INSPECTION'
+  );
+
+  const waitingCount = waitingJobs.length;
+  const inProgressCount = inProdJobs.length;
+  const waitingInspectionCount = waitingInspJobs.length;
+  const totalCount = jobs.length;
+
+  const activeInProdJob =
+    selectedInProdJob && inProdJobs.some((j) => (j._id || j.id || j.jobNumber) === (selectedInProdJob._id || selectedInProdJob.id || selectedInProdJob.jobNumber))
+      ? selectedInProdJob
+      : inProdJobs[0] || null;
 
   return (
     <PageContainer>
       <PageHeader
-        title="Planning Phase & Batch Orders"
-        subtitle="Authoritative PO → GRN → BO manufacturing planning, recipe snapshotting, and process execution"
+        title="Production Phase & Batch Orders"
+        subtitle="Authoritative revised production workflow: waiting for production → in production → waiting for inspection"
         actions={
           <div style={{ display: 'flex', gap: '10px' }}>
             <AppButton variant="secondary" onClick={() => { fetchJobs(); fetchEligiblePos(); }} leftIcon={<RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />}>
@@ -844,15 +1111,124 @@ export const JobsPage: React.FC = () => {
         }
       />
 
+      {!canViewProduction && (
+        <div style={{ marginBottom: '20px' }}>
+          <AppAlert variant="warning" title="Authorization Notice: Production Permissions Required">
+            Your current role does not have production operator access. You can view existing batch order planning records in read-only mode.
+          </AppAlert>
+        </div>
+      )}
+
       {feedback && (
         <div style={{ marginBottom: '20px' }}>
-          <AppAlert variant={feedback.type} title={feedback.type === 'success' ? 'Planning Workflow Success' : 'Error'}>
+          <AppAlert variant={feedback.type} title={feedback.type === 'success' ? 'Production Workflow Success' : 'Error'}>
             {feedback.message}
           </AppAlert>
         </div>
       )}
 
-      {!canCreateBatchOrder && (
+      {/* Authoritative Production Phase Tab Navigator */}
+      <div
+        style={{
+          display: 'flex',
+          gap: '12px',
+          marginBottom: '24px',
+          borderBottom: '1px solid var(--color-border-subtle)',
+          paddingBottom: '14px',
+          flexWrap: 'wrap'
+        }}
+      >
+        {[
+          {
+            id: 'WAITING_FOR_PRODUCTION' as const,
+            label: '1. Waiting for Production',
+            count: waitingCount,
+            icon: Clock,
+            color: '#f59e0b',
+            desc: 'Eligible BOs ready to begin'
+          },
+          {
+            id: 'IN_PRODUCTION' as const,
+            label: '2. In-Production Execution',
+            count: inProgressCount,
+            icon: Flame,
+            color: '#38bdf8',
+            desc: 'Active recipe stage execution & logging'
+          },
+          {
+            id: 'WAITING_FOR_INSPECTION' as const,
+            label: '3. Waiting for Inspection',
+            count: waitingInspectionCount,
+            icon: ShieldCheck,
+            color: '#34d399',
+            desc: 'Completed production handed off to QA'
+          },
+          {
+            id: 'ALL_BATCH_ORDERS' as const,
+            label: 'Planning Workspace & All BOs',
+            count: totalCount,
+            icon: Layers,
+            color: '#94a3b8',
+            desc: 'PO → GRN → BO planning & registry'
+          }
+        ].map((tab) => {
+          const isActive = activeWorkflowTab === tab.id;
+          const Icon = tab.icon;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveWorkflowTab(tab.id)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                padding: '10px 18px',
+                borderRadius: 'var(--radius-md)',
+                background: isActive ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.02)',
+                border: isActive ? `2px solid ${tab.color}` : '1px solid var(--color-border-subtle)',
+                color: isActive ? '#ffffff' : 'var(--color-text-secondary)',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease',
+                outline: 'none'
+              }}
+            >
+              <span
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '28px',
+                  height: '28px',
+                  borderRadius: '6px',
+                  background: isActive ? `${tab.color}25` : 'rgba(255, 255, 255, 0.04)',
+                  color: tab.color
+                }}
+              >
+                <Icon size={16} />
+              </span>
+              <div style={{ textAlign: 'left' }}>
+                <div style={{ fontSize: '13px', fontWeight: isActive ? 700 : 600 }}>{tab.label}</div>
+                <div style={{ fontSize: '10px', color: 'var(--color-text-muted)' }}>{tab.desc}</div>
+              </div>
+              <span
+                style={{
+                  marginLeft: '6px',
+                  padding: '2px 8px',
+                  borderRadius: '999px',
+                  fontSize: '11px',
+                  fontWeight: 800,
+                  background: isActive ? tab.color : 'rgba(255, 255, 255, 0.08)',
+                  color: isActive ? '#000000' : 'var(--color-text-secondary)'
+                }}
+              >
+                {tab.count}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {!canCreateBatchOrder && activeWorkflowTab === 'ALL_BATCH_ORDERS' && (
         <div style={{ marginBottom: '20px' }}>
           <AppAlert variant="warning" title="Authorization Notice: Read-Only Planning Mode">
             You are logged in with read-only planning permissions. Creating new Batch Orders requires the <strong>BATCH_ORDER_CREATE</strong> permission or a Plant Manager role.
@@ -861,9 +1237,558 @@ export const JobsPage: React.FC = () => {
       )}
 
       {/* ========================================================================= */}
-      {/* SECTION 1: DEDICATED PO & GRN PLANNING WORKSPACE (PO → GRN → PART → BO)   */}
+      {/* 1. WAITING FOR PRODUCTION QUEUE VIEW                                      */}
       {/* ========================================================================= */}
-      <AppCard style={{ marginBottom: '28px', padding: '20px', border: '1px solid rgba(56, 189, 248, 0.25)', background: 'linear-gradient(180deg, rgba(15, 23, 42, 0.6) 0%, rgba(30, 41, 59, 0.4) 100%)' }}>
+      {activeWorkflowTab === 'WAITING_FOR_PRODUCTION' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <AppCard style={{ padding: '20px', border: '1px solid rgba(245, 158, 11, 0.3)', background: 'linear-gradient(180deg, rgba(245, 158, 11, 0.04) 0%, rgba(15, 23, 42, 0.6) 100%)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px', borderBottom: '1px solid var(--color-border-subtle)', paddingBottom: '14px' }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '28px', height: '28px', borderRadius: '6px', background: 'rgba(245, 158, 11, 0.15)', color: '#f59e0b' }}>
+                    <Clock size={18} />
+                  </span>
+                  <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 800, color: '#ffffff' }}>
+                    Batch Orders Waiting for Production ({waitingJobs.length})
+                  </h2>
+                </div>
+                <p style={{ margin: '4px 0 0 36px', fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                  Eligible batch orders that have completed planning and are awaiting production load. Taking a batch order transitions it atomically to <strong>in production</strong>, clears previous flags, and locks it from concurrent takes.
+                </p>
+              </div>
+              <span style={{ fontSize: '11px', padding: '4px 10px', borderRadius: '4px', background: 'rgba(245, 158, 11, 0.15)', color: '#fcd34d', fontWeight: 700, border: '1px solid rgba(245, 158, 11, 0.3)' }}>
+                State: waitingForProduction
+              </span>
+            </div>
+
+            {waitingJobs.length === 0 ? (
+              <div style={{ padding: '48px', textAlign: 'center', color: 'var(--color-text-secondary)' }}>
+                <Clock size={36} style={{ margin: '0 auto 12px auto', opacity: 0.4, color: '#f59e0b' }} />
+                <div style={{ fontWeight: 700, color: '#ffffff', fontSize: '15px' }}>No Batch Orders Waiting for Production</div>
+                <div style={{ fontSize: '12px', marginTop: '6px' }}>
+                  Use the <strong>Planning Workspace & All BOs</strong> tab to allocate material from verified GRNs and create batch orders.
+                </div>
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                  <thead>
+                    <tr style={{ background: 'rgba(255, 255, 255, 0.02)', borderBottom: '1px solid var(--color-border-subtle)' }}>
+                      <th style={{ padding: '14px 16px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>BATCH ORDER & LINEAGE</th>
+                      <th style={{ padding: '14px 16px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>CUSTOMER & PART</th>
+                      <th style={{ padding: '14px 16px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>BOUND RECIPE</th>
+                      <th style={{ padding: '14px 16px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>PIECES & WEIGHT</th>
+                      <th style={{ padding: '14px 16px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>ASSIGNED FURNACE</th>
+                      <th style={{ padding: '14px 16px', color: 'var(--color-text-secondary)', fontWeight: 600, textAlign: 'right' }}>ACTION</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {waitingJobs.map((job) => {
+                      const boDisplay = job.boNumber || job.jobNumber;
+                      const poDisplay = job.poNumber || 'PO-LINKED';
+                      const grnDisplay = job.grnNumber || 'GRN-LINKED';
+                      return (
+                        <tr key={job._id || job.id || job.jobNumber} style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
+                          <td style={{ padding: '14px 16px' }}>
+                            <div style={{ fontWeight: 700, color: 'var(--color-primary)', fontSize: '14px' }}>{boDisplay}</div>
+                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginTop: '4px', padding: '2px 6px', borderRadius: '4px', background: 'rgba(255, 255, 255, 0.04)', fontSize: '11px' }}>
+                              <span style={{ color: '#93c5fd' }}>{poDisplay}</span>
+                              <span>→</span>
+                              <span style={{ color: '#6ee7b7' }}>{grnDisplay}</span>
+                              <span>→</span>
+                              <span style={{ color: '#fca5a5' }}>{boDisplay}</span>
+                            </div>
+                          </td>
+                          <td style={{ padding: '14px 16px' }}>
+                            <div style={{ fontWeight: 700, color: '#ffffff' }}>{job.customer?.customerName || 'Standard Customer'}</div>
+                            <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
+                              {job.item?.itemName} [{job.item?.materialGrade}]
+                            </div>
+                          </td>
+                          <td style={{ padding: '14px 16px' }}>
+                            <div style={{ fontWeight: 700, color: '#a3e635' }}>{job.recipeSnapshot?.recipeCode || 'REC-STANDARD'}</div>
+                            <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>
+                              {job.recipeSnapshot?.name || 'Metallurgical Heat Treat Cycle'} ({job.recipeSnapshot?.stages?.length || 3} Stages)
+                            </div>
+                          </td>
+                          <td style={{ padding: '14px 16px' }}>
+                            <div style={{ fontWeight: 700, color: '#ffffff' }}>{job.quantity?.targetQuantity} {job.item?.uom || 'PCS'}</div>
+                            <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>
+                              {job.weightKg || job.weight || 50} kg total
+                            </div>
+                          </td>
+                          <td style={{ padding: '14px 16px' }}>
+                            <div style={{ fontWeight: 600, color: '#38bdf8' }}>{job.equipmentAssignment?.furnaceCode || 'FURNACE-VAC-01'}</div>
+                            <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>{job.equipmentAssignment?.locationBay || 'Bay 1'}</div>
+                          </td>
+                          <td style={{ padding: '14px 16px', textAlign: 'right' }}>
+                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                              <AppButton
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => handleSelectJob(job)}
+                              >
+                                View Record
+                              </AppButton>
+                              <AppButton
+                                variant="primary"
+                                size="sm"
+                                leftIcon={<PlayCircle size={14} />}
+                                disabled={!canOperateProduction}
+                                onClick={() => handleOpenTakeModal(job)}
+                              >
+                                {canOperateProduction ? 'Take for Production' : 'Production Permission Required'}
+                              </AppButton>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </AppCard>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 2. IN-PRODUCTION EXECUTION WORKBENCH VIEW                                 */}
+      {/* ========================================================================= */}
+      {activeWorkflowTab === 'IN_PRODUCTION' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          {/* Lock Banner */}
+          <div
+            style={{
+              padding: '14px 18px',
+              borderRadius: 'var(--radius-md)',
+              background: 'rgba(56, 189, 248, 0.08)',
+              border: '1px solid rgba(56, 189, 248, 0.35)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              gap: '10px'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <Lock size={18} color="#38bdf8" />
+              <div>
+                <strong style={{ color: '#38bdf8', fontSize: '13px' }}>IN-PRODUCTION WORKFLOW LOCK ACTIVE:</strong>
+                <div style={{ color: 'var(--color-text-secondary)', fontSize: '12px', marginTop: '2px' }}>
+                  Batch orders currently in production are strictly locked against modification through unrelated ERP functions. Only authorized viewing and Recipe-driven execution data entry is permitted.
+                </div>
+              </div>
+            </div>
+            <span
+              style={{
+                fontSize: '11px',
+                fontWeight: 800,
+                padding: '4px 10px',
+                borderRadius: '999px',
+                background: 'rgba(56, 189, 248, 0.2)',
+                color: '#38bdf8',
+                border: '1px solid rgba(56, 189, 248, 0.4)'
+              }}
+            >
+              Sole Active Flag: inProduction
+            </span>
+          </div>
+
+          {inProdJobs.length === 0 ? (
+            <AppCard style={{ padding: '48px', textAlign: 'center', color: 'var(--color-text-secondary)' }}>
+              <Flame size={36} style={{ margin: '0 auto 12px auto', opacity: 0.4, color: '#38bdf8' }} />
+              <div style={{ fontWeight: 700, color: '#ffffff', fontSize: '15px' }}>No Batch Orders Currently in Production</div>
+              <div style={{ fontSize: '12px', marginTop: '6px' }}>
+                Select an eligible batch order from the <strong>Waiting for Production</strong> tab to take it into furnace execution.
+              </div>
+            </AppCard>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              {/* Job Selector Pills */}
+              <div style={{ display: 'flex', gap: '10px', overflowX: 'auto', paddingBottom: '6px' }}>
+                {inProdJobs.map((job) => {
+                  const isCurrent = activeInProdJob && (activeInProdJob._id || activeInProdJob.id || activeInProdJob.jobNumber) === (job._id || job.id || job.jobNumber);
+                  return (
+                    <button
+                      key={job._id || job.id || job.jobNumber}
+                      onClick={() => setSelectedInProdJob(job)}
+                      style={{
+                        padding: '10px 16px',
+                        borderRadius: 'var(--radius-md)',
+                        background: isCurrent ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255, 255, 255, 0.03)',
+                        border: isCurrent ? '2px solid #38bdf8' : '1px solid var(--color-border-subtle)',
+                        color: isCurrent ? '#ffffff' : 'var(--color-text-secondary)',
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                        minWidth: '220px',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      <div style={{ fontWeight: 700, fontSize: '13px', color: isCurrent ? '#38bdf8' : '#ffffff' }}>
+                        {job.boNumber || job.jobNumber}
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--color-text-muted)', marginTop: '2px' }}>
+                        {job.equipmentAssignment?.furnaceCode || 'FURNACE-VAC-01'} • {job.quantity?.loadedQuantity || job.quantity?.targetQuantity} PCS
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Active Workbench Grid */}
+              {activeInProdJob && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '20px', alignItems: 'start' }}>
+                  {/* Left Column: Live Charge & Inspection Handoff */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                    {/* Live Furnace Card */}
+                    <AppCard style={{ padding: '18px', border: '1px solid rgba(56, 189, 248, 0.3)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <Flame size={18} color="#38bdf8" />
+                          <h3 style={{ margin: 0, fontSize: '14px', fontWeight: 800, color: '#ffffff' }}>
+                            LIVE FURNACE CHARGE EXECUTION
+                          </h3>
+                        </div>
+                        <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '4px', background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8', fontWeight: 700 }}>
+                          {activeInProdJob.equipmentAssignment?.furnaceCode || 'FURNACE-VAC-01'}
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '12px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '4px' }}>
+                          <span style={{ color: 'var(--color-text-secondary)' }}>Batch Order Lineage:</span>
+                          <span style={{ fontWeight: 700, color: '#ffffff' }}>
+                            {activeInProdJob.poNumber || 'PO'} → {activeInProdJob.grnNumber || 'GRN'} → {activeInProdJob.boNumber || activeInProdJob.jobNumber}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '4px' }}>
+                          <span style={{ color: 'var(--color-text-secondary)' }}>Customer & Item:</span>
+                          <span style={{ fontWeight: 600, color: '#ffffff' }}>
+                            {activeInProdJob.customer?.customerName} • {activeInProdJob.item?.itemName}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '4px' }}>
+                          <span style={{ color: 'var(--color-text-secondary)' }}>Material Grade:</span>
+                          <span style={{ fontWeight: 700, color: '#34d399' }}>{activeInProdJob.item?.materialGrade}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '4px' }}>
+                          <span style={{ color: 'var(--color-text-secondary)' }}>Charge Number:</span>
+                          <span style={{ fontWeight: 700, color: '#f59e0b' }}>
+                            {activeInProdJob.execution?.furnaceCharge?.chargeNumber || 'CHG-202609-ACTIVE'}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '4px' }}>
+                          <span style={{ color: 'var(--color-text-secondary)' }}>Loaded Pieces:</span>
+                          <span style={{ fontWeight: 700, color: '#ffffff' }}>
+                            {activeInProdJob.quantity?.loadedQuantity || activeInProdJob.quantity?.targetQuantity} {activeInProdJob.item?.uom || 'PCS'}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '4px' }}>
+                          <span style={{ color: 'var(--color-text-secondary)' }}>Loaded Weight:</span>
+                          <span style={{ fontWeight: 700, color: '#ffffff' }}>
+                            {activeInProdJob.execution?.furnaceCharge?.loadedWeightKg || activeInProdJob.weightKg || 50} kg
+                          </span>
+                        </div>
+                      </div>
+                    </AppCard>
+
+                    {/* Inspection Handoff Gate Card */}
+                    <AppCard style={{ padding: '18px', border: '1px solid rgba(52, 211, 153, 0.35)', background: 'rgba(52, 211, 153, 0.03)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                        <ShieldCheck size={18} color="#34d399" />
+                        <h3 style={{ margin: 0, fontSize: '14px', fontWeight: 800, color: '#ffffff' }}>
+                          PRODUCTION COMPLETION & INSPECTION APPROVAL
+                        </h3>
+                      </div>
+                      <p style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginBottom: '14px', lineHeight: '1.5' }}>
+                        After all required Recipe stages are verified complete and pieces balanced ($Q_{'{'}completed{'}'} + Q_{'{'}scrapped{'}'} = Q_{'{'}loaded{'}'}$), approve this Batch Order to hand off to the Quality Inspection Queue.
+                      </p>
+                      <AppButton
+                        variant="primary"
+                        size="md"
+                        style={{ width: '100%', background: '#059669', borderColor: '#10b981' }}
+                        leftIcon={<ShieldCheck size={16} />}
+                        disabled={!canApproveInspection}
+                        onClick={() => handleOpenApproveModal(activeInProdJob)}
+                      >
+                        {canApproveInspection ? 'Approve for Inspection' : 'Inspection Approval Permission Required'}
+                      </AppButton>
+                    </AppCard>
+                  </div>
+
+                  {/* Right Column: Recipe Stages Checklist & Stage Progress Logger */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                    {/* Bound Recipe Stages */}
+                    <AppCard style={{ padding: '18px', border: '1px solid rgba(163, 230, 53, 0.3)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                        <div>
+                          <span style={{ fontSize: '11px', fontWeight: 700, color: '#a3e635', textTransform: 'uppercase' }}>
+                            Bound Recipe Execution Stages
+                          </span>
+                          <div style={{ fontWeight: 700, color: '#ffffff', fontSize: '14px' }}>
+                            {activeInProdJob.recipeSnapshot?.recipeCode || 'REC-STANDARD'} ({activeInProdJob.recipeSnapshot?.name || 'Standard Metallurgical Heat Treat Cycle'})
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {(activeInProdJob.recipeSnapshot?.stages || [
+                          { sequence: 1, stageName: 'Preheat Ramp', targetTemperatureC: 650, soakTimeMinutes: 45 },
+                          { sequence: 2, stageName: 'Austenitizing Soak', targetTemperatureC: 845, soakTimeMinutes: 90 },
+                          { sequence: 3, stageName: 'High Pressure N2 Quench', targetTemperatureC: 45, soakTimeMinutes: 20 }
+                        ]).map((stg: any, idx: number) => {
+                          const seq = stg.sequence || stg.stageSequence || idx + 1;
+                          const loggedStage = (activeInProdJob.execution?.stageProgress || []).find((s: any) => s.stageSequence === seq);
+                          const isCompleted = !!loggedStage;
+
+                          return (
+                            <div
+                              key={seq}
+                              style={{
+                                padding: '10px 14px',
+                                borderRadius: '6px',
+                                background: isCompleted ? 'rgba(52, 211, 153, 0.08)' : 'rgba(255, 255, 255, 0.02)',
+                                border: isCompleted ? '1px solid rgba(52, 211, 153, 0.3)' : '1px solid var(--color-border-subtle)',
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                fontSize: '12px'
+                              }}
+                            >
+                              <div>
+                                <div style={{ fontWeight: 700, color: isCompleted ? '#34d399' : '#ffffff' }}>
+                                  {seq}. {stg.stageName}
+                                </div>
+                                <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
+                                  Target: {stg.targetTemperatureC}°C • Soak: {stg.soakTimeMinutes || stg.targetDurationMinutes || 60} mins
+                                </div>
+                              </div>
+                              <div style={{ textAlign: 'right' }}>
+                                {isCompleted ? (
+                                  <span style={{ fontSize: '11px', fontWeight: 700, color: '#34d399', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                    <CheckCircle2 size={13} /> {loggedStage.actualTemperatureC}°C ({loggedStage.actualDurationMinutes}m)
+                                  </span>
+                                ) : (
+                                  <span style={{ fontSize: '11px', fontWeight: 600, color: '#f59e0b', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                    <Clock size={13} /> Pending Execution
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </AppCard>
+
+                    {/* Record Recipe Stage Progress Form */}
+                    <AppCard style={{ padding: '18px', border: '1px solid var(--color-border-subtle)' }}>
+                      <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', fontWeight: 800, color: '#ffffff' }}>
+                        RECORD RECIPE STAGE PROGRESS
+                      </h3>
+                      <form onSubmit={handleRecordStageProgress} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                          <AppSelect
+                            label="Select Recipe Stage *"
+                            value={String(selectedStageSeq)}
+                            onChange={(e) => {
+                              const seq = Number(e.target.value);
+                              setSelectedStageSeq(seq);
+                              const stg = (activeInProdJob.recipeSnapshot?.stages || []).find((s: any) => (s.sequence || s.stageSequence) === seq);
+                              if (stg) {
+                                setStageActualTemp(stg.targetTemperatureC);
+                                setStageActualDuration(stg.soakTimeMinutes || stg.targetDurationMinutes || 60);
+                              }
+                            }}
+                            options={(activeInProdJob.recipeSnapshot?.stages || [
+                              { sequence: 1, stageName: 'Preheat Ramp' },
+                              { sequence: 2, stageName: 'Austenitizing Soak' },
+                              { sequence: 3, stageName: 'High Pressure N2 Quench' }
+                            ]).map((s: any, idx: number) => ({
+                              value: String(s.sequence || s.stageSequence || idx + 1),
+                              label: `Stage ${s.sequence || s.stageSequence || idx + 1}: ${s.stageName}`
+                            }))}
+                          />
+
+                          <AppInput
+                            label="Actual Furnace Temp (°C) *"
+                            type="number"
+                            value={stageActualTemp}
+                            onChange={(e) => setStageActualTemp(Number(e.target.value))}
+                            required
+                          />
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                          <AppInput
+                            label="Actual Soak / Duration (mins) *"
+                            type="number"
+                            min={1}
+                            value={stageActualDuration}
+                            onChange={(e) => setStageActualDuration(Number(e.target.value))}
+                            required
+                          />
+
+                          <AppInput
+                            label="Atmosphere Level (e.g. 0.85% C)"
+                            value={stageAtmosphere}
+                            onChange={(e) => setStageAtmosphere(e.target.value)}
+                          />
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                          <AppInput
+                            label="Quench Medium Temp (°C)"
+                            type="number"
+                            value={stageQuenchTemp}
+                            onChange={(e) => setStageQuenchTemp(Number(e.target.value))}
+                          />
+
+                          <AppInput
+                            label="Operator Notes"
+                            placeholder="Atmosphere steady, thermocouple verify..."
+                            value={stageOperatorNotes}
+                            onChange={(e) => setStageOperatorNotes(e.target.value)}
+                          />
+                        </div>
+
+                        <AppButton
+                          type="submit"
+                          variant="primary"
+                          size="md"
+                          isLoading={isSubmitting}
+                          disabled={!canOperateProduction}
+                        >
+                          Log Stage Execution
+                        </AppButton>
+                      </form>
+                    </AppCard>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 3. WAITING FOR INSPECTION QUEUE VIEW                                      */}
+      {/* ========================================================================= */}
+      {activeWorkflowTab === 'WAITING_FOR_INSPECTION' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <AppCard style={{ padding: '20px', border: '1px solid rgba(52, 211, 153, 0.3)', background: 'linear-gradient(180deg, rgba(52, 211, 153, 0.04) 0%, rgba(15, 23, 42, 0.6) 100%)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px', borderBottom: '1px solid var(--color-border-subtle)', paddingBottom: '14px' }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '28px', height: '28px', borderRadius: '6px', background: 'rgba(52, 211, 153, 0.15)', color: '#34d399' }}>
+                    <ShieldCheck size={18} />
+                  </span>
+                  <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 800, color: '#ffffff' }}>
+                    Production Completed — Waiting for Inspection ({waitingInspJobs.length})
+                  </h2>
+                </div>
+                <p style={{ margin: '4px 0 0 36px', fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                  Batch Orders that have completed heat-treatment execution and have been approved for Quality Inspection. <strong>inProduction is false</strong> and <strong>waitingForInspection is true</strong>.
+                </p>
+              </div>
+              <span style={{ fontSize: '11px', padding: '4px 10px', borderRadius: '4px', background: 'rgba(52, 211, 153, 0.15)', color: '#34d399', fontWeight: 700, border: '1px solid rgba(52, 211, 153, 0.3)' }}>
+                State: waitingForInspection
+              </span>
+            </div>
+
+            {waitingInspJobs.length === 0 ? (
+              <div style={{ padding: '48px', textAlign: 'center', color: 'var(--color-text-secondary)' }}>
+                <ShieldCheck size={36} style={{ margin: '0 auto 12px auto', opacity: 0.4, color: '#34d399' }} />
+                <div style={{ fontWeight: 700, color: '#ffffff', fontSize: '15px' }}>No Batch Orders Currently Awaiting Inspection</div>
+                <div style={{ fontSize: '12px', marginTop: '6px' }}>
+                  Complete and approve in-production jobs from the <strong>In-Production Execution</strong> tab to hand them off here.
+                </div>
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                  <thead>
+                    <tr style={{ background: 'rgba(255, 255, 255, 0.02)', borderBottom: '1px solid var(--color-border-subtle)' }}>
+                      <th style={{ padding: '14px 16px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>INSPECTION REQUEST</th>
+                      <th style={{ padding: '14px 16px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>BATCH ORDER & LINEAGE</th>
+                      <th style={{ padding: '14px 16px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>CUSTOMER & PART</th>
+                      <th style={{ padding: '14px 16px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>COMPLETED PIECES</th>
+                      <th style={{ padding: '14px 16px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>SCRAPPED</th>
+                      <th style={{ padding: '14px 16px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>STATUS</th>
+                      <th style={{ padding: '14px 16px', color: 'var(--color-text-secondary)', fontWeight: 600, textAlign: 'right' }}>ACTION</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {waitingInspJobs.map((job) => {
+                      const boDisplay = job.boNumber || job.jobNumber;
+                      const poDisplay = job.poNumber || 'PO-LINKED';
+                      const grnDisplay = job.grnNumber || 'GRN-LINKED';
+                      const inspReq = job.execution?.qualityHandoff?.inspectionRequestId || `INSP-REQ-202609-${boDisplay.slice(-4)}`;
+                      return (
+                        <tr key={job._id || job.id || job.jobNumber} style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
+                          <td style={{ padding: '14px 16px' }}>
+                            <div style={{ fontWeight: 700, color: '#34d399', fontSize: '13px' }}>{inspReq}</div>
+                            <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>QA Queue Handed Off</div>
+                          </td>
+                          <td style={{ padding: '14px 16px' }}>
+                            <div style={{ fontWeight: 700, color: 'var(--color-primary)', fontSize: '14px' }}>{boDisplay}</div>
+                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginTop: '4px', padding: '2px 6px', borderRadius: '4px', background: 'rgba(255, 255, 255, 0.04)', fontSize: '11px' }}>
+                              <span style={{ color: '#93c5fd' }}>{poDisplay}</span>
+                              <span>→</span>
+                              <span style={{ color: '#6ee7b7' }}>{grnDisplay}</span>
+                              <span>→</span>
+                              <span style={{ color: '#fca5a5' }}>{boDisplay}</span>
+                            </div>
+                          </td>
+                          <td style={{ padding: '14px 16px' }}>
+                            <div style={{ fontWeight: 700, color: '#ffffff' }}>{job.customer?.customerName || 'Customer Inc.'}</div>
+                            <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
+                              {job.item?.itemName} [{job.item?.materialGrade}]
+                            </div>
+                          </td>
+                          <td style={{ padding: '14px 16px' }}>
+                            <span style={{ fontWeight: 800, color: '#34d399', fontSize: '14px' }}>
+                              {job.quantity?.completedQuantity || job.quantity?.targetQuantity || 100}
+                            </span>{' '}
+                            <span style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>{job.item?.uom || 'PCS'}</span>
+                          </td>
+                          <td style={{ padding: '14px 16px' }}>
+                            <span style={{ fontWeight: 700, color: job.quantity?.scrappedQuantity ? '#ef4444' : 'var(--color-text-muted)' }}>
+                              {job.quantity?.scrappedQuantity || 0}
+                            </span>
+                          </td>
+                          <td style={{ padding: '14px 16px' }}>
+                            <span style={{ fontSize: '11px', fontWeight: 700, padding: '3px 8px', borderRadius: '4px', background: 'rgba(52, 211, 153, 0.15)', color: '#34d399', border: '1px solid rgba(52, 211, 153, 0.3)' }}>
+                              WAITING FOR INSPECTION
+                            </span>
+                          </td>
+                          <td style={{ padding: '14px 16px', textAlign: 'right' }}>
+                            <AppButton
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => handleSelectJob(job)}
+                            >
+                              View Details
+                            </AppButton>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </AppCard>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 4. ALL BATCH ORDERS & PLANNING WORKSPACE VIEW                             */}
+      {/* ========================================================================= */}
+      {activeWorkflowTab === 'ALL_BATCH_ORDERS' && (
+        <>
+          {/* SECTION 1: DEDICATED PO & GRN PLANNING WORKSPACE (PO → GRN → PART → BO)   */}
+          <AppCard style={{ marginBottom: '28px', padding: '20px', border: '1px solid rgba(56, 189, 248, 0.25)', background: 'linear-gradient(180deg, rgba(15, 23, 42, 0.6) 0%, rgba(30, 41, 59, 0.4) 100%)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px', borderBottom: '1px solid var(--color-border-subtle)', paddingBottom: '14px' }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1225,11 +2150,11 @@ export const JobsPage: React.FC = () => {
         <AppCard>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
-              <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>SCHEDULED / STAGED</div>
-              <div style={{ fontSize: '28px', fontWeight: 800, color: '#a78bfa', marginTop: '4px' }}>{scheduledCount}</div>
+              <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>WAITING FOR INSPECTION</div>
+              <div style={{ fontSize: '28px', fontWeight: 800, color: '#34d399', marginTop: '4px' }}>{waitingInspectionCount}</div>
             </div>
-            <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'rgba(167, 139, 250, 0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#a78bfa' }}>
-              <Flame size={20} />
+            <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'rgba(52, 211, 153, 0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#34d399' }}>
+              <ShieldCheck size={20} />
             </div>
           </div>
         </AppCard>
@@ -1237,11 +2162,11 @@ export const JobsPage: React.FC = () => {
         <AppCard>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
-              <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>COMPLETED BATCHES</div>
-              <div style={{ fontSize: '28px', fontWeight: 800, color: '#34d399', marginTop: '4px' }}>{completedCount}</div>
+              <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>TOTAL BATCH ORDERS</div>
+              <div style={{ fontSize: '28px', fontWeight: 800, color: '#94a3b8', marginTop: '4px' }}>{totalCount}</div>
             </div>
-            <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'rgba(52, 211, 153, 0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#34d399' }}>
-              <PackageCheck size={20} />
+            <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'rgba(148, 163, 184, 0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8' }}>
+              <Layers size={20} />
             </div>
           </div>
         </AppCard>
@@ -1426,6 +2351,8 @@ export const JobsPage: React.FC = () => {
           </table>
         </div>
       </AppCard>
+        </>
+      )}
 
       {/* Selected Job Drawer: Authoritative BO Record View & Planning Traceability */}
       <AppDrawer
@@ -1439,14 +2366,41 @@ export const JobsPage: React.FC = () => {
               <AppButton variant="secondary" onClick={() => setSelectedJob(null)}>
                 Close Record
               </AppButton>
-              <AppButton
-                variant="primary"
-                leftIcon={<PlayCircle size={16} />}
-                isLoading={isSubmitting}
-                onClick={handleAdvanceStage}
-              >
-                Advance Thermal Cycle (Process State)
-              </AppButton>
+              {selectedJob.waitingForProduction || selectedJob.status === 'WAITING_FOR_PRODUCTION' ? (
+                <AppButton
+                  variant="primary"
+                  leftIcon={<PlayCircle size={16} />}
+                  isLoading={isSubmitting}
+                  disabled={!canOperateProduction}
+                  onClick={() => handleOpenTakeModal(selectedJob)}
+                >
+                  Take for Production
+                </AppButton>
+              ) : selectedJob.inProduction || selectedJob.status === 'IN_PRODUCTION' ? (
+                <AppButton
+                  variant="primary"
+                  leftIcon={<ShieldCheck size={16} />}
+                  isLoading={isSubmitting}
+                  disabled={!canApproveInspection}
+                  onClick={() => handleOpenApproveModal(selectedJob)}
+                >
+                  Approve for Inspection
+                </AppButton>
+              ) : selectedJob.waitingForInspection || selectedJob.status === 'WAITING_FOR_INSPECTION' ? (
+                <span
+                  style={{
+                    padding: '8px 14px',
+                    borderRadius: 'var(--radius-md)',
+                    background: 'rgba(52, 211, 153, 0.15)',
+                    color: '#34d399',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    border: '1px solid rgba(52, 211, 153, 0.3)'
+                  }}
+                >
+                  ✓ Waiting for QA Inspection
+                </span>
+              ) : null}
             </>
           )
         }
@@ -2410,6 +3364,211 @@ export const JobsPage: React.FC = () => {
             </form>
           )}
         </div>
+      </AppDialog>
+
+      {/* 1. Take for Production Dialog */}
+      <AppDialog
+        isOpen={isTakeModalOpen}
+        onClose={() => setIsTakeModalOpen(false)}
+        title="Take Batch Order into Production"
+        size="md"
+        footer={
+          <>
+            <AppButton variant="secondary" onClick={() => setIsTakeModalOpen(false)}>
+              Cancel
+            </AppButton>
+            <AppButton
+              variant="primary"
+              leftIcon={<Flame size={16} />}
+              isLoading={isSubmitting}
+              onClick={handleConfirmTake}
+            >
+              Confirm & Start Production
+            </AppButton>
+          </>
+        }
+      >
+        {targetTakeJob && (
+          <form onSubmit={handleConfirmTake} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div style={{ background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.25)', borderRadius: 'var(--radius-md)', padding: '12px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                <span style={{ fontSize: '11px', fontWeight: 700, color: '#f59e0b', textTransform: 'uppercase' }}>
+                  Target Batch Order
+                </span>
+                <span style={{ fontSize: '12px', fontWeight: 800, color: '#ffffff' }}>
+                  {targetTakeJob.boNumber || targetTakeJob.jobNumber}
+                </span>
+              </div>
+              <div style={{ fontSize: '13px', fontWeight: 600, color: '#ffffff' }}>
+                {targetTakeJob.item?.itemName} ({targetTakeJob.item?.materialGrade})
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
+                Bound Recipe: <strong style={{ color: '#fbbf24' }}>{targetTakeJob.recipeSnapshot?.recipeCode || 'REC-STANDARD'}</strong> ({targetTakeJob.recipeSnapshot?.name || 'Standard Metallurgical Recipe'})
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginTop: '4px' }}>
+                Lineage: {targetTakeJob.poNumber || 'PO-LINKED'} → {targetTakeJob.grnNumber || 'GRN-LINKED'} → {targetTakeJob.boNumber || targetTakeJob.jobNumber}
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <AppSelect
+                label="Assign Furnace / Equipment *"
+                value={takeFurnaceCode}
+                onChange={(e) => setTakeFurnaceCode(e.target.value)}
+                options={[
+                  { value: 'FURNACE-VAC-01', label: 'FURNACE-VAC-01 (Vacuum Bay 1)' },
+                  { value: 'FURNACE-PIT-01', label: 'FURNACE-PIT-01 (Pit Carburizing Bay 2)' },
+                  { value: 'FURNACE-SEAL-01', label: 'FURNACE-SEAL-01 (Sealed Quench Bay 3)' },
+                  { value: 'FURNACE-NIT-01', label: 'FURNACE-NIT-01 (Nitriding Bay 4)' }
+                ]}
+                required
+              />
+              <AppSelect
+                label="Production Shift *"
+                value={takeShift}
+                onChange={(e) => setTakeShift(e.target.value as any)}
+                options={[
+                  { value: 'SHIFT_A', label: 'Shift A (06:00 - 14:00)' },
+                  { value: 'SHIFT_B', label: 'Shift B (14:00 - 22:00)' },
+                  { value: 'SHIFT_C', label: 'Shift C (22:00 - 06:00)' }
+                ]}
+                required
+              />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <AppInput
+                label="Loaded Piece Count *"
+                type="number"
+                min={1}
+                value={takeLoadedPieces}
+                onChange={(e) => setTakeLoadedPieces(Number(e.target.value))}
+                required
+              />
+              <AppInput
+                label="Loaded Weight (kg) *"
+                type="number"
+                min={0.1}
+                step="0.1"
+                value={takeLoadedWeight}
+                onChange={(e) => setTakeLoadedWeight(Number(e.target.value))}
+                required
+              />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <AppInput
+                label="Initial Furnace Temp (°C) *"
+                type="number"
+                value={takeInitialTemp}
+                onChange={(e) => setTakeInitialTemp(Number(e.target.value))}
+                required
+              />
+              <AppInput
+                label="Charge / Load Number *"
+                value={takeChargeNumber}
+                onChange={(e) => setTakeChargeNumber(e.target.value)}
+                required
+              />
+            </div>
+
+            <AppInput
+              label="Operator & Pyrometry Notes"
+              placeholder="Pyrometer calibration, load thermocouple placements, fixturing notes..."
+              value={takeNotes}
+              onChange={(e) => setTakeNotes(e.target.value)}
+            />
+
+            <div style={{ fontSize: '11px', color: 'var(--color-text-muted)', lineHeight: '1.4' }}>
+              ℹ️ Taking this Batch Order will atomically clear <code>waitingForProduction</code>, activate <code>inProduction</code> as the sole state flag, lock the record from concurrent takes, and freeze planning modifications.
+            </div>
+          </form>
+        )}
+      </AppDialog>
+
+      {/* 2. Approve for Inspection Dialog */}
+      <AppDialog
+        isOpen={isApproveModalOpen}
+        onClose={() => setIsApproveModalOpen(false)}
+        title="Approve Batch Order for Inspection"
+        size="md"
+        footer={
+          <>
+            <AppButton variant="secondary" onClick={() => setIsApproveModalOpen(false)}>
+              Cancel
+            </AppButton>
+            <AppButton
+              variant="primary"
+              style={{ background: '#059669', borderColor: '#10b981' }}
+              leftIcon={<ShieldCheck size={16} />}
+              isLoading={isSubmitting}
+              onClick={handleConfirmApprove}
+            >
+              Confirm Approval & Handoff to QA
+            </AppButton>
+          </>
+        }
+      >
+        {targetApproveJob && (
+          <form onSubmit={handleConfirmApprove} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div style={{ background: 'rgba(52, 211, 153, 0.08)', border: '1px solid rgba(52, 211, 153, 0.25)', borderRadius: 'var(--radius-md)', padding: '12px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                <span style={{ fontSize: '11px', fontWeight: 700, color: '#34d399', textTransform: 'uppercase' }}>
+                  Ready for Inspection Handoff
+                </span>
+                <span style={{ fontSize: '12px', fontWeight: 800, color: '#ffffff' }}>
+                  {targetApproveJob.boNumber || targetApproveJob.jobNumber}
+                </span>
+              </div>
+              <div style={{ fontSize: '13px', fontWeight: 600, color: '#ffffff' }}>
+                {targetApproveJob.item?.itemName} ({targetApproveJob.item?.materialGrade})
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
+                Loaded Pieces: <strong style={{ color: '#ffffff' }}>{targetApproveJob.quantity?.loadedQuantity || targetApproveJob.quantity?.targetQuantity || 100} {targetApproveJob.item?.uom || 'PCS'}</strong>
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>
+                Bound Recipe: {targetApproveJob.recipeSnapshot?.recipeCode || 'REC-STANDARD'}
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <AppInput
+                label="Completed (Conforming) Pieces *"
+                type="number"
+                min={0}
+                value={approveCompletedQty}
+                onChange={(e) => setApproveCompletedQty(Number(e.target.value))}
+                required
+              />
+              <AppInput
+                label="Scrapped Pieces *"
+                type="number"
+                min={0}
+                value={approveScrappedQty}
+                onChange={(e) => setApproveScrappedQty(Number(e.target.value))}
+                required
+              />
+            </div>
+
+            {Number(approveCompletedQty) + Number(approveScrappedQty) !== (targetApproveJob.quantity?.loadedQuantity || targetApproveJob.quantity?.targetQuantity || 100) && (
+              <div style={{ padding: '8px 12px', borderRadius: '6px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#f87171', fontSize: '12px' }}>
+                ⚠️ Piece balance error: Completed ({approveCompletedQty}) + Scrapped ({approveScrappedQty}) must equal Loaded ({targetApproveJob.quantity?.loadedQuantity || targetApproveJob.quantity?.targetQuantity || 100}).
+              </div>
+            )}
+
+            <AppInput
+              label="Production Approval Notes / QA Summary *"
+              placeholder="All recipe stages completed, pyrometry chart attached, ready for dimensional and hardness inspection..."
+              value={approveNotes}
+              onChange={(e) => setApproveNotes(e.target.value)}
+              required
+            />
+
+            <div style={{ fontSize: '11px', color: 'var(--color-text-muted)', lineHeight: '1.4' }}>
+              🔒 <strong>Handoff Invariant:</strong> Approving this Batch Order clears <code>inProduction</code>, activates <code>waitingForInspection</code>, removes the job from active production execution, and forwards it to Quality Inspection users.
+            </div>
+          </form>
+        )}
       </AppDialog>
     </PageContainer>
   );

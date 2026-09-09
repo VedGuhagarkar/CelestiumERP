@@ -22,6 +22,10 @@ import {
   ResumeJobExecutionDto,
   AddProductionLogDto,
   CompleteJobExecutionDto,
+  TakeForProductionDto,
+  RecordRecipeStageProgressDto,
+  ApproveForInspectionDto,
+  IProductionExecutionReadiness,
   TransitionToStorageDto,
   QueryJobsDto,
   ProductionJobDocument,
@@ -48,7 +52,7 @@ import { constraintAnalysisService } from '../constraint-analysis/constraint-ana
 import { auditService } from '../audit/audit.service.js';
 import { DomainEventBus } from '../../core/events/domain-event-bus.js';
 import { DomainEvents } from '../../core/constants/events.js';
-import { NotFoundError, BadRequestError } from '../../core/errors/app-error.js';
+import { NotFoundError, BadRequestError, ConflictError } from '../../core/errors/app-error.js';
 import { PaginationOptions, PaginatedResult } from '../../core/types/pagination.js';
 import { allocationLockManager } from '../../core/concurrency/allocation-lock.js';
 
@@ -2759,6 +2763,579 @@ export class ProductionJobService {
       assignedOperatorName: job.operatorAssignment?.operatorName || null,
       targetCompletionDate: job.timeline?.targetCompletionDate
     }));
+  }
+
+  // --- Authoritative Revised Production Phase Methods (Waiting -> In Production -> Waiting for Inspection) ---
+
+  public async getWaitingForProductionQueue(
+    tenantId: string,
+    filters: any = {}
+  ): Promise<any[]> {
+    const rawJobs = await this.repo.findWaitingForProductionQueue(tenantId, filters);
+    const readyJobs = rawJobs.filter((job) => {
+      const readiness = this.validateProductionReadiness(job);
+      return readiness.isReadyForProduction;
+    });
+
+    return readyJobs.map((job, idx) => ({
+      queuePosition: idx + 1,
+      jobId: job.id,
+      jobNumber: job.jobNumber,
+      boNumber: job.boNumber || job.jobNumber,
+      poId: job.poId || (job.genealogy as any)?.whichPo?.poId || null,
+      poNumber: job.poNumber || (job.genealogy as any)?.whichPo?.poNumber || null,
+      grnId: job.grnId || (job.genealogy as any)?.whichGrn?.grnId || null,
+      grnNumber: job.grnNumber || (job.genealogy as any)?.whichGrn?.grnNumber || null,
+      customerName: job.customer?.customerName,
+      itemCode: job.item?.itemCode,
+      itemName: job.item?.itemName,
+      materialGrade: job.item?.materialGrade,
+      recipeId: job.recipeSnapshot?.recipeId || null,
+      recipeCode: job.recipeSnapshot?.recipeCode || null,
+      recipeName: job.recipeSnapshot?.name || null,
+      recipeStagesCount: job.recipeSnapshot?.stages?.length || 0,
+      recipeStages: job.recipeSnapshot?.stages || [],
+      weightKg: job.weightKg || null,
+      targetQuantity: job.quantity?.targetQuantity,
+      priority: job.priority,
+      status: job.status,
+      waitingForProduction: true,
+      inProduction: false,
+      waitingForInspection: false,
+      workflowState: job.workflowState || null,
+      assignedFurnaceCode: job.equipmentAssignment?.furnaceCode || null,
+      assignedOperatorName: job.operatorAssignment?.operatorName || null,
+      targetCompletionDate: job.timeline?.targetCompletionDate
+    }));
+  }
+
+  public async getInProductionQueue(
+    tenantId: string,
+    filters: any = {}
+  ): Promise<any[]> {
+    const jobs = await this.repo.findInProductionQueue(tenantId, filters);
+
+    return jobs.map((job, idx) => {
+      const totalStages = job.recipeSnapshot?.stages?.length || 0;
+      const completedStages = job.execution?.stageProgress?.length || 0;
+
+      return {
+        queuePosition: idx + 1,
+        jobId: job.id,
+        jobNumber: job.jobNumber,
+        boNumber: job.boNumber || job.jobNumber,
+        poNumber: job.poNumber || (job.genealogy as any)?.whichPo?.poNumber || null,
+        grnNumber: job.grnNumber || (job.genealogy as any)?.whichGrn?.grnNumber || null,
+        customerName: job.customer?.customerName,
+        itemCode: job.item?.itemCode,
+        itemName: job.item?.itemName,
+        materialGrade: job.item?.materialGrade,
+        recipeCode: job.recipeSnapshot?.recipeCode || null,
+        recipeName: job.recipeSnapshot?.name || null,
+        recipeStages: job.recipeSnapshot?.stages || [],
+        totalStages,
+        completedStages,
+        targetQuantity: job.quantity?.targetQuantity,
+        loadedQuantity: job.quantity?.loadedQuantity || job.execution?.furnaceCharge?.loadedPieceCount,
+        completedQuantity: job.quantity?.completedQuantity || 0,
+        scrappedQuantity: job.quantity?.scrappedQuantity || 0,
+        priority: job.priority,
+        status: job.status,
+        inProduction: true,
+        workflowState: job.workflowState || null,
+        furnaceCode: job.equipmentAssignment?.furnaceCode || null,
+        furnaceId: job.equipmentAssignment?.furnaceId || null,
+        operatorName: job.operatorAssignment?.operatorName || null,
+        chargeNumber: job.execution?.furnaceCharge?.chargeNumber || null,
+        cycleStartTime: job.execution?.cycleTimer?.cycleStartTime || job.timeline?.actualStartDate || null,
+        stageProgress: job.execution?.stageProgress || [],
+        downtimeLog: job.execution?.downtimeLog || [],
+        productionLogs: job.execution?.productionLogs || []
+      };
+    });
+  }
+
+  public async getWaitingForInspectionQueue(
+    tenantId: string,
+    filters: any = {}
+  ): Promise<any[]> {
+    const jobs = await this.repo.findWaitingForInspectionQueue(tenantId, filters);
+
+    return jobs.map((job, idx) => ({
+      queuePosition: idx + 1,
+      jobId: job.id,
+      jobNumber: job.jobNumber,
+      boNumber: job.boNumber || job.jobNumber,
+      poNumber: job.poNumber || (job.genealogy as any)?.whichPo?.poNumber || null,
+      grnNumber: job.grnNumber || (job.genealogy as any)?.whichGrn?.grnNumber || null,
+      customerName: job.customer?.customerName,
+      itemCode: job.item?.itemCode,
+      itemName: job.item?.itemName,
+      materialGrade: job.item?.materialGrade,
+      recipeCode: job.recipeSnapshot?.recipeCode || null,
+      recipeName: job.recipeSnapshot?.name || null,
+      completedQuantity: job.quantity?.completedQuantity || 0,
+      scrappedQuantity: job.quantity?.scrappedQuantity || 0,
+      inspectionRequestId: job.execution?.qualityHandoff?.inspectionRequestId || null,
+      status: job.status,
+      waitingForInspection: true,
+      workflowState: job.workflowState || null,
+      actualCompletionDate: job.timeline?.actualCompletionDate || null
+    }));
+  }
+
+  public async takeForProduction(
+    tenantId: string,
+    actor: IActorContext,
+    jobId: string,
+    dto: TakeForProductionDto = {}
+  ): Promise<ProductionJobDocument> {
+    const job = await this.repo.findById(tenantId, jobId);
+    if (!job || job.isDeleted) {
+      throw new NotFoundError(`Batch Order with ID '${jobId}' not found`);
+    }
+
+    if (job.inProduction || job.status === 'IN_PRODUCTION') {
+      throw new ConflictError(
+        `Batch Order '${job.boNumber || job.jobNumber}' is already in production and cannot be taken simultaneously by another user.`
+      );
+    }
+
+    if (!job.waitingForProduction && job.status !== 'WAITING_FOR_PRODUCTION' && job.status !== 'SCHEDULED' && job.status !== 'APPROVED') {
+      throw new BadRequestError(
+        `Cannot take Batch Order '${job.boNumber || job.jobNumber}' into production. Current status is '${job.status}'. Only Batch Orders waiting for production may be taken.`
+      );
+    }
+
+    // Assert readiness
+    const readiness = this.validateProductionReadiness(job);
+    if (!readiness.isReadyForProduction) {
+      throw new BadRequestError(
+        `Cannot take Batch Order '${job.boNumber || job.jobNumber}' into production: Incomplete planning readiness (${readiness.missingFields.join(', ')}).`
+      );
+    }
+
+    // Furnace capability & operational status check
+    const furnaceId = dto.furnaceId || dto.assignedFurnaceId || job.equipmentAssignment?.furnaceId;
+    let furnaceDoc: any = null;
+    if (furnaceId) {
+      furnaceDoc = await furnaceCapacityRepository.findFurnaceById(tenantId, furnaceId);
+      if (furnaceDoc && (furnaceDoc.isDeleted || furnaceDoc.status !== 'OPERATIONAL')) {
+        throw new BadRequestError(
+          `Assigned furnace is not in OPERATIONAL state (Current status: '${furnaceDoc?.status || 'NOT_FOUND'}')`
+        );
+      }
+      if (furnaceDoc && dto.initialFurnaceTempC && dto.initialFurnaceTempC > furnaceDoc.thermalCapabilities?.maxOperatingTempC) {
+        throw new BadRequestError(
+          `Initial furnace temperature (${dto.initialFurnaceTempC}°C) exceeds furnace maximum rating (${furnaceDoc.thermalCapabilities.maxOperatingTempC}°C)`
+        );
+      }
+    }
+
+    const now = new Date();
+    const prevStatus = job.status;
+
+    const chargeNumber =
+      dto.chargeNumber ||
+      `CHG-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}-${String(Math.floor(1000 + Math.random() * 9000))}`;
+    const loadedPieces = dto.loadedPieceCount || job.quantity?.loadedQuantity || job.quantity?.targetQuantity || 1;
+    const loadedWeight = dto.loadedWeightKg || job.weightKg || 10;
+
+    const updatePayload: any = {
+      status: 'IN_PRODUCTION',
+      waitingForProduction: false,
+      inProduction: true,
+      waitingForInspection: false,
+      inInspection: false,
+      waitingForDispatch: false,
+      dispatched: false,
+      workflowState: {
+        waitingForProduction: false,
+        inProduction: true,
+        waitingForInspection: false,
+        inInspection: false,
+        waitingForDispatch: false,
+        dispatched: false
+      },
+      'timeline.actualStartDate': now,
+      'quantity.loadedQuantity': loadedPieces,
+      'execution.furnaceCharge': {
+        chargeNumber,
+        loadedWeightKg: loadedWeight,
+        loadedPieceCount: loadedPieces,
+        fixtureId: dto.fixtureId || null,
+        initialFurnaceTempC: dto.initialFurnaceTempC || 25,
+        initialAtmosphereLevel: dto.initialAtmosphereLevel || null,
+        thermocoupleLocations: dto.thermocoupleLocations || ['TC_TOP', 'TC_CENTER', 'TC_BOTTOM'],
+        startedAt: now,
+        startedBy: { userId: actor.userId, email: actor.email, role: actor.role }
+      },
+      'execution.cycleTimer': {
+        cycleStartTime: now,
+        cycleEndTime: null,
+        totalRunDurationMinutes: 0,
+        totalDowntimeDurationMinutes: 0
+      }
+    };
+
+    if (furnaceDoc) {
+      updatePayload['equipmentAssignment.furnaceId'] = furnaceDoc.id;
+      updatePayload['equipmentAssignment.furnaceCode'] = furnaceDoc.furnaceCode;
+      updatePayload['equipmentAssignment.locationBay'] = furnaceDoc.locationBay;
+      updatePayload['equipmentAssignment.pyrometryClass'] = furnaceDoc.thermalCapabilities?.pyrometryClass || 'CLASS_2';
+    }
+
+    const operatorId = dto.operatorId || dto.assignedOperatorId || job.operatorAssignment?.operatorId || actor.userId;
+    if (operatorId) {
+      updatePayload['operatorAssignment.operatorId'] = operatorId;
+      updatePayload['operatorAssignment.operatorName'] = actor.email || 'Furnace Operator';
+      if (dto.shift) updatePayload['operatorAssignment.shift'] = dto.shift;
+    }
+
+    const updated = await this.repo.atomicTakeForProduction(tenantId, job.id, {
+      $set: updatePayload,
+      $push: {
+        transitionHistory: {
+          fromStatus: prevStatus,
+          toStatus: 'IN_PRODUCTION',
+          timestamp: now,
+          performedBy: { userId: actor.userId, email: actor.email, role: actor.role },
+          reason: 'Batch Order taken into production',
+          notes: dto.notes || null
+        }
+      }
+    });
+
+    if (!updated) {
+      throw new ConflictError(
+        `Batch Order '${job.boNumber || job.jobNumber}' could not be taken into production. It was taken by another user or is no longer waiting for production.`
+      );
+    }
+
+    await auditService.record(tenantId, {
+      actorId: actor.userId,
+      action: 'PRODUCTION_JOB_TAKE',
+      entityType: 'PRODUCTION_JOB',
+      entityId: updated.id,
+      metadata: {
+        jobNumber: updated.jobNumber,
+        boNumber: updated.boNumber,
+        previousStatus: prevStatus,
+        status: 'IN_PRODUCTION'
+      }
+    });
+
+    this.eventBus.publish({
+      name: DomainEvents.JOB_STARTED,
+      tenantId,
+      occurredAt: now,
+      actorId: actor.userId,
+      payload: { jobId: updated.id, jobNumber: updated.jobNumber, boNumber: updated.boNumber, status: 'IN_PRODUCTION' }
+    });
+
+    this.eventBus.publish({
+      name: DomainEvents.JOB_IN_PRODUCTION,
+      tenantId,
+      occurredAt: now,
+      actorId: actor.userId,
+      payload: { jobId: updated.id, jobNumber: updated.jobNumber, boNumber: updated.boNumber, status: 'IN_PRODUCTION' }
+    });
+
+    return updated;
+  }
+
+  public async recordRecipeStageProgress(
+    tenantId: string,
+    actor: IActorContext,
+    jobId: string,
+    dto: RecordRecipeStageProgressDto
+  ): Promise<ProductionJobDocument> {
+    const job = await this.repo.findById(tenantId, jobId);
+    if (!job || job.isDeleted) {
+      throw new NotFoundError(`Batch Order with ID '${jobId}' not found`);
+    }
+
+    if (!job.inProduction && job.status !== 'IN_PRODUCTION' && job.status !== 'IN_PROGRESS') {
+      throw new BadRequestError(
+        `Cannot record production data for '${job.jobNumber}'. Batch Order is not in production (Current status: '${job.status}').`
+      );
+    }
+
+    const recipeStages = job.recipeSnapshot?.stages || [];
+    let matchedRecipeStage = recipeStages.find((s: any) => s.sequence === dto.stageSequence);
+
+    if (recipeStages.length > 0 && !matchedRecipeStage) {
+      throw new BadRequestError(
+        `Recipe Stage sequence ${dto.stageSequence} does not exist in referenced Recipe '${job.recipeSnapshot.recipeCode}'. Production must follow the referenced Recipe.`
+      );
+    }
+
+    const stageName = dto.stageName || matchedRecipeStage?.stageName || `Stage ${dto.stageSequence}`;
+    const stageType = (matchedRecipeStage as any)?.stageType || 'SOAK';
+    const targetTemp = matchedRecipeStage?.targetTemperatureC || dto.actualTemperatureC;
+    const targetDuration = matchedRecipeStage?.soakTimeMinutes || dto.actualDurationMinutes;
+
+    if (!job.execution) {
+      job.execution = { stageProgress: [], downtimeLog: [], productionLogs: [] };
+    }
+    if (!job.execution.stageProgress) {
+      job.execution.stageProgress = [];
+    }
+
+    const existingIdx = job.execution.stageProgress.findIndex((s) => s.stageSequence === dto.stageSequence);
+    const stageRecord: any = {
+      stageSequence: dto.stageSequence,
+      stageName,
+      stageType,
+      targetTemperatureC: targetTemp,
+      actualTemperatureC: dto.actualTemperatureC,
+      targetDurationMinutes: targetDuration,
+      actualDurationMinutes: dto.actualDurationMinutes,
+      quenchMedium: dto.quenchMedium || matchedRecipeStage?.quenchParameters?.medium || null,
+      quenchAgitationSpeedRpm: dto.quenchAgitationSpeedRpm || matchedRecipeStage?.quenchParameters?.agitationSpeedPercent || null,
+      quenchMediaInitialTempC: dto.quenchMediaInitialTempC || null,
+      quenchMediaFinalTempC: dto.quenchMediaFinalTempC || null,
+      atmosphereDetails: dto.atmosphereDetails || null,
+      recordedBy: { userId: actor.userId, email: actor.email, role: actor.role },
+      timestamp: new Date(),
+      notes: dto.notes || null
+    };
+
+    if (existingIdx >= 0) {
+      job.execution.stageProgress[existingIdx] = stageRecord;
+    } else {
+      job.execution.stageProgress.push(stageRecord);
+      job.execution.stageProgress.sort((a, b) => a.stageSequence - b.stageSequence);
+    }
+
+    await job.save();
+
+    await auditService.record(tenantId, {
+      actorId: actor.userId,
+      action: 'PRODUCTION_RECIPE_STAGE_RECORDED',
+      entityType: 'PRODUCTION_JOB',
+      entityId: job.id,
+      metadata: {
+        jobNumber: job.jobNumber,
+        stageSequence: dto.stageSequence,
+        stageName,
+        actualTemperatureC: dto.actualTemperatureC,
+        actualDurationMinutes: dto.actualDurationMinutes
+      }
+    });
+
+    return job;
+  }
+
+  public async evaluateProductionExecutionReadiness(
+    tenantId: string,
+    jobId: string
+  ): Promise<IProductionExecutionReadiness> {
+    const job = await this.repo.findById(tenantId, jobId);
+    if (!job || job.isDeleted) {
+      throw new NotFoundError(`Batch Order with ID '${jobId}' not found`);
+    }
+
+    const recipeStages = job.recipeSnapshot?.stages || [];
+    const totalRecipeStages = recipeStages.length;
+    const executedStages = job.execution?.stageProgress || [];
+    const completedStagesCount = executedStages.length;
+
+    const missingRequirements: string[] = [];
+    const errors: string[] = [];
+
+    const executedSequences = new Set(executedStages.map((s) => s.stageSequence));
+    for (const rs of recipeStages) {
+      if (!executedSequences.has(rs.sequence)) {
+        missingRequirements.push(`Recipe stage ${rs.sequence} (${rs.stageName}) has not been executed.`);
+      }
+    }
+
+    const chargeRecorded = !!job.execution?.furnaceCharge?.chargeNumber;
+    if (!chargeRecorded) {
+      missingRequirements.push('Furnace charge setup has not been recorded.');
+    }
+
+    const loadedPieceCount =
+      job.quantity?.loadedQuantity || job.execution?.furnaceCharge?.loadedPieceCount || job.quantity?.targetQuantity || 0;
+    const completedQuantity = job.quantity?.completedQuantity || 0;
+    const scrappedQuantity = job.quantity?.scrappedQuantity || 0;
+    const pieceCountBalanced = completedQuantity + scrappedQuantity === loadedPieceCount && loadedPieceCount > 0;
+
+    const allRecipeStagesCompleted = missingRequirements.length === 0;
+    const isReadyForInspection = allRecipeStagesCompleted && chargeRecorded;
+
+    return {
+      isReadyForInspection,
+      jobId: job.id,
+      jobNumber: job.jobNumber,
+      boNumber: job.boNumber || job.jobNumber,
+      status: job.status,
+      allRecipeStagesCompleted,
+      totalRecipeStages,
+      completedStagesCount,
+      chargeRecorded,
+      cycleTimerRecorded: !!job.execution?.cycleTimer?.cycleStartTime,
+      pieceCountBalanced,
+      loadedPieceCount,
+      completedQuantity,
+      scrappedQuantity,
+      missingRequirements,
+      errors
+    };
+  }
+
+  public async approveForInspection(
+    tenantId: string,
+    actor: IActorContext,
+    jobId: string,
+    dto: ApproveForInspectionDto = {}
+  ): Promise<ProductionJobDocument> {
+    const job = await this.repo.findById(tenantId, jobId);
+    if (!job || job.isDeleted) {
+      throw new NotFoundError(`Batch Order with ID '${jobId}' not found`);
+    }
+
+    if (!job.inProduction && job.status !== 'IN_PRODUCTION' && job.status !== 'IN_PROGRESS') {
+      throw new BadRequestError(
+        `Cannot approve Batch Order '${job.boNumber || job.jobNumber}' for inspection: It is not in production (Current status: '${job.status}').`
+      );
+    }
+
+    // Verify recipe stage completion
+    const recipeStages = job.recipeSnapshot?.stages || [];
+    if (recipeStages.length > 0) {
+      const executedSequences = new Set((job.execution?.stageProgress || []).map((s) => s.stageSequence));
+      const missingStages = recipeStages.filter((rs: any) => !executedSequences.has(rs.sequence));
+      if (missingStages.length > 0) {
+        throw new BadRequestError(
+          `Cannot approve for inspection: Incomplete Recipe execution. Missing recipe stage(s): ${missingStages.map((s: any) => `Seq ${s.sequence} (${s.stageName})`).join(', ')}.`
+        );
+      }
+    } else {
+      if (!job.execution?.stageProgress || job.execution.stageProgress.length === 0) {
+        throw new BadRequestError(
+          `Cannot approve for inspection: No production stage progress recorded for Batch Order '${job.jobNumber}'.`
+        );
+      }
+    }
+
+    const loadedPieceCount =
+      job.quantity?.loadedQuantity || job.execution?.furnaceCharge?.loadedPieceCount || job.quantity?.targetQuantity || 1;
+    const completedQty = dto.completedQuantity ?? (loadedPieceCount - (dto.scrappedQuantity || 0));
+    const scrappedQty = dto.scrappedQuantity ?? 0;
+
+    if (completedQty + scrappedQty !== loadedPieceCount) {
+      throw new BadRequestError(
+        `Piece count balance discrepancy: Completed pieces (${completedQty}) + Scrapped pieces (${scrappedQty}) does not equal Loaded piece count (${loadedPieceCount}).`
+      );
+    }
+
+    const now = new Date();
+    const prevStatus = job.status;
+
+    const yearMonth = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const seq = String(Math.floor(1000 + Math.random() * 9000));
+    const inspectionRequestId = `INSP-REQ-${yearMonth}-${seq}`;
+    const pyrometryArchiveId = `PYRO-${yearMonth}-${seq}`;
+
+    const updatePayload: any = {
+      status: 'WAITING_FOR_INSPECTION',
+      waitingForProduction: false,
+      inProduction: false,
+      waitingForInspection: true,
+      inInspection: false,
+      waitingForDispatch: false,
+      dispatched: false,
+      workflowState: {
+        waitingForProduction: false,
+        inProduction: false,
+        waitingForInspection: true,
+        inInspection: false,
+        waitingForDispatch: false,
+        dispatched: false
+      },
+      'quantity.completedQuantity': completedQty,
+      'quantity.scrappedQuantity': scrappedQty,
+      'timeline.actualCompletionDate': now,
+      'execution.cycleTimer.cycleEndTime': now,
+      'execution.qualityHandoff': {
+        inspectionRequestId,
+        status: 'PENDING_INSPECTION',
+        requestedAt: now,
+        pyrometryArchiveId,
+        completedQuantity: completedQty,
+        scrappedQuantity: scrappedQty,
+        notes: dto.operatorNotes || dto.notes || null
+      }
+    };
+
+    const updated = await this.repo.atomicApproveForInspection(tenantId, job.id, {
+      $set: updatePayload,
+      $push: {
+        transitionHistory: {
+          fromStatus: prevStatus,
+          toStatus: 'WAITING_FOR_INSPECTION',
+          timestamp: now,
+          performedBy: { userId: actor.userId, email: actor.email, role: actor.role },
+          reason: `Production completed following Recipe '${job.recipeSnapshot?.recipeCode || 'STANDARD'}'. Approved for Inspection (${inspectionRequestId}).`,
+          notes: dto.notes || null
+        }
+      }
+    });
+
+    if (!updated) {
+      throw new BadRequestError(`Failed to transition Batch Order '${job.jobNumber}' to WAITING_FOR_INSPECTION.`);
+    }
+
+    await auditService.record(tenantId, {
+      actorId: actor.userId,
+      action: 'PRODUCTION_JOB_APPROVED_FOR_INSPECTION',
+      entityType: 'PRODUCTION_JOB',
+      entityId: updated.id,
+      metadata: {
+        jobNumber: updated.jobNumber,
+        boNumber: updated.boNumber,
+        previousStatus: prevStatus,
+        status: 'WAITING_FOR_INSPECTION',
+        inspectionRequestId,
+        completedQuantity: completedQty,
+        scrappedQuantity: scrappedQty
+      }
+    });
+
+    this.eventBus.publish({
+      name: DomainEvents.JOB_COMPLETED,
+      tenantId,
+      occurredAt: now,
+      actorId: actor.userId,
+      payload: {
+        jobId: updated.id,
+        jobNumber: updated.jobNumber,
+        boNumber: updated.boNumber,
+        status: 'WAITING_FOR_INSPECTION',
+        inspectionRequestId,
+        completedQuantity: completedQty
+      }
+    });
+
+    this.eventBus.publish({
+      name: DomainEvents.JOB_APPROVED_FOR_INSPECTION,
+      tenantId,
+      occurredAt: now,
+      actorId: actor.userId,
+      payload: {
+        jobId: updated.id,
+        jobNumber: updated.jobNumber,
+        boNumber: updated.boNumber,
+        status: 'WAITING_FOR_INSPECTION',
+        inspectionRequestId,
+        completedQuantity: completedQty,
+        scrappedQuantity: scrappedQty
+      }
+    });
+
+    return updated;
   }
 
   public async convertPlanToJob(

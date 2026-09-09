@@ -11,6 +11,9 @@ import {
   getProcessDetailsSchema,
   getBatchOrderGenealogySchema,
   getBatchOrderProductionReadinessSchema,
+  takeForProductionSchema,
+  recordRecipeStageProgressSchema,
+  approveForInspectionSchema,
   updateJobSchema,
   assignOperatorSchema,
   removeOperatorSchema,
@@ -31,6 +34,84 @@ import {
 } from './production-job.validator.js';
 
 export const productionJobRouter = Router();
+
+// --- Authoritative Revised Production Phase Execution Endpoints ---
+
+// 0i. Get Batch Orders Waiting for Production (eligible queue)
+productionJobRouter.get(
+  ['/waiting-for-production', '/queue/waiting-for-production'],
+  authenticateJwt,
+  requireAnyPermission(PERMISSIONS.PRODUCTION_JOB_VIEW, PERMISSIONS.BATCH_ORDER_VIEW),
+  asyncHandler(productionJobController.getWaitingForProductionQueue)
+);
+
+// 0j. Get Batch Orders In Production (active execution queue)
+productionJobRouter.get(
+  ['/in-production', '/queue/in-production'],
+  authenticateJwt,
+  requireAnyPermission(PERMISSIONS.PRODUCTION_JOB_VIEW, PERMISSIONS.BATCH_ORDER_VIEW),
+  asyncHandler(productionJobController.getInProductionQueue)
+);
+
+// 0k. Get Batch Orders Waiting for Inspection (completed production handoff queue)
+productionJobRouter.get(
+  ['/waiting-for-inspection', '/queue/waiting-for-inspection'],
+  authenticateJwt,
+  requireAnyPermission(
+    PERMISSIONS.QUALITY_INSPECTION_VIEW,
+    PERMISSIONS.PRODUCTION_JOB_VIEW,
+    PERMISSIONS.BATCH_ORDER_VIEW
+  ),
+  asyncHandler(productionJobController.getWaitingForInspectionQueue)
+);
+
+// 0l. Take Batch Order for Production (waiting for production -> in production atomic transition)
+productionJobRouter.post(
+  ['/:id/take-production', '/batch-orders/:id/take-production'],
+  authenticateJwt,
+  requireAnyPermission(
+    PERMISSIONS.PRODUCTION_JOB_START,
+    PERMISSIONS.PRODUCTION_JOB_TRANSITION,
+    PERMISSIONS.PRODUCTION_JOB_UPDATE,
+    PERMISSIONS.MACHINES_FURNACE_OPERATE
+  ),
+  validateRequest(takeForProductionSchema),
+  asyncHandler(productionJobController.takeForProduction)
+);
+
+// 0m. Record Recipe Stage Progress for In-Production Batch Order
+productionJobRouter.post(
+  ['/:id/recipe-stage-progress', '/batch-orders/:id/recipe-stage-progress'],
+  authenticateJwt,
+  requireAnyPermission(
+    PERMISSIONS.PRODUCTION_JOB_UPDATE,
+    PERMISSIONS.MACHINES_FURNACE_OPERATE
+  ),
+  validateRequest(recordRecipeStageProgressSchema),
+  asyncHandler(productionJobController.recordRecipeStageProgress)
+);
+
+// 0n. Evaluate Production Execution Readiness for Inspection Handoff
+productionJobRouter.get(
+  ['/:id/production-execution-readiness', '/batch-orders/:id/production-execution-readiness'],
+  authenticateJwt,
+  requireAnyPermission(PERMISSIONS.PRODUCTION_JOB_VIEW, PERMISSIONS.BATCH_ORDER_VIEW),
+  asyncHandler(productionJobController.evaluateProductionExecutionReadiness)
+);
+
+// 0o. Approve Batch Order for Inspection (in production -> waiting for inspection atomic handoff)
+productionJobRouter.post(
+  ['/:id/approve-inspection', '/batch-orders/:id/approve-inspection'],
+  authenticateJwt,
+  requireAnyPermission(
+    PERMISSIONS.PRODUCTION_JOB_COMPLETE,
+    PERMISSIONS.PRODUCTION_JOB_TRANSITION,
+    PERMISSIONS.PRODUCTION_JOB_UPDATE,
+    PERMISSIONS.MACHINES_FURNACE_OPERATE
+  ),
+  validateRequest(approveForInspectionSchema),
+  asyncHandler(productionJobController.approveForInspection)
+);
 
 // --- Authoritative Planning Phase & Batch Order Endpoints ---
 

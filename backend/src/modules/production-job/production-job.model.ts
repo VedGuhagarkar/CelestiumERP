@@ -407,6 +407,8 @@ const productionJobSchema = createBaseSchema<ProductionJobDocument>({
     type: String,
     enum: [
       'WAITING_FOR_PRODUCTION',
+      'IN_PRODUCTION',
+      'WAITING_FOR_INSPECTION',
       'DRAFT',
       'PENDING_REVIEW',
       'APPROVED',
@@ -482,9 +484,9 @@ productionJobSchema.pre('save', function (next) {
 
     if (s === 'WAITING_FOR_PRODUCTION' || s === 'DRAFT' || s === 'PENDING_REVIEW') {
       this.waitingForProduction = true;
-    } else if (s === 'IN_PROGRESS' || s === 'SCHEDULED' || s === 'APPROVED' || s === 'PAUSED') {
+    } else if (s === 'IN_PRODUCTION' || s === 'IN_PROGRESS' || s === 'SCHEDULED' || s === 'APPROVED' || s === 'PAUSED') {
       this.inProduction = true;
-    } else if (s === 'QUALITY_CHECK') {
+    } else if (s === 'WAITING_FOR_INSPECTION' || s === 'QUALITY_CHECK') {
       this.waitingForInspection = true;
     } else if (s === 'STORAGE' || s === 'READY_FOR_DISPATCH') {
       this.waitingForDispatch = true;
@@ -532,9 +534,23 @@ productionJobSchema.pre('save', function (next) {
     );
   }
 
-  if (!this.isNew) {
-    if (this.isModified('genealogy') && !this.isModified('isDeleted')) {
+  if (!this.isNew && !this.isModified('isDeleted')) {
+    if (this.isModified('genealogy')) {
       return next(new Error('Genealogy Violation: Batch Order source genealogy is strictly immutable once established.'));
+    }
+    if (this.inProduction) {
+      if (
+        this.isModified('processDetails') ||
+        this.isModified('customer') ||
+        this.isModified('item') ||
+        this.isModified('poId') ||
+        this.isModified('grnId') ||
+        this.isModified('quantity.targetQuantity')
+      ) {
+        return next(
+          new Error('In-Production Lock Violation: Batch Order is locked against unrelated modifications while in production.')
+        );
+      }
     }
   }
   next();

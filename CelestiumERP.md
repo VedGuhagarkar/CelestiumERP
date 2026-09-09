@@ -75,7 +75,7 @@
    - 6.5 Frontend State Management, RTK Base API & HTTP Client
    - 6.6 Apple HIG Design System Tokens & Aesthetics
 7. [End-to-End Operational Domain Workflows](#7-end-to-end-operational-domain-workflows)
-   - 7.1 12-Stage Heat Treatment Lifecycle Workflow
+   - 7.1 Authoritative Production Phase Workflow (waiting for production -> in production -> waiting for inspection)
    - 7.2 Plan-to-Job Conversion & Constraint Feasibility Workflow
    - 7.3 Metallurgical Quality Inspection & CoC Generation Workflow
    - 7.4 Non-Conformance (NCR) & CAPA Verification Workflow
@@ -95,7 +95,7 @@
    - 8.1 Database Seeding Engine (`backend/src/scripts/seed.ts`)
    - 8.2 Centralized Configuration Subsystem (`backend/src/config/`)
    - 8.3 Operational Runbooks & Technical Specifications (`docs/`)
-   - 8.4 Automated Test Suite Matrix (58 Backend Specs + Frontend Suites)
+   - 8.4 Automated Test Suite Matrix (59 Backend Specs + Frontend Suites)
 
 ---
 
@@ -267,13 +267,15 @@ The core framework in `backend/src/core` provides foundational utilities and bas
 
 ---
 
-## 3. Domain Event Bus Registry (89 Typed Events)
+## 3. Domain Event Bus Registry (91 Typed Events)
 
-The in-memory `DomainEventBus` manages 89 strongly typed domain events across 11 business domains:
+The in-memory `DomainEventBus` manages 91 strongly typed domain events across 11 business domains:
 
 | Domain | Event Identifier | Emitted When | Typical Subscribed Side Effects |
 |---|---|---|---|
 | **Jobs** | `Job.Created` | New production job work order is drafted. | Audit logging, notification dispatch. |
+| **Jobs** | `Job.InProduction` | Batch order atomically taken into production (`waiting_for_production` -> `in_production`). | Clears prior flags, establishes single active flag `inProduction = true`, locks from unrelated modifications. |
+| **Jobs** | `Job.ApprovedForInspection` | Production execution completed and approved for inspection (`in_production` -> `waiting_for_inspection`). | Clears prior flags, activates `waitingForInspection = true`, surfaces BO in Quality Inspection queue. |
 | **Jobs** | `Job.Scheduled` | Job assigned to furnace time slot. | Machine calendar update, operator notification. |
 | **Jobs** | `Job.Started` | Furnace charge entry, heating cycle timer started. | Machine status `RUNNING`, live telemetry streaming. |
 | **Jobs** | `Job.Paused` | Thermal cycle temporarily paused. | Machine status `IDLE`, downtime timer started. |
@@ -961,11 +963,13 @@ _No direct HTTP routes mounted for this internal domain service._
 
 ### 5.18 Production Jobs & Batch Order Planning (`modules/production-job`)
 
-> **Business Purpose:** Encapsulates the complete manufacturing lifecycle across two interconnected operational stages:
+> **Business Purpose:** Encapsulates the complete manufacturing lifecycle across two interconnected authoritative operational stages:
 > 1. **Authoritative Planning Phase (Batch Order Derivation):** Planners derive Batch Orders (`BO-YYYYMM-XXXX`) strictly from completed Purchase Orders and Goods Receipt Notes (`PO -> GRN -> Part -> BO`), inheriting validated Item and Recipe parameters. Generates an authoritative 15-position Process Details table seeded from the recipe, enforces immutable source genealogy (`isImmutable: true`), locks inventory allocation under an enterprise FIFO concurrency mutex ($0 < \text{BO.quantity} \le \text{GRN.availableQty}$), establishes a strict single-active state machine (`status: 'WAITING_FOR_PRODUCTION'`, `workflowState.waitingForProduction: true`), and validates 10-point production readiness before shop-floor handoff.
-> 2. **Shop-Floor Thermal Execution:** Heat-treatment operators pull ready batch orders from the prioritized `/queue`, assign calibrated furnaces and certified operators, and execute the 12-stage thermal cycle (`DRAFT` → `WAITING_FOR_PRODUCTION` → `SCHEDULED` → `IN_PROGRESS` → `HEATING` → `SOAKING` → `QUENCHING` → `TEMPERING` → `COOLING` → `COMPLETED` → `STORAGE` → `DISPATCHED`), with stage progress logging, downtime tracking, pause/resume, and QA handoff.
-> 
-> *Architectural Boundary & Deprecations:* Direct un-genealogized job creation (`createDirectJob`) is permanently disabled and throws `BadRequestError`. Plan conversion (`convertPlanToJob`) initializes jobs strictly in `WAITING_FOR_PRODUCTION` status with a default 15-position table. Planners are strictly prohibited from mutating production-execution telemetry fields (`PRODUCTION_ONLY_FIELDS`).
+> 2. **Authoritative Production Phase Reconstruction (`waiting for production` → `in production` → `waiting for inspection`):**
+>    - **Waiting for Production Queue:** Production operators inspect eligible batch orders (`GET /production-jobs/waiting-for-production`).
+>    - **Atomic Take into Production:** When an operator takes a BO (`POST /production-jobs/:id/take-for-production`), the system atomically clears prior workflow flags, transitions state to `inProduction = true` (invariant: $\sum \text{flag}_i = 1$), locks against concurrent operator assignment (`409 Conflict`), and prohibits unrelated ERP mutations while the BO is in production.
+>    - **Recipe-Driven Execution:** Execution strictly follows the Recipe snapshot bound to the BO (`recipeSnapshot.stages`). Operators log stage milestones (`POST /production-jobs/:id/recipe-progress`) validating against recipe stages without field invention or omission.
+>    - **Production Completion & Inspection Approval:** Evaluates execution readiness (`GET /production-jobs/:id/execution-readiness`). Approves for inspection (`POST /production-jobs/:id/approve-for-inspection`) only when all recipe stages are completed and piece counts balance ($Q_{\text{completed}} + Q_{\text{scrapped}} = Q_{\text{loaded}}$). Clears `inProduction`, sets `waitingForInspection = true`, removes the BO from active production jobs, and handoffs directly to Quality Inspection.
 
 #### Models & Schemas
 - **`production-job.model.ts`** — Mongoose model: `ProductionJob`. Exported interfaces:
@@ -973,29 +977,48 @@ _No direct HTTP routes mounted for this internal domain service._
   - `IProcessDetailRow`: 15-position process details row (`position: 1..15`, `stageName`, `targetTemp`, `targetDurationMinutes`, `quenchMedium`, `atmosphere`, `tolerance`, `operatorNotes`, `isCompleted`).
   - `IBatchOrderGenealogy`: Immutable source lineage (`purchaseOrderId`, `purchaseOrderNumber`, `grnId`, `grnNumber`, `itemId`, `itemPartNumber`, `materialName`, `recipeId`, `recipeCode`, `isImmutable: true`).
   - `IBatchOrderProductionReadiness`: 10-point readiness check payload (`isProductionReady`, `reasons`, `checks`, `evaluatedAt`).
-  - `IJobWorkflowState`: Single-active boolean state flags with invariant $\sum \text{flag}_i = 1$ (`waitingForProduction`, `scheduled`, `inProgress`, `completed`, `cancelled`, `onHold`).
+  - `IJobWorkflowState`: Single-active boolean state flags with invariant $\sum \text{flag}_i = 1$ (`waitingForProduction`, `inProduction`, `waitingForInspection`, `scheduled`, `inProgress`, `completed`, `cancelled`, `onHold`).
+  - `IProductionExecution`: Reconstructed execution state tracking furnace, operator, shift, loaded piece count, loaded weight, completed piece count, scrapped piece count, recipe stage progress logs, and approval metadata.
+  - `IProductionExecutionReadiness`: Execution readiness audit evaluating all recipe stages completed and piece count balance.
   - `IJobStageLog`, `IJobDowntimeLog`, `IJobTransitionLog`: Telemetry and lifecycle logs.
 
 #### Repositories
 - **`ProductionJobRepository`** (`production-job.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
-  - Methods: `generateNextJobNumber()`, `findJobByNumber()`, `findByPlanId()`, `findJobsByPlanId()`, `findByIdempotencyKey()`, `queryJobs()`, `findActiveQueueJobs()`, `findConflictingJobs()`, `findEligiblePOs()`, `findEligibleGRNsForPO()`, `findEligiblePartsForGRN()`, `findActiveAllocationsForGRN()`.
+  - Production Phase Methods: `findWaitingForProductionQueue()`, `findInProductionQueue()`, `findWaitingForInspectionQueue()`, `atomicTakeForProduction()`, `atomicApproveForInspection()`.
+  - Planning Phase Methods: `generateNextJobNumber()`, `findJobByNumber()`, `findByPlanId()`, `findJobsByPlanId()`, `findByIdempotencyKey()`, `queryJobs()`, `findActiveQueueJobs()`, `findConflictingJobs()`, `findEligiblePOs()`, `findEligibleGRNsForPO()`, `findEligiblePartsForGRN()`, `findActiveAllocationsForGRN()`.
 
 #### Services
 - **`ProductionJobService`** (`production-job.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - *Reconstructed Production Phase Methods:*
+    - `getWaitingForProductionQueue()`: Surfaces all BOs awaiting production entry (`waitingForProduction: true`).
+    - `getInProductionQueue()`: Surfaces active production jobs (`inProduction: true`).
+    - `getWaitingForInspectionQueue()`: Surfaces production jobs approved and awaiting quality inspection (`waitingForInspection: true`).
+    - `takeForProduction()`: Atomically transitions BO to `IN_PRODUCTION`, asserts single active flag, emits `Job.InProduction`.
+    - `recordRecipeStageProgress()`: Validates and logs progress for a specific stage from the bound recipe.
+    - `evaluateProductionExecutionReadiness()`: Evaluates completion of all recipe stages and verified piece balance ($Q_{\text{completed}} + Q_{\text{scrapped}} = Q_{\text{loaded}}$).
+    - `approveForInspection()`: Validates execution completeness, clears `inProduction`, sets `waitingForInspection = true`, and emits `Job.ApprovedForInspection`.
   - *Planning Phase Methods:* `getEligiblePOs()`, `getEligibleGRNsForPO()`, `getEligiblePartsForGRN()`, `createBatchOrder()`, `getProcessDetails()`, `updateProcessDetails()`, `getBatchOrderGenealogy()`, `getBatchOrderProductionReadiness()`.
-  - *Execution Phase Methods:* `convertPlanToJob()`, `getProductionQueue()`, `startJobExecution()`, `recordStageProgress()`, `pauseJobExecution()`, `resumeJobExecution()`, `addProductionLog()`, `completeJobExecution()`, `transitionToStorage()`, `transitionJob()`, `cancelJob()`, `assignOperator()`, `removeOperator()`, `assignFurnace()`, `removeFurnace()`, `getMachineUtilizationAndDowntime()`, `getJobs()`, `getJobById()`, `getJobsByPlanId()`.
   - *Cleaned Up / Disabled:* `createDirectJob()` permanently disabled with `BadRequestError` to prevent un-genealogized work order bypass.
 
 #### Controllers
-- **`ProductionJobController`** (`production-job.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping for both Batch Orders and Production Jobs.
+- **`ProductionJobController`** (`production-job.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping for Batch Orders and Production Phase operations.
 
 #### Validators (Zod Schemas)
 - **`production-job.validator.ts`**: Exported Zod validation schemas:
-  - `createBatchOrderSchema`, `updateProcessDetailsSchema`, `getProcessDetailsSchema`, `getBatchOrderGenealogySchema`, `getBatchOrderProductionReadinessSchema`, `convertPlanToJobSchema`, `queryJobsSchema`, `getJobByIdSchema`, `updateJobSchema`, `assignOperatorSchema`, `removeOperatorSchema`, `assignFurnaceSchema`, `removeFurnaceSchema`, `startJobExecutionSchema`, `recordStageProgressSchema`, `pauseJobExecutionSchema`, `resumeJobExecutionSchema`, `addProductionLogSchema`, `completeJobExecutionSchema`, `transitionToStorageSchema`, `transitionJobSchema`, `cancelJobSchema`.
+  - Reconstructed Production Phase: `takeForProductionSchema`, `recordRecipeStageProgressSchema`, `approveForInspectionSchema`.
+  - Planning Phase: `createBatchOrderSchema`, `updateProcessDetailsSchema`, `getProcessDetailsSchema`, `getBatchOrderGenealogySchema`, `getBatchOrderProductionReadinessSchema`, `convertPlanToJobSchema`, `queryJobsSchema`, `getJobByIdSchema`, `updateJobSchema`.
 
 #### API Endpoints & Routes
 *Mounted at `/api/v1/production-jobs`, `/api/v1/batch-orders`, and `/api/v1/planning` in Express routing.*
 
+- **Reconstructed Production Phase Endpoints:**
+  - `GET /api/v1/production-jobs/waiting-for-production` — Returns eligible BO queue in `WAITING_FOR_PRODUCTION`.
+  - `GET /api/v1/production-jobs/in-production` — Returns active shop-floor jobs in `IN_PRODUCTION`.
+  - `GET /api/v1/production-jobs/waiting-for-inspection` — Returns BOs approved for QA and in `WAITING_FOR_INSPECTION`.
+  - `POST /api/v1/production-jobs/:id/take-for-production` — Atomically takes BO into production (`waiting_for_production` -> `in_production`), enforcing single active flag and concurrency lock.
+  - `POST /api/v1/production-jobs/:id/recipe-progress` — Records recipe stage milestone progress against the bound Recipe snapshot.
+  - `GET /api/v1/production-jobs/:id/execution-readiness` — Evaluates recipe stage completeness and piece balance before QA handoff.
+  - `POST /api/v1/production-jobs/:id/approve-for-inspection` — Validates complete execution, sets `waitingForInspection = true`, removes from active production jobs, and hands off to Quality.
 - **Planning Phase & Batch Order Endpoints:**
   - `GET /api/v1/production-jobs/eligible-pos` (also `/planning/eligible-pos`) — Returns POs with completed GRNs available for planning.
   - `GET /api/v1/production-jobs/pos/:poId/grns` (also `/planning/pos/:poId/grns`) — Returns eligible GRNs strictly linked to the specified PO.
@@ -1005,23 +1028,10 @@ _No direct HTTP routes mounted for this internal domain service._
   - `PUT /api/v1/production-jobs/:id/process-details` (also `/batch-orders/:id/process-details`) — Updates process details while in `WAITING_FOR_PRODUCTION`.
   - `GET /api/v1/production-jobs/:id/genealogy` (also `/batch-orders/:id/genealogy`) — Retrieves immutable source genealogy card payload.
   - `GET /api/v1/production-jobs/:id/production-readiness` (also `/batch-orders/:id/production-readiness`) — 10-point readiness check.
-- **Production Execution & Shop-Floor Lifecycle Endpoints:**
-  - `GET /api/v1/production-jobs/queue` (also `/batch-orders/queue`, `/production-queue`) — Prioritized shop-floor queue (`WAITING_FOR_PRODUCTION`).
-  - `POST /api/v1/production-jobs/convert-plan/:planId` — Converts approved production plan to job in `WAITING_FOR_PRODUCTION`.
-  - `GET /api/v1/production-jobs/analytics/utilization` — Furnace utilization and downtime metrics for OEE calculation.
+- **Query & Utility Endpoints:**
   - `GET /api/v1/production-jobs` (also `GET /api/v1/batch-orders`) — Paginated search and filtering of jobs and batch orders.
   - `GET /api/v1/production-jobs/:id` (also `GET /api/v1/batch-orders/:id`) — Full details and history of a job by ID.
-  - `PATCH /api/v1/production-jobs/:id` — Update job parameters before cycle execution.
-  - `POST /api/v1/production-jobs/:id/assign-operator` & `remove-operator` — Operator assignment management.
-  - `POST /api/v1/production-jobs/:id/assign-furnace` & `remove-furnace` — Furnace assignment management.
-  - `POST /api/v1/production-jobs/:id/start` — Start furnace cycle execution (transitions to `IN_PROGRESS`).
-  - `POST /api/v1/production-jobs/:id/stage-progress` — Record stage milestone (Preheat, Soak, Quench, Temper).
-  - `POST /api/v1/production-jobs/:id/pause` & `resume` — Controlled pause and resume with downtime reason logging.
-  - `POST /api/v1/production-jobs/:id/notes` — Shift handover and production notes.
-  - `POST /api/v1/production-jobs/:id/complete` — Complete thermal cycle execution and trigger QA inspection handoff.
-  - `POST /api/v1/production-jobs/:id/transition-storage` — Transfer completed parts to warehouse storage.
-  - `POST /api/v1/production-jobs/:id/transition` — Generic state transition engine.
-  - `POST /api/v1/production-jobs/:id/cancel` — Controlled cancellation releasing inventory allocations.
+  - `POST /api/v1/production-jobs/convert-plan/:planId` — Converts approved production plan to job in `WAITING_FOR_PRODUCTION`.
 
 ### 5.19 Production Scheduling & Shop-Floor Queue (`modules/production-schedule`)
 
@@ -1734,8 +1744,8 @@ The frontend is built with React 19, Redux Toolkit, React Router 7, and a custom
 | `/login` | `<LoginPage />` | `AuthLayout` | No | Operator authentication, tenant selection, password credentials. |
 | `/`, `/dashboard` | `<DashboardPage />` | `MainLayout` | Yes | Command center, live thermal runs, equipment status, active alerts. |
 | `/planning`, `/batch-orders` | `<JobsPage />` | `MainLayout` | Yes | Authoritative Batch Order Planning Workbench, 4-step PO/GRN derivation wizard, 15-position table, readiness checks. |
-| `/jobs`, `/production-jobs`, `/production-jobs/:id` | `<JobsPage />` | `MainLayout` | Yes | Shop-floor production queue, furnace cycle start, 12-stage progress, downtime logging. |
-| `/quality`, `/quality/inspections`, `/ncrs` | `<QualityPage />` | `MainLayout` | Yes | Lab testing, hardness surveys, NCR dispositioning, CoC generation. |
+| `/jobs`, `/production-jobs`, `/production-jobs/:id` | `<JobsPage />` | `MainLayout` | Yes | Authoritative Production Phase workbench: Waiting for Production Queue, atomic take, In-Production Execution with Recipe checklist, and Inspection Queue. |
+| `/quality`, `/quality/inspections`, `/ncrs` | `<QualityPage />` | `MainLayout` | Yes | Lab testing, hardness surveys, NCR dispositioning, CoC generation, and Batch Orders Awaiting QA Inspection queue. |
 | `/machines`, `/furnaces`, `/maintenance` | `<MachinesPage />` | `MainLayout` | Yes | Machinery fleet status, pyrometry compliance, breakdown reporting. |
 | `/inventory`, `/heat-lots` | `<InventoryPage />` | `MainLayout` | Yes | Creation Phase POs, Material Receipts, GRN creation & printing, serialized units, stock ledger. |
 | `/warehouse`, `/warehouses`, `/finished-goods` | `<WarehousePage />` | `MainLayout` | Yes | Warehouse location topology, quarantine holds, finished goods staging. |
@@ -1754,37 +1764,47 @@ The frontend is built with React 19, Redux Toolkit, React Router 7, and a custom
 - **State & Filters:** Manages `activeTab`, `timeFilter` ('Live Shift', 'Today', 'This Week', 'This Month'), and live refresh timers.
 - **Key Visualizations & Modules:**
   - Fleet Status Grid: Live operational state cards for all active furnaces (Running, Idle, Maintenance, Breakdown) with current cycle temperatures and progress bars.
-  - Active Work Orders Rail: Priority-ranked jobs currently inside thermal cycles with dwell timers and target specifications.
+  - Active Work Orders Rail: Priority-ranked jobs currently inside thermal runs with dwell timers and target specifications.
   - Quality Pass/Fail Meter: Live First Pass Yield (FPY %) gauge with open NCR counters.
   - Inventory Reorder Alerts: Low-stock warning banner for quench oils, process gases, and bar stock.
   - Real-Time Event Feed: Streaming audit and domain event log displaying actor, action, and timestamp.
 
-#### 2. Jobs & Planning Workbench (`JobsPage.tsx`, 34.4 KB)
-- **Role:** Authoritative manufacturing workbench supporting both Batch Order Planning (`PO -> GRN -> Part -> BO`) and shop-floor thermal execution.
-- **State & Sub-Views:** `activeTab` ('Batch Orders & Planning', 'Production Queue', 'Active Execution', 'Completed Jobs'), `jobs`, `selectedJob`, `isCreateModalOpen`.
+#### 2. Jobs & Production Phase Workbench (`JobsPage.tsx`, 44.5 KB)
+- **Role:** Authoritative manufacturing workbench supporting both Batch Order Planning (`PO -> GRN -> Part -> BO`) and reconstructed Production Phase execution (`waiting for production` → `in production` → `waiting for inspection`).
+- **State & Sub-Views:** `activeTab` ('WAITING_FOR_PRODUCTION', 'IN_PRODUCTION', 'WAITING_FOR_INSPECTION', 'PLANNING_AND_ALL'), `jobs`, `selectedJob`, `isCreateModalOpen`, `isTakeModalOpen`, `isApproveModalOpen`.
 - **Key Capabilities:**
-  - **4-Step Guided Batch Order Wizard:**
-    - *Step 1 (PO Selection):* Planners browse POs that possess completed Goods Receipt Notes (`eligible-pos`).
-    - *Step 2 (GRN Selection):* Planners select a GRN strictly belonging to the chosen PO (`pos/:poId/grns`).
-    - *Step 3 (GRN Part & Quantity Selection):* Planners pick an available part line item and enter the Batch Order quantity, strictly validated against available balance ($0 < \text{BO.quantity} \le \text{GRN.availableQty}$).
-    - *Step 4 (Recipe Corroboration & Submission):* Corroborates active recipe and seeds initial 15-position table before submitting under atomic FIFO allocation lock.
-  - **Interactive Batch Order Detail Drawer:**
-    - *Hierarchy Banner:* Visual `PO / GRN / BO` navigation breadcrumb displaying parent PO and GRN numbers.
-    - *8-Card Immutable Source Genealogy Grid:* Read-only inspection cards for PO Number, GRN Number, Part Number, Material Grade, Recipe Code, Target Hardness, GRN Quantity, and Allocated Quantity.
-    - *15-Position Process Details Table:* Editable table for rows 1 to 15 while in `WAITING_FOR_PRODUCTION` (Stage Name, Target Temp °C, Duration, Quench Medium, Atmosphere, Tolerance, Operator Notes). Sealed against row addition/deletion.
-    - *Planning-to-Production Handoff Card:* Evaluates `IBatchOrderProductionReadiness` (10-point checklist) with real-time pass/fail indicators and "Send to Production Queue" action.
-  - **Prioritized Shop-Floor Queue:** Active queue view filtering batch orders in `WAITING_FOR_PRODUCTION` for furnace operators.
-  - **Shop-Floor Execution Controls:** Thermal run triggers for furnace assignment, cycle start, stage progress logging, pause/resume, and QA handoff.
+  - **Waiting for Production Queue:**
+    - Displays all batch orders in `WAITING_FOR_PRODUCTION` with immutable PO and GRN genealogy cards, allocated quantities, and bound recipe snapshots.
+    - Operator "Take for Production" action dialog capturing calibrated furnace code, shift identifier, operator name, verified loaded piece count, and charge weight (kg).
+    - Atomically transitions job to `inProduction = true`, asserts single-active flag, and locks job against concurrent execution (`409 Conflict`).
+  - **In-Production Execution Panel:**
+    - Live tracking of active batch orders undergoing heat-treatment.
+    - Displays bound Recipe snapshot checklist (`recipeSnapshot.stages`) showing stage names, target temperatures, soak durations, atmospheres, and quench media.
+    - Recipe stage milestone logging form (`POST /production-jobs/:id/recipe-progress`) validating execution against recipe specifications without field invention or omission.
+    - Live readiness evaluator checking that all recipe stages are logged and pieces accounted for.
+    - "Approve for Inspection" modal dialog verifying completed pieces and scrapped pieces balance against loaded pieces ($Q_{\text{completed}} + Q_{\text{scrapped}} = Q_{\text{loaded}}$).
+  - **Waiting for Inspection Queue:**
+    - Displays batch orders that have completed production execution and are awaiting Quality Inspection.
+    - Shows completed piece counts, scrapped counts, furnace run history, and operator sign-offs.
+  - **4-Step Guided Batch Order Planning Wizard & Drawer:**
+    - Multi-step PO -> GRN -> Part -> BO derivation with FIFO allocation lock.
+    - 8-card immutable source genealogy inspection grid.
+    - 15-position Process Details table editable while in `WAITING_FOR_PRODUCTION`.
+    - 10-point production readiness evaluation card.
 
-#### 3. Quality Control Workbench (`QualityPage.tsx`, 27.5 KB)
-- **Role:** ISO 17025 / AMS 2750G metallurgical inspection and non-conformance disposition workbench.
-- **State & Sub-Views:** `activeTab` ('Inspections', 'NCRs & CAPAs', 'Analytics'), `inspections`, `ncrs`, and `selectedInspection`.
+#### 3. Quality Control Workbench (`QualityPage.tsx`, 32.8 KB)
+- **Role:** ISO 17025 / AMS 2750G metallurgical inspection, non-conformance disposition, and Production-to-Quality handoff intake workbench.
+- **State & Sub-Views:** `activeTab` ('Inspections', 'WAITING_FOR_INSPECTION', 'NCRs & CAPAs', 'Analytics'), `inspections`, `ncrs`, `waitingJobs`, and `selectedInspection`.
 - **Key Capabilities:**
-  - Inspection Worklist: Displays inspection number, linked job, heat lot, inspector name, and status (Pending, In Progress, Approved, Rejected).
-  - Hardness Survey Data Entry: Input forms to capture Rockwell (HRC), Vickers (HV), and Brinell (HBW) readings across sample locations.
-  - Traverse Case Depth Curve: Visual representation of hardness vs. depth to verify Effective Case Depth (ECD).
-  - Approval / Rejection Workflow: QA Manager digital sign-off producing Certificate of Conformance (CoC), or formal rejection raising an NCR.
-  - NCR / CAPA Tracker: Tracks root cause investigations (5-Why analysis), containment actions, and corrective preventive actions.
+  - **Batch Orders Awaiting QA Inspection Queue:**
+    - Directly queries `/api/v1/production-jobs/waiting-for-inspection` to surface completed production batch orders.
+    - Renders detailed cards showing Job Number, Part Number, Material Grade, Customer Name, Unbroken Lineage (`PO -> GRN -> BO`), Completed / Scrapped Pieces, and Bound Recipe.
+    - Direct "Initiate Inspection" intake action connecting production handoff directly to quality inspection workflows.
+  - **Inspection Worklist & Data Entry:**
+    - Hardness surveys: Rockwell (HRC), Vickers (HV), Brinell (HBW) across sample locations.
+    - Traverse Case Depth Curve: Visual hardness vs. depth graph verifying Effective Case Depth (ECD).
+    - Digital sign-off generating Certificate of Conformance (CoC), or formal rejection raising an NCR.
+  - **NCR & CAPA Tracker:** Root cause investigations (5-Why), containment actions, and corrective preventive actions.
 
 #### 4. Machinery & Equipment Workbench (`MachinesPage.tsx`, 28.5 KB)
 - **Role:** Asset management for furnaces, CNC machinery, and quench tanks.
@@ -1974,35 +1994,65 @@ The user interface strictly implements Apple Human Interface Guidelines (HIG) de
 
 ## 7. End-to-End Operational Domain Workflows
 
-### 7.1 12-Stage Heat Treatment Lifecycle Workflow
+### 7.1 Authoritative Production Phase Workflow (waiting for production -> in production -> waiting for inspection)
 
 ```mermaid
 stateDiagram-v2
-    [*] --> DRAFT: Create Work Order
-    DRAFT --> PENDING_REVIEW: Submit for Approval
-    PENDING_REVIEW --> APPROVED: Engineering Sign-off
-    APPROVED --> SCHEDULED: Assign Furnace & Slot
-    SCHEDULED --> IN_PROGRESS: Charge Furnace & Start Timer
-    IN_PROGRESS --> PAUSED: Stoppage / Gas Check
-    PAUSED --> IN_PROGRESS: Resume Cycle
-    IN_PROGRESS --> QUALITY_CHECK: Complete Cycle & Unload
-    QUALITY_CHECK --> STORAGE: QA Inspection Approved
-    STORAGE --> READY_FOR_DISPATCH: Staged in Finished Goods
-    READY_FOR_DISPATCH --> DISPATCHED: Gate Release & Departure
-    DISPATCHED --> COMPLETED: Customer Delivery Confirmed
-    DRAFT --> CANCELLED: Void Work Order
-    PENDING_REVIEW --> CANCELLED: Void Work Order
-    SCHEDULED --> CANCELLED: Cancel Schedule Slot
+    [*] --> WAITING_FOR_PRODUCTION: Batch Order Planned (PO -> GRN -> BO)
+    WAITING_FOR_PRODUCTION --> IN_PRODUCTION: Atomic Take for Production (Production Permitted User)
+    note right of IN_PRODUCTION
+      - Previous workflow flags cleared
+      - inProduction = true is sole active flag
+      - Concurrent take locked (409 Conflict)
+      - Locked from non-execution ERP mutations
+      - Strictly executes bound Recipe stages
+    end note
+    IN_PRODUCTION --> WAITING_FOR_INSPECTION: Approve for Inspection (All Recipe Stages Logged & Pieces Balanced)
+    note right of WAITING_FOR_INSPECTION
+      - inProduction = false
+      - waitingForInspection = true
+      - Cleared from active production jobs
+      - Surfaces in Quality Inspection Queue
+    end note
+    WAITING_FOR_INSPECTION --> [*]: Quality Inspection Intake
 ```
 
-1. **Work Order Creation (`POST /api/v1/production-jobs`):** Supervisor creates a work order specifying Customer, Part, Recipe, Specification, and Target Quantity. Generates sequential ID `JOB-YYYYMM-XXXX`. State is `DRAFT`.
-2. **Engineering Review (`POST /api/v1/production-jobs/:id/transition`):** Metallurgist reviews recipe parameters. Job transitions to `PENDING_REVIEW` then `APPROVED`.
-3. **Scheduling (`POST /api/v1/production-schedules`):** Scheduler allocates an approved job to a capable furnace during an open time window. Emits `Job.Scheduled`. State transitions to `SCHEDULED`.
-4. **Furnace Charge & Start (`POST /api/v1/production-jobs/:id/start`):** Operator loads charge into furnace, verifies thermocouples, and starts heating cycle. Machine transitions to `RUNNING`. Job state transitions to `IN_PROGRESS`. Emits `Job.Started`.
-5. **Stage Progression & Telemetry (`POST /api/v1/production-jobs/:id/stage-progress`):** Milestones are captured through Preheat, Carburize/Soak, Quench, and Temper. Temperatures are continuously logged.
-6. **Cycle Completion (`POST /api/v1/production-jobs/:id/complete`):** Furnace cycle ends. Charge is unloaded. Job state transitions to `QUALITY_CHECK`. Automatically spawns an inspection record in the Quality module. Emits `Job.Completed`.
-7. **Storage Transition (`POST /api/v1/production-jobs/:id/transition-storage`):** Once QA signs off the inspection, job transitions to `STORAGE` and finished goods are placed in storage bins.
-8. **Dispatch Staging & Release:** Job transitions to `READY_FOR_DISPATCH`, is attached to a consignment, and upon gate departure transitions to `DISPATCHED`. Customer receipt moves job to `COMPLETED`.
+The Production Phase establishes the authoritative, closed-loop manufacturing pipeline:
+$$\mathbf{PO} \longrightarrow \mathbf{GRN} \longrightarrow \mathbf{BO} \longrightarrow \mathbf{Recipe} \longrightarrow \mathbf{Production\ Execution} \longrightarrow \mathbf{Inspection\ Queue}$$
+
+1. **Phase Inception (`waiting for production`):**
+   - The Production Phase strictly begins with a completed Batch Order in `waiting for production` status (`workflowState.waitingForProduction: true`, $\sum \text{flags} = 1$).
+   - The Batch Order's unbroken source lineage ($\text{PO} \longrightarrow \text{GRN} \longrightarrow \text{BO}$) and bound Recipe snapshot (`recipeSnapshot.stages`) remain completely intact and immutable (`isImmutable: true`).
+   - Users with Production permissions (`PRODUCTION_VIEW`, `PRODUCTION_EXECUTE`, `FURNACE_OPERATOR`, `PLANT_MANAGER`) view the prioritized list of eligible batch orders via `GET /api/v1/production-jobs/waiting-for-production`.
+
+2. **Atomic Production Ingestion (`waiting for production` $\longrightarrow$ `in production`):**
+   - An authorized Production operator initiates production via `POST /api/v1/production-jobs/:id/take-for-production`, providing furnace code, shift identifier, operator name, verified loaded piece count, and charge weight (kg).
+   - **Atomic State Mutation:**
+     - Previous workflow flags are cleared.
+     - `inProduction` becomes the sole active workflow state (`workflowState.inProduction: true`, invariant: $\sum \text{flag}_i = 1$).
+     - System updates status to `IN_PRODUCTION` and publishes domain event `Job.InProduction`.
+   - **Concurrency & Tamper Protection:**
+     - The atomic MongoDB operation uses conditional query matching `{ 'workflowState.waitingForProduction': true }`. If another operator attempts to take the same batch order simultaneously, the transaction immediately rejects with `409 Conflict`.
+     - The batch order becomes unavailable for any function other than authorized viewing of its record; non-execution modifications through unrelated ERP endpoints are strictly rejected by model-level pre-save assertions.
+
+3. **Recipe-Driven Execution & Progress Logging:**
+   - While in production, the operator must execute the exact thermal stages defined by the Recipe snapshot bound to the Batch Order (`recipeSnapshot.stages`).
+   - Operators log milestone progress via `POST /api/v1/production-jobs/:id/recipe-progress` (capturing stage name, target & actual temperature, target & actual duration, quench medium, atmosphere, and operator notes).
+   - Validation strictly enforces that logged stages exist in the bound Recipe without field invention or omission.
+   - Operators can audit execution readiness at any time via `GET /api/v1/production-jobs/:id/execution-readiness`.
+
+4. **Production Completion & Inspection Approval (`in production` $\longrightarrow$ `waiting for inspection`):**
+   - After thermal cycles conclude, the Production user submits the final completion payload via `POST /api/v1/production-jobs/:id/approve-for-inspection` specifying completed piece count, scrapped piece count, and optional notes.
+   - **Pre-Approval Invariants:**
+     - **Recipe Completeness:** Every stage specified in the bound Recipe snapshot must be fully executed and logged; incomplete runs throw `BadRequestError`.
+     - **Piece Balance Invariant:** The sum of completed pieces and scrapped pieces must exactly match the loaded pieces ($Q_{\text{completed}} + Q_{\text{scrapped}} = Q_{\text{loaded}}$). Any discrepancy throws `BadRequestError`.
+   - **Atomic Quality Handoff:**
+     - `inProduction = false`.
+     - `waitingForInspection = true` becomes the sole active state flag ($\sum \text{flags} = 1$).
+     - Status updates to `WAITING_FOR_INSPECTION`.
+     - Emits `Job.ApprovedForInspection` on the domain event bus.
+     - The Batch Order is atomically cleared and removed from active production queues and jobs (`/production-jobs/in-production`).
+     - The Batch Order immediately surfaces in the Quality Inspection queue (`GET /api/v1/production-jobs/waiting-for-inspection` and Quality Workbench `WAITING_FOR_INSPECTION` tab) where certified QC Inspectors can initiate metallurgical inspection.
 
 ---
 
@@ -2307,10 +2357,10 @@ The platform includes 8 authoritative engineering specifications and operational
 7. **`PHASE_1_CERTIFICATION_REPORT.md`:** Verification findings for core platform stability, data boundary enforcement, and error resilience.
 8. **`FACTORY_ACCEPTANCE_REPORT.md`:** End-to-end metallurgical workflow verification and compliance sign-off.
 
-### 8.4 Automated Test Suite Matrix (58 Backend Specs + Frontend Suites)
+### 8.4 Automated Test Suite Matrix (59 Backend Specs + Frontend Suites)
 
 The codebase features comprehensive test suites validating layer boundaries, data integrity, and business logic:
-- **Backend Test Summary:** **58 Test Suites, 693 Tests Passed (0 Failures, 100% Pass Rate)**
+- **Backend Test Summary:** **59 Test Suites, 704 Tests Passed (0 Failures, 100% Pass Rate)**
 - **Frontend Test Summary:** **3 Test Suites, 50 Tests Passed (0 Failures, 100% Pass Rate)**
 
 #### 1. Backend Architecture Governance
@@ -2343,7 +2393,21 @@ The codebase features comprehensive test suites validating layer boundaries, dat
   - Authoritative GRN print preview formatting (HTML/JSON).
   - Header metadata, line items, heat references, and authorized signature blocks.
 
-#### 3. Domain Integration Suites (47 Core Specs in `backend/tests/`)
+#### 3. Authoritative Production Phase Reconstruction Suite
+- `backend/tests/production-phase-reconstruction.spec.ts` (11 tests):
+  - Strict RBAC: 403 Forbidden for unauthorized users; 200 OK for `FURNACE_OPERATOR`.
+  - Queue isolation: Only batch orders in `WAITING_FOR_PRODUCTION` returned by `/waiting-for-production`.
+  - Atomic state transition: Taking a BO sets `inProduction = true`, status `IN_PRODUCTION`, clears `waitingForProduction`.
+  - Concurrency lock: Simultaneous take attempt on an active job returns `409 Conflict`.
+  - Recipe-driven execution: Progress logging asserts stage name exists in the bound Recipe snapshot.
+  - Incomplete recipe rejection: Rejects inspection approval when not all recipe stages are logged.
+  - Piece balance verification: Rejects approval when $Q_{\text{completed}} + Q_{\text{scrapped}} \neq Q_{\text{loaded}}$.
+  - Complete approval handoff: Sets `waitingForInspection = true`, clears `inProduction`, and publishes `Job.ApprovedForInspection`.
+  - Single active flag invariant: Exactly one boolean flag active ($\sum \text{flag}_i = 1$) at all lifecycle phases.
+  - Queue visibility: Approved BOs immediately appear in `/waiting-for-inspection` and vanish from active production jobs.
+  - Tamper protection: In-production BO is locked against non-execution updates.
+
+#### 4. Domain Integration Suites (47 Core Specs in `backend/tests/`)
 - Production Execution & Lifecycle: `production-job.spec.ts`, `production-execution-workflow.spec.ts`, `production-scheduling.spec.ts`, `plan-to-job-handoff.spec.ts`.
 - Metallurgical Lab & Quality: `quality-inspection.spec.ts`, `metallurgical-lab.spec.ts`, `ncr-capa.spec.ts`, `quality-documentation.spec.ts`, `pyrometry.spec.ts`.
 - Machine & Maintenance: `machine.spec.ts`, `maintenance.spec.ts`, `furnace-capacity.spec.ts`.

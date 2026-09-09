@@ -8,10 +8,12 @@ export const DomainEvents = {
   JOB_CREATED: 'Job.Created',
   JOB_SCHEDULED: 'Job.Scheduled',
   JOB_STARTED: 'Job.Started',
+  JOB_IN_PRODUCTION: 'Job.InProduction',
   JOB_PAUSED: 'Job.Paused',
   JOB_RESUMED: 'Job.Resumed',
   JOB_DOWNTIME_LOGGED: 'Job.DowntimeLogged',
   JOB_COMPLETED: 'Job.Completed',
+  JOB_APPROVED_FOR_INSPECTION: 'Job.ApprovedForInspection',
   JOB_CANCELLED: 'Job.Cancelled',
   JOB_DISPATCH_STAGED: 'Job.DispatchStaged',
 

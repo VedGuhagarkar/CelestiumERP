@@ -561,6 +561,125 @@ export class ProductionJobController extends BaseController {
       next(error);
     }
   };
+
+  public getWaitingForProductionQueue = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const result = await this.service.getWaitingForProductionQueue(tenantId, req.query as any);
+      this.sendSuccess(res, result, 'Waiting for production queue retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public getInProductionQueue = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const result = await this.service.getInProductionQueue(tenantId, req.query as any);
+      this.sendSuccess(res, result, 'In-production queue retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public getWaitingForInspectionQueue = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const result = await this.service.getWaitingForInspectionQueue(tenantId, req.query as any);
+      this.sendSuccess(res, result, 'Waiting for inspection queue retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public takeForProduction = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const user = this.getUser(req);
+      const job = await this.service.takeForProduction(
+        tenantId,
+        { userId: user.userId, email: user.email, role: user.roles?.[0] },
+        req.params.id as string,
+        req.body
+      );
+      this.sendSuccess(res, job, 'Batch Order taken for production successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public recordRecipeStageProgress = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const user = this.getUser(req);
+      const job = await this.service.recordRecipeStageProgress(
+        tenantId,
+        { userId: user.userId, email: user.email, role: user.roles?.[0] },
+        req.params.id as string,
+        req.body
+      );
+      this.sendSuccess(res, job, 'Recipe stage execution progress recorded successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public evaluateProductionExecutionReadiness = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const readiness = await this.service.evaluateProductionExecutionReadiness(
+        tenantId,
+        req.params.id as string
+      );
+      this.sendSuccess(res, readiness, 'Production execution readiness evaluated successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public approveForInspection = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const user = this.getUser(req);
+      const job = await this.service.approveForInspection(
+        tenantId,
+        { userId: user.userId, email: user.email, role: user.roles?.[0] },
+        req.params.id as string,
+        req.body
+      );
+      this.sendSuccess(res, job, 'Batch Order approved for inspection successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
 }
 
 export const productionJobController = new ProductionJobController();
