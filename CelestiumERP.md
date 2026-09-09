@@ -26,9 +26,9 @@
    - 1.14 Security Stack, Middleware & Logging Infrastructure
    - 1.15 SRE Health, Liveness & Readiness Probes
 2. [Core Platform Infrastructure Catalog](#2-core-platform-infrastructure-catalog)
-3. [Domain Event Bus Registry (66 Typed Events)](#3-domain-event-bus-registry-66-typed-events)
-4. [RBAC & Governance Permission Catalog (44 Granular Permissions)](#4-rbac--governance-permission-catalog-44-granular-permissions)
-5. [Complete Backend Domain Modules Catalog (All 36 Modules)](#5-complete-backend-domain-modules-catalog-all-36-modules)
+3. [Domain Event Bus Registry (89 Typed Events)](#3-domain-event-bus-registry-89-typed-events)
+4. [RBAC & Governance Permission Catalog (55 Granular Permissions)](#4-rbac--governance-permission-catalog-55-granular-permissions)
+5. [Complete Backend Domain Modules Catalog (All 38 Modules)](#5-complete-backend-domain-modules-catalog-all-38-modules)
    - 5.1 Authentication (`auth`)
    - 5.2 Role-Based Access Control (`rbac`)
    - 5.3 Multi-Tenant Lifecycle (`tenant`)
@@ -46,7 +46,7 @@
    - 5.15 Furnace Capacity (`furnace-capacity`)
    - 5.16 Workforce Capacity (`workforce-capacity`)
    - 5.17 Constraint Analysis (`constraint-analysis`)
-   - 5.18 Production Jobs (`production-job`)
+   - 5.18 Production Jobs & Batch Order Planning (`production-job`)
    - 5.19 Production Scheduling (`production-schedule`)
    - 5.20 Quality Inspection (`quality-inspection`)
    - 5.21 Metallurgical Lab (`metallurgical-lab`)
@@ -65,9 +65,11 @@
    - 5.34 Notification Center (`notification`)
    - 5.35 Universal Global Search (`search`)
    - 5.36 Security Audit Trail (`audit`)
+   - 5.37 Purchase Orders (`purchase-order`)
+   - 5.38 Goods Receipt Notes & Material Receipts (`grn`)
 6. [Frontend Architecture, Pages & Component Library](#6-frontend-architecture-pages--component-library)
    - 6.1 Application Shell & Navigation Layouts
-   - 6.2 Frontend Route Matrix (14 Active Routes)
+   - 6.2 Frontend Route Matrix (16 Active Routes)
    - 6.3 Complete Page Workbenches (All 14 Pages)
    - 6.4 Apple HIG Design System Primitive Library (18 Components)
    - 6.5 Frontend State Management, RTK Base API & HTTP Client
@@ -87,11 +89,13 @@
    - 7.12 General Ledger Accounting & Financial Period Close Workflow
    - 7.13 Executive KPI & Shop-Floor Operational Reporting Workflow
    - 7.14 Universal Global Search & Quick Actions Workflow
+   - 7.15 Authoritative Material Receipt, Storage Allocation & Serialized GRN Workflow
+   - 7.16 Authoritative PO-to-GRN Batch Order Planning & Shop-Floor Handoff Workflow
 8. [Operational Runbooks, SRE Documentation & Testing Infrastructure](#8-operational-runbooks-sre-documentation--testing-infrastructure)
    - 8.1 Database Seeding Engine (`backend/src/scripts/seed.ts`)
    - 8.2 Centralized Configuration Subsystem (`backend/src/config/`)
    - 8.3 Operational Runbooks & Technical Specifications (`docs/`)
-   - 8.4 Automated Test Suite Matrix (47 Backend Specs + Frontend Suites)
+   - 8.4 Automated Test Suite Matrix (58 Backend Specs + Frontend Suites)
 
 ---
 
@@ -105,7 +109,7 @@
 
 ### 1.2 Decoupled Domain Event Bus
 - **In-Memory Type-Safe Event Bus (`DomainEventBus`):** Implements an asynchronous publish-subscribe event bus that decouples domain modules without external broker dependencies.
-- **66 Strongly Typed Domain Events:** Covers all lifecycle transitions across Jobs, Quality, Pyrometry, Machines, Inventory, Warehouses, Workforce, Dispatch, Master Data, Costing, and Finance.
+- **89 Strongly Typed Domain Events:** Covers all lifecycle transitions across Jobs, Quality, Pyrometry, Machines, Inventory, Warehouses, Workforce, Dispatch, Master Data, Costing, Finance, Purchase Orders, and GRNs.
 - **Side-Effect Handlers (`registerCoreSubscribers`):** Offloads non-critical side effects (e.g. audit logging, cross-module notifications, finished-goods receipt triggers upon job completion) to keep primary HTTP responses fast and responsive.
 
 ### 1.3 Immutable Audit Logging Subsystem
@@ -116,7 +120,10 @@
 ### 1.4 Monotonic Sequential ID Generation
 - **Atomic Counter Engine (`CounterModel`, `getNextSequence`):** Utilizes MongoDB atomic `$inc` with upsert operations on a dedicated counters collection to generate monotonic, sequential numbers without race conditions under high concurrency.
 - **Standardized Domain Prefixes:**
-  - Production Job: `JOB-YYYYMM-XXXX` (e.g., `JOB-202609-0001`)
+  - Purchase Order: `PO-YYYYMM-XXXX` (e.g., `PO-202609-0001`)
+  - Goods Receipt Note: `GRN-YYYYMM-XXXX` (e.g., `GRN-202609-0001`)
+  - Batch Order / Production Job: `BO-YYYYMM-XXXX` / `JOB-YYYYMM-XXXX` (e.g., `BO-202609-0001`, `JOB-202609-0001`)
+  - Serialized Part Unit: `UNIT-YYYYMM-XXXX` (e.g., `UNIT-202609-0001`)
   - Heat Lot: `HEAT-YYYY-XXXX` (e.g., `HEAT-2026-0001`)
   - Furnace Asset: `FURN-XX` (e.g., `FURN-01`)
   - Quality Inspection: `QC-YYYYMM-XXXX`
@@ -220,8 +227,8 @@ The core framework in `backend/src/core` provides foundational utilities and bas
 
 | Directory | File | Primary Exports | Functionality & Purpose |
 |---|---|---|---|
-| `constants` | `events.ts` | `DomainEvents`, `DomainEventName` | Central registry of 66 strongly typed domain event names across 10 categories. |
-| `constants` | `permissions.ts` | `Permissions`, `PermissionKey`, `PERMISSION_CATALOG` | 44 granular permissions categorized by domain with Standard, Sensitive, and Critical tiers. |
+| `constants` | `events.ts` | `DomainEvents`, `DomainEventName` | Central registry of 89 strongly typed domain event names across 11 categories. |
+| `constants` | `permissions.ts` | `Permissions`, `PermissionKey`, `PERMISSION_CATALOG` | 55 granular permissions categorized by domain with Standard, Sensitive, and Critical tiers. |
 | `constants` | `status.ts` | `JobStatus`, `QualityStatus`, `MachineStatus`, etc. | Authoritative enum definitions for all domain entity lifecycles. |
 | `context` | `tenant-context.ts` | `TenantContext`, `TenantContextHolder` | `AsyncLocalStorage` context holder providing ambient tenant and user data. |
 | `controllers` | `base.controller.ts` | `BaseController` | Base class for controllers with tenant extraction, user claims, pagination, and response helpers. |
@@ -260,9 +267,9 @@ The core framework in `backend/src/core` provides foundational utilities and bas
 
 ---
 
-## 3. Domain Event Bus Registry (66 Typed Events)
+## 3. Domain Event Bus Registry (89 Typed Events)
 
-The in-memory `DomainEventBus` manages 66 strongly typed domain events across 10 business domains:
+The in-memory `DomainEventBus` manages 89 strongly typed domain events across 11 business domains:
 
 | Domain | Event Identifier | Emitted When | Typical Subscribed Side Effects |
 |---|---|---|---|
@@ -306,6 +313,14 @@ The in-memory `DomainEventBus` manages 66 strongly typed domain events across 10
 | **Inventory** | `Inventory.StockReleased` | Reservation cancelled. | Available stock restored. |
 | **Inventory** | `Inventory.HeatLotCreated` | New heat lot batch registered with MTR. | Inward QC inspection triggered. |
 | **Inventory** | `Inventory.LowStockAlert` | Balance falls below safety reorder threshold. | Reorder notification sent to procurement. |
+| **Creation Phase** | `PurchaseOrder.Created` | New Purchase Order drafted linking parts and recipes. | Audit logging, supplier tracking. |
+| **Creation Phase** | `PurchaseOrder.Updated` | Purchase Order lines or quantities modified. | Recalculate fulfillment tolerances. |
+| **Creation Phase** | `PurchaseOrder.Cancelled` | Open Purchase Order cancelled. | Release procurement commitments. |
+| **Creation Phase** | `MaterialReceipt.Recorded` | Inward physical delivery recorded against PO. | Awaiting warehouse storage allocation. |
+| **Creation Phase** | `MaterialReceipt.Stored` | Received materials put away in warehouse bin. | Stock ledger updated, ready for GRN. |
+| **Creation Phase** | `GRN.Created` | Authoritative Goods Receipt Note created. | Serialized units generated, heat lot linked. |
+| **Creation Phase** | `GRN.Printed` | Goods Receipt Note printed for physical records. | Compliance audit log updated. |
+| **Creation Phase** | `GRN.UnitsReleasedForPlanning` | Serialized units cleared for batch planning. | Available for BO creation in Planning Workbench. |
 | **Warehouse** | `Warehouse.PutawayCompleted` | Material placed in specific warehouse bin. | Location occupancy updated. |
 | **Warehouse** | `Warehouse.MaterialQuarantined` | Material moved to quarantine storage bay. | Bin flagged as quarantine hold. |
 | **Warehouse** | `Warehouse.MaterialReleased` | Material cleared by QA. | Transferred from quarantine to usable bin. |
@@ -332,6 +347,7 @@ The in-memory `DomainEventBus` manages 66 strongly typed domain events across 10
 | **Master Data**| `MasterData.RecipeApproved` | Thermal recipe revision approved. | Locked for production scheduling. |
 | **Master Data**| `MasterData.SpecificationApproved`| Quality specification approved. | Linked to inspection criteria. |
 | **Planning** | `Planning.ProductionPlanCreated` | Master production plan established. | MRP shortage calculation triggered. |
+| **Planning** | `Planning.BatchOrderCreated` | Authoritative Batch Order derived from PO & GRN. | Queue placement in `WAITING_FOR_PRODUCTION`. |
 | **Planning** | `Planning.MrpRunCompleted` | Material requirement calculations completed. | Shortage report generated. |
 | **Costing** | `Costing.JobCostCalculated` | Material, labor, machine, energy calculated. | Job cost ledger populated. |
 | **Costing** | `Costing.JobCostRecalculated` | Updated with final actuals upon completion. | Cost variance recorded. |
@@ -349,11 +365,11 @@ The in-memory `DomainEventBus` manages 66 strongly typed domain events across 10
 
 ---
 
-## 4. RBAC & Governance Permission Catalog (44 Granular Permissions)
+## 4. RBAC & Governance Permission Catalog (55 Granular Permissions)
 
-The platform enforces 44 granular permissions categorized across 12 functional domains with three sensitivity tiers:
-- **Standard (30):** Routine shop-floor, engineering, and administrative actions.
-- **Sensitive (11):** High-impact actions (deletions, quality sign-offs, gate releases, personnel deactivations).
+The platform enforces 55 granular permissions categorized across 13 functional domains with three sensitivity tiers:
+- **Standard (37):** Routine shop-floor, planning, engineering, and administrative actions.
+- **Sensitive (15):** High-impact actions (deletions, cancellations, quality sign-offs, gate releases, personnel deactivations).
 - **Critical (3):** System-level administration, tenant management, and audit log access.
 
 | Domain | Permission Key | Sensitivity | Purpose & Access Control Scope |
@@ -363,6 +379,16 @@ The platform enforces 44 granular permissions categorized across 12 functional d
 | **Jobs** | `JOB_UPDATE` | Standard | Update recipe targets, furnace allocations, and progress milestones. |
 | **Jobs** | `JOB_DELETE` | Sensitive | Soft-delete or cancel draft work orders. |
 | **Jobs** | `JOB_DISPATCH` | Sensitive | Authorize completed job transfer to dispatch holding. |
+| **Planning / BO** | `BATCH_ORDER_CREATE` | Standard | Create authoritative Batch Orders derived from PO/GRN with recipe binding. |
+| **Planning / BO** | `BATCH_ORDER_VIEW` | Standard | Inspect Batch Order source genealogy, 15-position process details, and readiness. |
+| **Planning / BO** | `BATCH_ORDER_UPDATE` | Standard | Edit 15-position process details table while in `WAITING_FOR_PRODUCTION`. |
+| **Creation Phase** | `PO_CREATE` | Standard | Create Purchase Orders linking parts and recipes (`purchase_order:order:create`). |
+| **Creation Phase** | `PO_VIEW` | Standard | View Purchase Orders and receipt progress (`purchase_order:order:view`). |
+| **Creation Phase** | `PO_UPDATE` | Standard | Update or cancel draft and open Purchase Orders (`purchase_order:order:update`). |
+| **Creation Phase** | `STORAGE_RECORD` | Standard | Record received material intake and warehouse storage allocation (`inventory:storage:record`). |
+| **Creation Phase** | `GRN_CREATE` | Standard | Create Goods Receipt Notes and generate individual part units (`inventory:grn:create`). |
+| **Creation Phase** | `GRN_VIEW` | Standard | View Goods Receipt Notes and part unit genealogy (`inventory:grn:view`). |
+| **Creation Phase** | `GRN_PRINT` | Standard | View and print authoritative Goods Receipt Notes (`inventory:grn:print`). |
 | **Quality** | `QC_INSPECT` | Standard | Record hardness surveys, microhardness traverse, and microstructures. |
 | **Quality** | `QC_ASSIGN` | Standard | Assign certified inspection personnel to inspection work orders. |
 | **Quality** | `QC_APPROVE` | Sensitive | Authorize Certificates of Conformance (CoC) and release lots. |
@@ -409,7 +435,7 @@ The platform enforces 44 granular permissions categorized across 12 functional d
 
 ---
 
-## 5. Complete Backend Domain Modules Catalog (All 36 Modules)
+## 5. Complete Backend Domain Modules Catalog (All 38 Modules)
 
 ### 5.1 Authentication & Session Security (`modules/auth`)
 
@@ -933,49 +959,69 @@ _No direct HTTP routes mounted for this internal domain service._
 - `GET /api/v1/constraint-analysis/factory-audit` — Handled by `ConstraintAnalysisController`.
 - `GET /api/v1/constraint-analysis/bottlenecks` — Handled by `ConstraintAnalysisController`.
 
-### 5.18 Production Work Order Execution & Lifecycle (`modules/production-job`)
+### 5.18 Production Jobs & Batch Order Planning (`modules/production-job`)
 
-> **Business Purpose:** Executes the core 12-stage heat treatment production lifecycle, furnace charges, operator assignments, stage progress tracking, pause/resume, and downtime logging.
+> **Business Purpose:** Encapsulates the complete manufacturing lifecycle across two interconnected operational stages:
+> 1. **Authoritative Planning Phase (Batch Order Derivation):** Planners derive Batch Orders (`BO-YYYYMM-XXXX`) strictly from completed Purchase Orders and Goods Receipt Notes (`PO -> GRN -> Part -> BO`), inheriting validated Item and Recipe parameters. Generates an authoritative 15-position Process Details table seeded from the recipe, enforces immutable source genealogy (`isImmutable: true`), locks inventory allocation under an enterprise FIFO concurrency mutex ($0 < \text{BO.quantity} \le \text{GRN.availableQty}$), establishes a strict single-active state machine (`status: 'WAITING_FOR_PRODUCTION'`, `workflowState.waitingForProduction: true`), and validates 10-point production readiness before shop-floor handoff.
+> 2. **Shop-Floor Thermal Execution:** Heat-treatment operators pull ready batch orders from the prioritized `/queue`, assign calibrated furnaces and certified operators, and execute the 12-stage thermal cycle (`DRAFT` → `WAITING_FOR_PRODUCTION` → `SCHEDULED` → `IN_PROGRESS` → `HEATING` → `SOAKING` → `QUENCHING` → `TEMPERING` → `COOLING` → `COMPLETED` → `STORAGE` → `DISPATCHED`), with stage progress logging, downtime tracking, pause/resume, and QA handoff.
+> 
+> *Architectural Boundary & Deprecations:* Direct un-genealogized job creation (`createDirectJob`) is permanently disabled and throws `BadRequestError`. Plan conversion (`convertPlanToJob`) initializes jobs strictly in `WAITING_FOR_PRODUCTION` status with a default 15-position table. Planners are strictly prohibited from mutating production-execution telemetry fields (`PRODUCTION_ONLY_FIELDS`).
 
 #### Models & Schemas
-- **`production-job.model.ts`** — Mongoose model: `ProductionJob`. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+- **`production-job.model.ts`** — Mongoose model: `ProductionJob`. Exported interfaces:
+  - `IProductionJob`: Complete domain document representing a Batch Order / Production Job.
+  - `IProcessDetailRow`: 15-position process details row (`position: 1..15`, `stageName`, `targetTemp`, `targetDurationMinutes`, `quenchMedium`, `atmosphere`, `tolerance`, `operatorNotes`, `isCompleted`).
+  - `IBatchOrderGenealogy`: Immutable source lineage (`purchaseOrderId`, `purchaseOrderNumber`, `grnId`, `grnNumber`, `itemId`, `itemPartNumber`, `materialName`, `recipeId`, `recipeCode`, `isImmutable: true`).
+  - `IBatchOrderProductionReadiness`: 10-point readiness check payload (`isProductionReady`, `reasons`, `checks`, `evaluatedAt`).
+  - `IJobWorkflowState`: Single-active boolean state flags with invariant $\sum \text{flag}_i = 1$ (`waitingForProduction`, `scheduled`, `inProgress`, `completed`, `cancelled`, `onHold`).
+  - `IJobStageLog`, `IJobDowntimeLog`, `IJobTransitionLog`: Telemetry and lifecycle logs.
 
 #### Repositories
 - **`ProductionJobRepository`** (`production-job.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
-  - Methods: `generateNextJobNumber()`, `findJobByNumber()`, `findByPlanId()`, `findJobsByPlanId()`, `findByIdempotencyKey()`, `queryJobs()`, `findActiveQueueJobs()`, `findConflictingJobs()`.
+  - Methods: `generateNextJobNumber()`, `findJobByNumber()`, `findByPlanId()`, `findJobsByPlanId()`, `findByIdempotencyKey()`, `queryJobs()`, `findActiveQueueJobs()`, `findConflictingJobs()`, `findEligiblePOs()`, `findEligibleGRNsForPO()`, `findEligiblePartsForGRN()`, `findActiveAllocationsForGRN()`.
 
 #### Services
 - **`ProductionJobService`** (`production-job.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
-  - Methods: `createDirectJob()`, `updateJob()`, `assignOperator()`, `removeOperator()`, `assignFurnace()`, `removeFurnace()`, `startJobExecution()`, `recordStageProgress()`, `pauseJobExecution()`, `resumeJobExecution()`, `addProductionLog()`, `completeJobExecution()`, `transitionToStorage()`, `getMachineUtilizationAndDowntime()`, `transitionJob()`, `cancelJob()`, `getProductionQueue()`, `convertPlanToJob()`, `getJobs()`, `getJobById()`, `getJobsByPlanId()`.
+  - *Planning Phase Methods:* `getEligiblePOs()`, `getEligibleGRNsForPO()`, `getEligiblePartsForGRN()`, `createBatchOrder()`, `getProcessDetails()`, `updateProcessDetails()`, `getBatchOrderGenealogy()`, `getBatchOrderProductionReadiness()`.
+  - *Execution Phase Methods:* `convertPlanToJob()`, `getProductionQueue()`, `startJobExecution()`, `recordStageProgress()`, `pauseJobExecution()`, `resumeJobExecution()`, `addProductionLog()`, `completeJobExecution()`, `transitionToStorage()`, `transitionJob()`, `cancelJob()`, `assignOperator()`, `removeOperator()`, `assignFurnace()`, `removeFurnace()`, `getMachineUtilizationAndDowntime()`, `getJobs()`, `getJobById()`, `getJobsByPlanId()`.
+  - *Cleaned Up / Disabled:* `createDirectJob()` permanently disabled with `BadRequestError` to prevent un-genealogized work order bypass.
 
 #### Controllers
-- **`ProductionJobController`** (`production-job.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+- **`ProductionJobController`** (`production-job.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping for both Batch Orders and Production Jobs.
 
 #### Validators (Zod Schemas)
-- **`production-job.validator.ts`**: Exported Zod validation schemas: .
+- **`production-job.validator.ts`**: Exported Zod validation schemas:
+  - `createBatchOrderSchema`, `updateProcessDetailsSchema`, `getProcessDetailsSchema`, `getBatchOrderGenealogySchema`, `getBatchOrderProductionReadinessSchema`, `convertPlanToJobSchema`, `queryJobsSchema`, `getJobByIdSchema`, `updateJobSchema`, `assignOperatorSchema`, `removeOperatorSchema`, `assignFurnaceSchema`, `removeFurnaceSchema`, `startJobExecutionSchema`, `recordStageProgressSchema`, `pauseJobExecutionSchema`, `resumeJobExecutionSchema`, `addProductionLogSchema`, `completeJobExecutionSchema`, `transitionToStorageSchema`, `transitionJobSchema`, `cancelJobSchema`.
 
 #### API Endpoints & Routes
-- `POST /api/v1/production-jobs` — Handled by `ProductionJobController`.
-- `POST /api/v1/production-jobs/convert-plan/:planId` — Handled by `ProductionJobController`.
-- `GET /api/v1/production-jobs/queue` — Handled by `ProductionJobController`.
-- `GET /api/v1/production-jobs/analytics/utilization` — Handled by `ProductionJobController`.
-- `GET /api/v1/production-jobs` — Handled by `ProductionJobController`.
-- `GET /api/v1/production-jobs/by-plan/:planId` — Handled by `ProductionJobController`.
-- `GET /api/v1/production-jobs/:id` — Handled by `ProductionJobController`.
-- `PATCH /api/v1/production-jobs/:id` — Handled by `ProductionJobController`.
-- `POST /api/v1/production-jobs/:id/assign-operator` — Handled by `ProductionJobController`.
-- `POST /api/v1/production-jobs/:id/remove-operator` — Handled by `ProductionJobController`.
-- `POST /api/v1/production-jobs/:id/assign-furnace` — Handled by `ProductionJobController`.
-- `POST /api/v1/production-jobs/:id/remove-furnace` — Handled by `ProductionJobController`.
-- `POST /api/v1/production-jobs/:id/start` — Handled by `ProductionJobController`.
-- `POST /api/v1/production-jobs/:id/stage-progress` — Handled by `ProductionJobController`.
-- `POST /api/v1/production-jobs/:id/pause` — Handled by `ProductionJobController`.
-- `POST /api/v1/production-jobs/:id/resume` — Handled by `ProductionJobController`.
-- `POST /api/v1/production-jobs/:id/notes` — Handled by `ProductionJobController`.
-- `POST /api/v1/production-jobs/:id/complete` — Handled by `ProductionJobController`.
-- `POST /api/v1/production-jobs/:id/transition-storage` — Handled by `ProductionJobController`.
-- `POST /api/v1/production-jobs/:id/transition` — Handled by `ProductionJobController`.
-- `POST /api/v1/production-jobs/:id/cancel` — Handled by `ProductionJobController`.
+*Mounted at `/api/v1/production-jobs`, `/api/v1/batch-orders`, and `/api/v1/planning` in Express routing.*
+
+- **Planning Phase & Batch Order Endpoints:**
+  - `GET /api/v1/production-jobs/eligible-pos` (also `/planning/eligible-pos`) — Returns POs with completed GRNs available for planning.
+  - `GET /api/v1/production-jobs/pos/:poId/grns` (also `/planning/pos/:poId/grns`) — Returns eligible GRNs strictly linked to the specified PO.
+  - `GET /api/v1/production-jobs/grns/:grnId/parts` (also `/planning/grns/:grnId/parts`) — Returns parts and available quantities on the GRN.
+  - `POST /api/v1/production-jobs` (also `POST /api/v1/batch-orders`, `/create-batch-order`) — Creates authoritative Batch Order with validated genealogy and locked allocation.
+  - `GET /api/v1/production-jobs/:id/process-details` (also `/batch-orders/:id/process-details`) — Retrieves 15 sequential process positions.
+  - `PUT /api/v1/production-jobs/:id/process-details` (also `/batch-orders/:id/process-details`) — Updates process details while in `WAITING_FOR_PRODUCTION`.
+  - `GET /api/v1/production-jobs/:id/genealogy` (also `/batch-orders/:id/genealogy`) — Retrieves immutable source genealogy card payload.
+  - `GET /api/v1/production-jobs/:id/production-readiness` (also `/batch-orders/:id/production-readiness`) — 10-point readiness check.
+- **Production Execution & Shop-Floor Lifecycle Endpoints:**
+  - `GET /api/v1/production-jobs/queue` (also `/batch-orders/queue`, `/production-queue`) — Prioritized shop-floor queue (`WAITING_FOR_PRODUCTION`).
+  - `POST /api/v1/production-jobs/convert-plan/:planId` — Converts approved production plan to job in `WAITING_FOR_PRODUCTION`.
+  - `GET /api/v1/production-jobs/analytics/utilization` — Furnace utilization and downtime metrics for OEE calculation.
+  - `GET /api/v1/production-jobs` (also `GET /api/v1/batch-orders`) — Paginated search and filtering of jobs and batch orders.
+  - `GET /api/v1/production-jobs/:id` (also `GET /api/v1/batch-orders/:id`) — Full details and history of a job by ID.
+  - `PATCH /api/v1/production-jobs/:id` — Update job parameters before cycle execution.
+  - `POST /api/v1/production-jobs/:id/assign-operator` & `remove-operator` — Operator assignment management.
+  - `POST /api/v1/production-jobs/:id/assign-furnace` & `remove-furnace` — Furnace assignment management.
+  - `POST /api/v1/production-jobs/:id/start` — Start furnace cycle execution (transitions to `IN_PROGRESS`).
+  - `POST /api/v1/production-jobs/:id/stage-progress` — Record stage milestone (Preheat, Soak, Quench, Temper).
+  - `POST /api/v1/production-jobs/:id/pause` & `resume` — Controlled pause and resume with downtime reason logging.
+  - `POST /api/v1/production-jobs/:id/notes` — Shift handover and production notes.
+  - `POST /api/v1/production-jobs/:id/complete` — Complete thermal cycle execution and trigger QA inspection handoff.
+  - `POST /api/v1/production-jobs/:id/transition-storage` — Transfer completed parts to warehouse storage.
+  - `POST /api/v1/production-jobs/:id/transition` — Generic state transition engine.
+  - `POST /api/v1/production-jobs/:id/cancel` — Controlled cancellation releasing inventory allocations.
 
 ### 5.19 Production Scheduling & Shop-Floor Queue (`modules/production-schedule`)
 
@@ -1568,6 +1614,84 @@ _No direct HTTP routes mounted for this internal domain service._
 - `GET /api/v1/audit/logs` — Handled by `AuditController`.
 - `GET /api/v1/audit/entities/:entityType/:entityId` — Handled by `AuditController`.
 
+### 5.37 Purchase Orders & Procurement Binding (`modules/purchase-order`)
+
+> **Business Purpose:** Manages the authoritative commercial procurement lifecycle for raw material bar stock, forgings, and machining components. Enforces strict recipe binding at the PO line-item level (`PO Line -> Item + Recipe`), tracks supplier delivery commitments, calculates balance-to-receive quantities, manages PO statuses (`DRAFT`, `ISSUED`, `PARTIALLY_RECEIVED`, `RECEIVED`, `CLOSED`, `CANCELLED`), and guarantees that all inwarded materials possess unambiguous metallurgical processing recipes.
+
+#### Models & Schemas
+- **`purchase-order.model.ts`** — Mongoose model: `PurchaseOrder`. Exported interfaces:
+  - `PurchaseOrderDocument`: Core tenant-scoped Mongoose document for purchase orders.
+  - `IPurchaseOrderItem`: Line-item schema binding `itemId`, `itemCode`, `itemName`, `materialGrade`, `processFamily`, `recipeId`, `recipeCode`, `recipeRevision`, `orderedQuantity`, `receivedQuantity`, `balanceQuantity`, and `unitPrice`.
+
+#### Repositories
+- **`PurchaseOrderRepository`** (`purchase-order.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `generateNextPONumber()`, `findByPoNumber()`, `findEligibleForPlanning()`, `updateItemReceivedQuantity()`, `updateStatus()`, `queryOrders()`.
+
+#### Services
+- **`PurchaseOrderService`** (`purchase-order.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `createOrder()`, `queryOrders()`, `getOrderById()`, `getOrderByPoNumber()`, `updateOrder()`, `cancelOrder()`, `recordReceiptFulfillment()`.
+
+#### Controllers
+- **`PurchaseOrderController`** (`purchase-order.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`purchase-order.validator.ts`**: Exported Zod validation schemas: `createPurchaseOrderSchema`, `updatePurchaseOrderSchema`, `queryPurchaseOrderSchema`.
+
+#### API Endpoints & Routes
+- `POST /api/v1/purchase-orders` — Create new Purchase Order with recipe-bound line items (requires `PO_CREATE`, idempotency protected).
+- `GET /api/v1/purchase-orders` — Query Purchase Orders with pagination, search, and status filtering.
+- `GET /api/v1/purchase-orders/number/:poNumber` — Retrieve Purchase Order by monotonic PO number (e.g., `PO-202609-0001`).
+- `GET /api/v1/purchase-orders/:id` — Retrieve Purchase Order details by ID.
+- `PUT /api/v1/purchase-orders/:id` — Update Purchase Order parameters (delivery dates, notes, terms).
+- `POST /api/v1/purchase-orders/:id/cancel` — Cancel open Purchase Order and release procurement commitments.
+
+### 5.38 Goods Receipt Notes & Material Receipts (`modules/grn`)
+
+> **Business Purpose:** Executes the physical dock receipt, storage putaway, authoritative Goods Receipt Note (GRN) generation, serialized part unit tracking, and available-for-planning validation:
+> 1. **Material Receipt Intake:** Records physical delivery against an issued PO, verifying supplier delivery note, heat number, lot number, and Mill Test Report (MTR).
+> 2. **Warehouse Storage Allocation:** Allocates warehouse storage bay, shelf, and bin locations with full spatial movement audit history.
+> 3. **Authoritative GRN Generation:** Generates `GRN-YYYYMM-XXXX` capturing accepted and rejected quantities, discrepancy reasons, and sign-offs.
+> 4. **Serialized Unit Generation:** Automatically spawns discrete serialized part units (`UNIT-YYYYMM-XXXX`) inheriting full 5-tier lineage (`PO -> GRN -> Unit -> Item -> Recipe`).
+> 5. **Planning Release Gate:** Evaluates whether units are quarantined, accepted, or available for batch order planning. Supports allocation locking for downstream batch creation.
+> 6. **Authoritative Printing:** Generates formal compliance print layouts (HTML/JSON) with company headers, line items, heat references, and authorized signature blocks.
+
+#### Models & Schemas
+- **`grn.model.ts`** — Mongoose models: `MaterialReceiptModel`, `GRNModel`, `GRNUnitModel`. Exported interfaces:
+  - `MaterialReceiptDocument`: Dock delivery receipt with MTR and heat details.
+  - `GRNDocument`: Authoritative Goods Receipt Note record with inspection results.
+  - `GRNUnitDocument` / `ISerializedUnit`: Individual serialized part unit with barcode, storage location, and planning status.
+  - `IMaterialReceiptItem`, `IGRNItem`, `IStorageMovement`: Sub-document interfaces.
+
+#### Repositories
+- **`GRNRepository`** (`grn.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
+  - Methods: `generateNextReceiptNumber()`, `generateNextGRNNumber()`, `generateNextUnitIdentifier()`, `createMaterialReceipt()`, `findMaterialReceiptById()`, `findMaterialReceiptByNumber()`, `updateMaterialReceipt()`, `createGRN()`, `findGRNById()`, `findGRNByNumber()`, `findGRNsByPO()`, `createGRNUnits()`, `findUnitsByGRN()`, `findUnitByIdentifier()`, `updateUnitStatus()`, `allocateUnit()`, `queryAvailableUnits()`, `queryReceipts()`, `queryGRNs()`, `queryUnits()`.
+
+#### Services
+- **`GRNService`** (`grn.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
+  - Methods: `recordMaterialReceipt()`, `storeMaterial()`, `createGRN()`, `getGrnById()`, `getGrnByNumber()`, `queryReceipts()`, `queryGRNs()`, `queryUnits()`, `getAvailableUnitsForPlanning()`, `getUnitTraceability()`, `allocateUnitForPlanning()`, `getStateMachineLifecycle()`, `printGRN()`.
+
+#### Controllers
+- **`GRNController`** (`grn.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+
+#### Validators (Zod Schemas)
+- **`grn.validator.ts`**: Exported Zod validation schemas:
+  - `recordMaterialReceiptSchema`, `storeMaterialSchema`, `createGrnSchema`, `queryGrnSchema`, `queryGrnUnitSchema`, `allocateUnitSchema`, `queryAvailablePlanningUnitsSchema`.
+
+#### API Endpoints & Routes
+*Mounted at `/api/v1/grn` and `/api/v1/material-receipts` in Express routing.*
+
+- `POST /api/v1/grn/receipts` (also `/material-receipts`) — Record inward physical arrival against PO (requires `STORAGE_RECORD`).
+- `GET /api/v1/grn/receipts` (also `/material-receipts`) — Query material arrival receipts.
+- `POST /api/v1/grn/receipts/:id/store` — Put away received material into warehouse bin location.
+- `POST /api/v1/grn` — Generate authoritative Goods Receipt Note with serialized part units (requires `GRN_CREATE`).
+- `GET /api/v1/grn` — Query GRN records with pagination and filters.
+- `GET /api/v1/grn/:id` — Retrieve authoritative GRN details by ID.
+- `GET /api/v1/grn/:id/print` (also `POST /.../:id/print`) — Generate printable HTML/JSON GRN document.
+- `GET /api/v1/grn/units` — Query individual serialized part units with location and status.
+- `GET /api/v1/grn/units/available-for-planning` — Query gate for units released for batch order planning.
+- `GET /api/v1/grn/units/:unitIdentifier/traceability` — Full 5-tier genealogy tree for an individual unit.
+- `POST /api/v1/grn/units/:unitIdentifier/allocate` — Atomically allocate unit to downstream batch order.
+- `GET /api/v1/grn/state-control/lifecycle` — Introspect Creation Phase state machine transitions.
 
 ---
 
@@ -1603,16 +1727,17 @@ The frontend is built with React 19, Redux Toolkit, React Router 7, and a custom
   - Keyboard navigation with Arrow keys, Enter selection, and Escape dismissal.
   - LocalStorage history preserving recent searches.
 
-### 6.2 Frontend Route Matrix (14 Active Routes)
+### 6.2 Frontend Route Matrix (16 Active Routes)
 
 | Path | Element | Shell Layout | Auth Required | Purpose & Capabilities |
 |---|---|---|---|---|
 | `/login` | `<LoginPage />` | `AuthLayout` | No | Operator authentication, tenant selection, password credentials. |
 | `/`, `/dashboard` | `<DashboardPage />` | `MainLayout` | Yes | Command center, live thermal runs, equipment status, active alerts. |
-| `/jobs`, `/production-jobs`, `/production-jobs/:id` | `<JobsPage />` | `MainLayout` | Yes | Production work orders, 12-stage lifecycle transitions, recipe review. |
+| `/planning`, `/batch-orders` | `<JobsPage />` | `MainLayout` | Yes | Authoritative Batch Order Planning Workbench, 4-step PO/GRN derivation wizard, 15-position table, readiness checks. |
+| `/jobs`, `/production-jobs`, `/production-jobs/:id` | `<JobsPage />` | `MainLayout` | Yes | Shop-floor production queue, furnace cycle start, 12-stage progress, downtime logging. |
 | `/quality`, `/quality/inspections`, `/ncrs` | `<QualityPage />` | `MainLayout` | Yes | Lab testing, hardness surveys, NCR dispositioning, CoC generation. |
 | `/machines`, `/furnaces`, `/maintenance` | `<MachinesPage />` | `MainLayout` | Yes | Machinery fleet status, pyrometry compliance, breakdown reporting. |
-| `/inventory`, `/heat-lots` | `<InventoryPage />` | `MainLayout` | Yes | Raw material stock ledger, MTR heat lot inwarding, stock adjustments. |
+| `/inventory`, `/heat-lots` | `<InventoryPage />` | `MainLayout` | Yes | Creation Phase POs, Material Receipts, GRN creation & printing, serialized units, stock ledger. |
 | `/warehouse`, `/warehouses`, `/finished-goods` | `<WarehousePage />` | `MainLayout` | Yes | Warehouse location topology, quarantine holds, finished goods staging. |
 | `/workforce`, `/attendance` | `<WorkforcePage />` | `MainLayout` | Yes | Operator skills, shift rosters, clock-in/out punch timestamps. |
 | `/dispatch`, `/dispatches`, `/dispatches/:id` | `<DispatchPage />` | `MainLayout` | Yes | Outbound shipments, QA gate verification, gate clearance, delivery. |
@@ -1634,15 +1759,22 @@ The frontend is built with React 19, Redux Toolkit, React Router 7, and a custom
   - Inventory Reorder Alerts: Low-stock warning banner for quench oils, process gases, and bar stock.
   - Real-Time Event Feed: Streaming audit and domain event log displaying actor, action, and timestamp.
 
-#### 2. Jobs Workbench (`JobsPage.tsx`, 34.4 KB)
-- **Role:** Comprehensive management of production jobs across the complete 12-stage heat treatment lifecycle.
-- **State & Actions:** Manages `jobs`, `selectedJob`, `statusFilter`, `searchQuery`, and `isNewJobOpen` modal state.
+#### 2. Jobs & Planning Workbench (`JobsPage.tsx`, 34.4 KB)
+- **Role:** Authoritative manufacturing workbench supporting both Batch Order Planning (`PO -> GRN -> Part -> BO`) and shop-floor thermal execution.
+- **State & Sub-Views:** `activeTab` ('Batch Orders & Planning', 'Production Queue', 'Active Execution', 'Completed Jobs'), `jobs`, `selectedJob`, `isCreateModalOpen`.
 - **Key Capabilities:**
-  - Work Order Master Table: Displays job codes, customer names, alloy grades, recipe codes, scheduled machine, and status badges.
-  - Status Filter Tabs: Quick toggles for `All`, `Draft`, `Scheduled`, `In Progress`, `Quality Check`, and `Completed`.
-  - Detail Inspection Drawer: Deep-dive slide-out reviewing recipe parameters (Target Temp °C, Soak Minutes, Carbon %C, Quench Medium), furnace and operator assignments, and state transition history.
-  - Work Order Creation Modal: Guided wizard to bind Customer, Item, Recipe, Specification, and Target Quantity with automated validation.
-  - Lifecycle Action Triggers: One-click actions to Start, Pause, Resume, Log Downtime, Record Milestone Progress, and Transition to Storage.
+  - **4-Step Guided Batch Order Wizard:**
+    - *Step 1 (PO Selection):* Planners browse POs that possess completed Goods Receipt Notes (`eligible-pos`).
+    - *Step 2 (GRN Selection):* Planners select a GRN strictly belonging to the chosen PO (`pos/:poId/grns`).
+    - *Step 3 (GRN Part & Quantity Selection):* Planners pick an available part line item and enter the Batch Order quantity, strictly validated against available balance ($0 < \text{BO.quantity} \le \text{GRN.availableQty}$).
+    - *Step 4 (Recipe Corroboration & Submission):* Corroborates active recipe and seeds initial 15-position table before submitting under atomic FIFO allocation lock.
+  - **Interactive Batch Order Detail Drawer:**
+    - *Hierarchy Banner:* Visual `PO / GRN / BO` navigation breadcrumb displaying parent PO and GRN numbers.
+    - *8-Card Immutable Source Genealogy Grid:* Read-only inspection cards for PO Number, GRN Number, Part Number, Material Grade, Recipe Code, Target Hardness, GRN Quantity, and Allocated Quantity.
+    - *15-Position Process Details Table:* Editable table for rows 1 to 15 while in `WAITING_FOR_PRODUCTION` (Stage Name, Target Temp °C, Duration, Quench Medium, Atmosphere, Tolerance, Operator Notes). Sealed against row addition/deletion.
+    - *Planning-to-Production Handoff Card:* Evaluates `IBatchOrderProductionReadiness` (10-point checklist) with real-time pass/fail indicators and "Send to Production Queue" action.
+  - **Prioritized Shop-Floor Queue:** Active queue view filtering batch orders in `WAITING_FOR_PRODUCTION` for furnace operators.
+  - **Shop-Floor Execution Controls:** Thermal run triggers for furnace assignment, cycle start, stage progress logging, pause/resume, and QA handoff.
 
 #### 3. Quality Control Workbench (`QualityPage.tsx`, 27.5 KB)
 - **Role:** ISO 17025 / AMS 2750G metallurgical inspection and non-conformance disposition workbench.
@@ -1663,14 +1795,15 @@ The frontend is built with React 19, Redux Toolkit, React Router 7, and a custom
   - Breakdown Logging Modal: Rapid emergency stoppage logging with severity tags, automatically transitioning equipment to `BREAKDOWN`.
   - Pyrometry & Calibration Log: Displays System Accuracy Test (SAT) and Temperature Uniformity Survey (TUS) due dates with warning alerts.
 
-#### 5. Inventory & Heat-Lots Workbench (`InventoryPage.tsx`, 24.7 KB)
-- **Role:** Raw material stock ledger, heat lot traceability, and Mill Test Certificate (MTR) management.
-- **State & Sub-Views:** `activeTab` ('Stock Ledger', 'Heat Lots & MTRs', 'Stock Movements'), `items`, `heatLots`, `selectedHeatLot`.
+#### 5. Inventory & Creation Phase Workbench (`InventoryPage.tsx`, 24.7 KB)
+- **Role:** Raw material stock ledger, heat lot traceability, MTR management, and authoritative Creation Phase lifecycle (`PO -> Material Storage -> GRN -> Serialized Units`).
+- **State & Sub-Views:** `activeTab` ('Stock Ledger', 'Purchase Orders', 'Material Receipts', 'Goods Receipt Notes', 'Serialized Units', 'Heat Lots & MTRs'), `items`, `heatLots`, `selectedHeatLot`.
 - **Key Capabilities:**
-  - Stock Ledger Table: Displays SKU, item name, material grade, current balance, reserved quantity, available quantity, and safety reorder point.
-  - Goods Receipt Inwarding Modal: Captures supplier heat numbers, Mill Test Certificate (MTR) numbers, chemical analysis, and assigned storage bin.
-  - Heat Lot Traceability Drawer: Bi-directional genealogy display linking raw heat numbers to consumed jobs and customer dispatch consignments.
-  - Stock Adjustment Action: Supervisor-authorized balance corrections with mandatory reason codes.
+  - **Purchase Order Management:** Guided PO creation wizard binding supplier, expected delivery date, and line items strictly coupled to active recipes and item master records; tracks status lifecycle (`DRAFT`, `ISSUED`, `PARTIALLY_RECEIVED`, `RECEIVED`, `CANCELLED`).
+  - **Material Storage Putaway:** Records inward physical deliveries and logs warehouse putaway movements to specific rack/shelf/bin locations.
+  - **Authoritative GRN Generation & Printing:** Issues monotonic `GRN-YYYYMM-XXXX`, records inspected accepted/rejected quantities, and provides on-demand printable GRN certificates with company headers, heat details, QR codes, and authorized sign-off blocks.
+  - **Serialized Part Unit Traceability:** Generates discrete serialized units (`UNIT-YYYYMM-XXXX`) inheriting unbroken 5-tier lineage (`PO -> GRN -> Unit -> Item -> Recipe`) and manages the available-for-planning release gate.
+  - **Stock Ledger & Heat Lots:** Real-time on-hand, reserved, and available stock balances with MTR document attachments.
 
 #### 6. Warehouse & Locations Workbench (`WarehousePage.tsx`, 12.6 KB)
 - **Role:** Physical plant warehouse topology, quarantine holding, and finished-goods storage.
@@ -2007,6 +2140,131 @@ stateDiagram-v2
 5. **Categorized Results Display:** Results are organized into domain clusters with icon badges, status chips, and primary identifiers.
 6. **Keyboard Navigation & Deep-Link:** Operator navigates results with Up/Down arrow keys and presses Enter to instantly route directly to the target record's workbench drawer or details view.
 
+---
+
+### 7.15 Authoritative Material Receipt, Storage Allocation & Serialized GRN Workflow
+
+```mermaid
+flowchart TD
+    PO[1. Issued Purchase Order<br/>Recipe & Part Bound] --> MR[2. Physical Material Receipt<br/>Dock Intake & MTR Check]
+    MR --> SA[3. Storage Putaway Allocation<br/>Bay / Shelf / Bin Movement]
+    SA --> GRN[4. Authoritative GRN Generation<br/>Accepted vs Rejected Qty]
+    GRN --> SU[5. Serialized Unit Generation<br/>Discrete UNIT-YYYYMM-XXXX]
+    SU --> GATE{6. Receiving Inspection Gate}
+    GATE -->|Pass| PLAN[Available for Planning<br/>Released for Batch Order]
+    GATE -->|Fail| QUAR[Quarantine Holding<br/>Material Quarantined]
+    GRN --> PRN[7. Authoritative Print Document<br/>Compliance Certificate & QR]
+```
+
+1. **Purchase Order Issuance (`POST /api/v1/purchase-orders`):**
+   - Procurement creates PO with supplier details, currency, expected delivery date, and line items.
+   - Every line item is strictly bound to an `itemId` and an active `recipeId`.
+   - Generates monotonic sequential ID `PO-YYYYMM-XXXX`. Initial status is `ISSUED`.
+2. **Material Arrival & Dock Intake (`POST /api/v1/grn/receipts`):**
+   - Stores clerk records physical unloading at the inward receiving dock.
+   - Captures PO reference, delivery note number, vehicle registration, supplier heat number, and Mill Test Report (MTR) certificate number.
+   - Generates monotonic sequential ID `RCPT-YYYYMM-XXXX`. Initial status is `RECEIVED`.
+3. **Warehouse Putaway & Storage Allocation (`POST /api/v1/grn/receipts/:id/store`):**
+   - Material handler puts away unloaded material from receiving dock into specific warehouse bay, shelf, and bin locations.
+   - Validates quantity ($0 < \text{storedQuantity} \le \text{remainingQuantity}$).
+   - Records spatial movement log (`sourceLocation` → `destinationLocationCode`) with timestamp and operator identity.
+4. **Authoritative GRN Generation (`POST /api/v1/grn`):**
+   - Store supervisor generates the official Goods Receipt Note.
+   - Records accepted and rejected quantities, discrepancy reasons, and inspector notes.
+   - System updates PO line fulfillment (`receivedQuantity`, `balanceQuantity`) and auto-transitions PO status (`PARTIALLY_RECEIVED` or `RECEIVED`).
+   - Automatically generates discrete serialized part units (`UNIT-YYYYMM-XXXX`) for each accepted unit.
+   - Generates monotonic sequential ID `GRN-YYYYMM-XXXX`.
+5. **Quality Disposition & Planning Release Gate (`GET /api/v1/grn/units/available-for-planning`):**
+   - Units passing receiving QC are stamped `AVAILABLE_FOR_PLANNING`.
+   - Rejection flags quarantine hold (`QUARANTINED`), blocking planning allocation.
+6. **Authoritative GRN Document Printing (`GET /api/v1/grn/:id/print`):**
+   - Produces formal audit-ready printable document containing company header, PO reference, supplier metadata, chemical composition, heat lot link, unit barcode breakdown, and digital sign-off blocks.
+
+---
+
+### 7.16 Authoritative PO-to-GRN Batch Order Planning & Shop-Floor Handoff Workflow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Planner as Authorized Planner
+    participant PlanUI as Planning Workbench (JobsPage)
+    participant POSvc as PurchaseOrderService
+    participant GRNSvc as GRNService
+    participant BOSvc as ProductionJobService
+    participant Mutex as FIFO Allocation Mutex
+    participant Queue as Shop-Floor Queue
+    actor Operator as Furnace Operator
+
+    Planner->>PlanUI: Step 1: Browse Eligible Purchase Orders
+    PlanUI->>POSvc: GET /eligible-pos
+    POSvc-->>PlanUI: List of POs with Completed GRNs
+
+    Planner->>PlanUI: Step 2: Select PO & Query Eligible GRNs
+    PlanUI->>GRNSvc: GET /pos/:poId/grns
+    GRNSvc-->>PlanUI: List of Completed GRNs strictly bound to PO
+
+    Planner->>PlanUI: Step 3: Select GRN Part & Enter BO Quantity
+    PlanUI->>GRNSvc: GET /grns/:grnId/parts
+    GRNSvc-->>PlanUI: Available parts & unallocated quantities
+
+    Planner->>PlanUI: Step 4: Validate Recipe & Submit BO Creation
+    PlanUI->>BOSvc: POST /batch-orders (poId, grnId, itemId, quantity)
+    activate BOSvc
+    BOSvc->>Mutex: Acquire allocation lock (grnId)
+    BOSvc->>GRNSvc: Validate available quantity (BO.qty <= GRN.availQty)
+    BOSvc->>BOSvc: Corroborate active Recipe from PO/GRN
+    BOSvc->>BOSvc: Initialize sealed 15-position Process Details
+    BOSvc->>BOSvc: Construct immutable Source Genealogy (isImmutable: true)
+    BOSvc->>BOSvc: Set Status = WAITING_FOR_PRODUCTION (sum flags = 1)
+    BOSvc->>Mutex: Release allocation lock
+    BOSvc-->>PlanUI: Created BO-YYYYMM-XXXX
+    deactivate BOSvc
+
+    opt Process Details Customization
+        Planner->>PlanUI: Edit Process Details (Positions 1-15)
+        PlanUI->>BOSvc: PUT /batch-orders/:id/process-details
+        BOSvc-->>PlanUI: Updated 15-Position Table
+    end
+
+    Planner->>PlanUI: Inspect Production Readiness (10-point check)
+    PlanUI->>BOSvc: GET /batch-orders/:id/production-readiness
+    BOSvc-->>PlanUI: isProductionReady: true
+
+    Planner->>PlanUI: Release to Shop-Floor Queue
+    PlanUI->>Queue: Available in /production-jobs/queue
+
+    Operator->>Queue: GET /production-jobs/queue
+    Queue-->>Operator: Ready Batch Orders (WAITING_FOR_PRODUCTION)
+    Operator->>BOSvc: POST /:id/assign-furnace & POST /:id/start
+    BOSvc-->>Operator: Transitioned to IN_PROGRESS (Execution Phase)
+```
+
+1. **Step 1: Browse Eligible Purchase Orders (`GET /api/v1/planning/eligible-pos`):**
+   - Authorized planner opens the Planning Workbench (`/planning` or `/batch-orders`).
+   - System queries and lists only purchase orders that have completed Goods Receipt Notes with available, unallocated inventory.
+2. **Step 2: Select PO & Filter Eligible GRNs (`GET /api/v1/planning/pos/:poId/grns`):**
+   - Planner selects a PO. The system strictly queries and returns only GRNs belonging directly to that PO.
+3. **Step 3: Select GRN Part & Enter Batch Order Quantity (`GET /api/v1/planning/grns/:grnId/parts`):**
+   - Planner selects a part line item. The system calculates unallocated balance from GRN accepted quantity minus active batch orders.
+   - Planner inputs BO quantity, strictly validated against available balance ($0 < \text{BO.quantity} \le \text{GRN.availableQty}$).
+4. **Step 4: Recipe Corroboration & Atomic BO Creation (`POST /api/v1/batch-orders`):**
+   - Planner submits batch order creation.
+   - Concurrency mutex (`allocation-lock.ts`) locks the target GRN to prevent race conditions across concurrent planners.
+   - System validates that the referenced Recipe matches the approved PO line item and Part Master.
+   - Seeds the authoritative 15-position Process Details table (`IProcessDetailRow`) initialized from recipe parameters.
+   - Inscribes immutable Source Genealogy (`isImmutable: true`).
+   - Sets status to `WAITING_FOR_PRODUCTION` with single-active state invariant $\sum \text{flag}_i = 1$.
+   - Generates monotonic sequential ID `BO-YYYYMM-XXXX`.
+5. **Process Details Customization (`PUT /api/v1/batch-orders/:id/process-details`):**
+   - While the batch order resides in `WAITING_FOR_PRODUCTION`, planners can fine-tune thermal parameters across positions 1 to 15 (target temperatures, dwell times, atmospheres, quench media).
+   - Sealed 15-row structure prevents arbitrary row insertion or deletion.
+6. **Production Readiness Evaluation (`GET /api/v1/batch-orders/:id/production-readiness`):**
+   - 10-point algorithmic readiness check verifies PO link, GRN link, part valid, recipe bound, process details complete, quantity within bounds, status valid, furnace eligible, operator certifiable, and no conflicting locks.
+7. **Shop-Floor Handoff & Pull Queue (`GET /api/v1/production-jobs/queue`):**
+   - Ready batch orders surface automatically in the prioritized shop-floor queue.
+   - Boundary enforcement strictly blocks planners from mutating shop-floor telemetry fields (`PRODUCTION_ONLY_FIELDS`).
+   - Furnace operators pull batch orders from the queue, allocate physical furnace assets, and trigger cycle execution (`POST /api/v1/production-jobs/:id/start`), safely transitioning the job into the 12-stage execution phase.
 
 ---
 
@@ -2049,19 +2307,60 @@ The platform includes 8 authoritative engineering specifications and operational
 7. **`PHASE_1_CERTIFICATION_REPORT.md`:** Verification findings for core platform stability, data boundary enforcement, and error resilience.
 8. **`FACTORY_ACCEPTANCE_REPORT.md`:** End-to-end metallurgical workflow verification and compliance sign-off.
 
-### 8.4 Automated Test Suite Matrix (47 Backend Specs + Frontend Suites)
+### 8.4 Automated Test Suite Matrix (58 Backend Specs + Frontend Suites)
 
 The codebase features comprehensive test suites validating layer boundaries, data integrity, and business logic:
-- **Backend Architecture Governance (`tests/architecture-boundaries.spec.ts`):** Automated AST scanner asserting 100% compliance with 14 layer-boundary rules (`check:arch`).
-- **Domain Integration Suites (47 Specs in `backend/tests/`):**
-  - Production Execution & Lifecycle: `production-job.spec.ts`, `production-execution-workflow.spec.ts`, `production-scheduling.spec.ts`, `plan-to-job-handoff.spec.ts`.
-  - Metallurgical Lab & Quality: `quality-inspection.spec.ts`, `metallurgical-lab.spec.ts`, `ncr-capa.spec.ts`, `quality-documentation.spec.ts`, `pyrometry.spec.ts`.
-  - Machine & Maintenance: `machine.spec.ts`, `maintenance.spec.ts`, `furnace-capacity.spec.ts`.
-  - Traceability & Inventory: `heat-lot-traceability.spec.ts`, `inventory-ledger.spec.ts`, `warehouse.spec.ts`, `finished-goods.spec.ts`, `quarantine.spec.ts`.
-  - Workforce & Attendance: `workforce-attendance.spec.ts`, `workforce-capacity.spec.ts`.
-  - Finance, Costing & Billing: `finance.spec.ts`, `costing.spec.ts`, `billing.spec.ts`.
-  - Platform Core & Security: `auth.spec.ts`, `rbac.spec.ts`, `tenant-isolation.spec.ts`, `audit-logging.spec.ts`, `error-handling.spec.ts`, `database.spec.ts`, `health.spec.ts`.
-- **Frontend Test Suites (`frontend/src/`):**
-  - End-to-End Workflow Testing: `e2e-workflows.test.tsx` (Testing integrated React workflows).
-  - Design System Primitives Testing: `design-system/components.test.tsx` (Testing accessible buttons, inputs, dialogs, badges).
-  - API Client Testing: `services/apiClient.test.ts` (Testing single-flight token refresh mutex and 401 retry loops).
+- **Backend Test Summary:** **58 Test Suites, 693 Tests Passed (0 Failures, 100% Pass Rate)**
+- **Frontend Test Summary:** **3 Test Suites, 50 Tests Passed (0 Failures, 100% Pass Rate)**
+
+#### 1. Backend Architecture Governance
+- `tests/architecture-boundaries.spec.ts`: Automated AST scanner asserting 100% compliance with 14 layer-boundary rules (`check:arch`).
+
+#### 2. Authoritative Creation & Planning Phase Integration Suites
+- `backend/tests/planning-phase-batch-order.spec.ts` (97 tests):
+  - Strict PO selection and completed GRN requirement.
+  - PO-to-GRN containment and validation.
+  - Part selection and recipe corroboration.
+  - Concurrency allocation lock and mutex resilience under high parallel load.
+  - Over-allocation prevention ($0 < \text{BO.quantity} \le \text{GRN.availableQty}$).
+  - Sealed 15-position Process Details table initialization and editing.
+  - Strict single-active state machine (`WAITING_FOR_PRODUCTION`, $\sum \text{flag}_i = 1$).
+  - Source genealogy immutability (`isImmutable: true`).
+  - Production readiness 10-point evaluation.
+  - Planning-to-production handoff boundary segregation (`PRODUCTION_ONLY_FIELDS`).
+  - Plan conversion (`convertPlanToJob`) alignment with `WAITING_FOR_PRODUCTION`.
+  - Legacy direct job creation bypass prohibition (`createDirectJob` throws `BadRequestError`).
+- `backend/tests/grn-creation.spec.ts` (15 tests):
+  - Physical material dock arrival and receipt recording.
+  - Spatial warehouse storage location allocation (bay/shelf/bin).
+  - Authoritative Goods Receipt Note generation with sequential `GRN-YYYYMM-XXXX`.
+  - PO line fulfillment updates and status auto-transitions.
+- `backend/tests/grn-unit-traceability.spec.ts` (21 tests):
+  - Discrete serialized part unit generation (`UNIT-YYYYMM-XXXX`).
+  - 5-tier lineage tracking (`PO -> GRN -> Unit -> Item -> Recipe`).
+  - Available-for-planning release gate and quarantine holds.
+- `backend/tests/grn-view-print.spec.ts` (10 tests):
+  - Authoritative GRN print preview formatting (HTML/JSON).
+  - Header metadata, line items, heat references, and authorized signature blocks.
+
+#### 3. Domain Integration Suites (47 Core Specs in `backend/tests/`)
+- Production Execution & Lifecycle: `production-job.spec.ts`, `production-execution-workflow.spec.ts`, `production-scheduling.spec.ts`, `plan-to-job-handoff.spec.ts`.
+- Metallurgical Lab & Quality: `quality-inspection.spec.ts`, `metallurgical-lab.spec.ts`, `ncr-capa.spec.ts`, `quality-documentation.spec.ts`, `pyrometry.spec.ts`.
+- Machine & Maintenance: `machine.spec.ts`, `maintenance.spec.ts`, `furnace-capacity.spec.ts`.
+- Traceability & Inventory: `heat-lot-traceability.spec.ts`, `inventory-ledger.spec.ts`, `warehouse.spec.ts`, `finished-goods.spec.ts`, `quarantine.spec.ts`.
+- Workforce & Attendance: `workforce-attendance.spec.ts`, `workforce-capacity.spec.ts`.
+- Finance, Costing & Billing: `finance.spec.ts`, `costing.spec.ts`, `billing.spec.ts`.
+- Platform Core & Security: `auth.spec.ts`, `rbac.spec.ts`, `tenant-isolation.spec.ts`, `audit-logging.spec.ts`, `error-handling.spec.ts`, `database.spec.ts`, `health.spec.ts`.
+
+#### 4. Frontend Integration Suites (`frontend/src/`)
+- `e2e-workflows.test.tsx` (36 tests):
+  - Multi-step Batch Order creation wizard (PO -> GRN -> Part -> BO).
+  - Interactive BO drawer with hierarchy banner and 8-card source genealogy grid.
+  - 15-position Process Details table parameter editing.
+  - Planning-to-Production Handoff card with 10-point readiness check.
+  - Creation Phase PO creation, Material Receipt, GRN generation, and Print Preview modal.
+- `design-system/components.test.tsx` (10 tests):
+  - Apple HIG component primitives (accessible buttons, inputs, dialogs, badges, drawers, tabs).
+- `services/apiClient.test.ts` (4 tests):
+  - Single-flight token refresh mutex, authorization header injection, and 401 retry loops.
+
