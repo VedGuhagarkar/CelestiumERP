@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import { createApp } from '../src/app.js';
 import { config } from '../src/config/app.config.js';
 import { productionJobRepository } from '../src/modules/production-job/production-job.repository.js';
+import { productionJobService } from '../src/modules/production-job/production-job.service.js';
 import { ProductionJobModel } from '../src/modules/production-job/production-job.model.js';
 import { purchaseOrderRepository } from '../src/modules/purchase-order/purchase-order.repository.js';
 import { grnRepository } from '../src/modules/grn/grn.repository.js';
@@ -3924,6 +3925,646 @@ describe('Planning Phase — Authoritative PO -> GRN -> BO Workflow', () => {
         .set('x-tenant-id', testTenant)
         .set('Authorization', `Bearer ${techToken}`);
       expect(forbiddenQueue.status).toBe(403);
+    });
+  });
+
+  // =========================================================================
+  // PROMPT 10: Complete Planning Phase Integration, Testing and Cleanup
+  // =========================================================================
+  describe('Prompt 10: Complete Planning Phase Integration, Testing and Cleanup', () => {
+    let jobStore: any[] = [];
+    let counter = 1;
+
+    beforeEach(() => {
+      jobStore = [];
+      counter = 1;
+
+      jest.spyOn(purchaseOrderRepository, 'findById').mockResolvedValue(mockPo as any);
+      jest.spyOn(grnRepository, 'queryGrns').mockResolvedValue({ grns: [mockGrn as any], total: 1 });
+      jest.spyOn(grnRepository, 'findGrnById').mockResolvedValue(mockGrn as any);
+      jest.spyOn(grnRepository, 'findGrnsByPoId').mockResolvedValue([mockGrn as any]);
+      jest.spyOn(grnRepository, 'findUnitsByGrnId').mockResolvedValue(mockGrn.units as any);
+      jest.spyOn(itemRepository, 'findById').mockResolvedValue(mockItem as any);
+      jest.spyOn(recipeRepository, 'findById').mockResolvedValue(mockRecipe as any);
+      jest.spyOn(grnRepository, 'allocateUnit').mockResolvedValue({} as any);
+
+      jest.spyOn(productionJobRepository, 'generateNextBatchOrderNumber').mockImplementation(async () => {
+        return `BO-202609-${String(counter++).padStart(4, '0')}`;
+      });
+
+      jest.spyOn(productionJobRepository, 'findByGrnId').mockImplementation(async (_tenant, grnId) => {
+        return jobStore.filter((j) => j.grnId === grnId) as any;
+      });
+
+      jest.spyOn(productionJobRepository, 'create').mockImplementation(async (_tenant, doc: any) => {
+        const idStr = `job_p10_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+        const newJob = {
+          id: idStr,
+          _id: idStr,
+          ...doc,
+          save: async function () {
+            return this;
+          },
+          toJSON: function () {
+            return { ...this };
+          }
+        };
+        jobStore.push(newJob);
+        return newJob as any;
+      });
+
+      jest.spyOn(productionJobRepository, 'findById').mockImplementation(async (_tenant, id) => {
+        return (
+          jobStore.find(
+            (j) =>
+              j.id === id ||
+              j._id === id ||
+              j.jobNumber === id ||
+              j.boNumber === id ||
+              j.jobNumber?.toLowerCase() === id?.toLowerCase() ||
+              j.boNumber?.toLowerCase() === id?.toLowerCase()
+          ) || null
+        );
+      });
+
+      jest.spyOn(productionJobRepository, 'updateById').mockImplementation(async (_tenant, id, update: any) => {
+        const idx = jobStore.findIndex((j) => j.id === id || j.boNumber === id);
+        if (idx >= 0) {
+          jobStore[idx] = { ...jobStore[idx], ...update };
+          return {
+            ...jobStore[idx],
+            save: async function () { return this; },
+            toJSON: function () { return { ...this }; }
+          } as any;
+        }
+        return null;
+      });
+
+      jest.spyOn(productionJobRepository, 'findActiveQueueJobs').mockImplementation(async (_tenant, _filters) => {
+        return jobStore.filter(
+          (j) =>
+            !j.isDeleted &&
+            ['WAITING_FOR_PRODUCTION', 'DRAFT', 'APPROVED', 'SCHEDULED', 'IN_PROGRESS', 'PAUSED'].includes(j.status)
+        ) as any;
+      });
+
+      jest.spyOn(roleRepository, 'findRolesByCodes').mockImplementation(async (_tenantId, codes) => {
+        return codes.map((c) => {
+          const existing = DEFAULT_FACTORY_ROLES.find((r) => r.code === c);
+          if (existing) {
+            return { ...existing, id: `role_${c}`, status: 'active' };
+          }
+          if (c === 'PRODUCTION_SUPERVISOR') {
+            return {
+              id: 'role_prod_sup',
+              code: 'PRODUCTION_SUPERVISOR',
+              name: 'Production Supervisor',
+              isSystemRole: false,
+              status: 'active',
+              permissions: [
+                PERMISSIONS.PRODUCTION_JOB_VIEW,
+                PERMISSIONS.BATCH_ORDER_VIEW,
+                PERMISSIONS.PRODUCTION_JOB_CREATE,
+                PERMISSIONS.PRODUCTION_JOB_START,
+                PERMISSIONS.PRODUCTION_JOB_TRANSITION
+              ]
+            };
+          }
+          if (c === 'VIEW_ONLY') {
+            return {
+              id: 'role_view_only',
+              code: 'VIEW_ONLY',
+              name: 'View Only Role',
+              isSystemRole: false,
+              status: 'active',
+              permissions: []
+            };
+          }
+          return {
+            id: `role_${c}`,
+            code: c,
+            name: c,
+            isSystemRole: false,
+            status: 'active',
+            permissions: []
+          };
+        }) as any;
+      });
+    });
+
+    // 1. End-to-End Realistic 13-Step Workflow Test
+    it('executes complete 13-step authoritative planning workflow from PO to Production Queue', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+      const operatorToken = generateToken('usr_op', ['FURNACE_OPERATOR']);
+
+      // Step 1: Start with a completed PO
+      expect(mockPo.status).toBe('PARTIALLY_RECEIVED');
+
+      // Step 2: Identify its completed GRN
+      expect(mockGrn.status).toBe('AVAILABLE_FOR_PLANNING');
+      expect(mockGrn.poId).toBe(mockPo.id);
+
+      // Step 3: Select PO from eligible POs
+      const eligiblePosRes = await request(app)
+        .get('/api/v1/planning/eligible-pos')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`);
+      expect(eligiblePosRes.status).toBe(200);
+      expect(eligiblePosRes.body.data.length).toBeGreaterThan(0);
+
+      // Step 4: Select GRN belonging strictly to this PO
+      const eligibleGrnsRes = await request(app)
+        .get(`/api/v1/planning/pos/${mockPo.id}/grns`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`);
+      expect(eligibleGrnsRes.status).toBe(200);
+      expect(eligibleGrnsRes.body.data.some((g: any) => g.id === mockGrn.id)).toBe(true);
+
+      // Step 5: Select valid GRN Part/Material unit and identify required Recipe
+      const eligiblePartsRes = await request(app)
+        .get(`/api/v1/planning/grns/${mockGrn.id}/parts`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`);
+      expect(eligiblePartsRes.status).toBe(200);
+      const selectedPart = eligiblePartsRes.body.data.find((p: any) => p.itemId === mockItem.id);
+      expect(selectedPart).toBeDefined();
+      expect(selectedPart.recipeCode).toBe(mockRecipe.recipeCode);
+
+      // Step 6: Create BO
+      const createRes = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50,
+          priority: 'HIGH'
+        });
+
+      expect(createRes.status).toBe(201);
+      const createdBo = createRes.body.data;
+
+      // Step 7: Generate system-controlled batch number
+      expect(createdBo.boNumber).toMatch(/^BO-202609-\d{4}$/);
+
+      // Step 8: Populate required BO information
+      expect(createdBo.customer.customerName).toBe(mockPo.supplierName);
+      expect(createdBo.item.itemCode).toBe(mockItem.itemCode);
+      expect(createdBo.item.materialGrade).toBe(mockItem.materialGrade);
+      expect(createdBo.weightKg).toBe(50);
+
+      // Step 9: Establish 15-position process details table
+      expect(createdBo.processDetails).toHaveLength(15);
+      expect(createdBo.processDetails[0].serialNumber).toBe(1);
+      expect(createdBo.processDetails[14].serialNumber).toBe(15);
+
+      // Step 10: Validate quantity
+      expect(createdBo.quantity.targetQuantity).toBe(100);
+      expect(createdBo.quantity.targetQuantity).toBeLessThanOrEqual(mockGrn.items[0].receivedQuantity);
+
+      // Step 11: Validate Recipe-to-Item relationship
+      expect(createdBo.recipeSnapshot.recipeCode).toBe(mockRecipe.recipeCode);
+
+      // Step 12: Set BO to waiting for production
+      expect(createdBo.status).toBe('WAITING_FOR_PRODUCTION');
+      expect(createdBo.workflowState.waitingForProduction).toBe(true);
+      expect(createdBo.workflowState.inProduction).toBe(false);
+      expect(createdBo.workflowState.waitingForInspection).toBe(false);
+      expect(createdBo.workflowState.inInspection).toBe(false);
+      expect(createdBo.workflowState.waitingForDispatch).toBe(false);
+      expect(createdBo.workflowState.dispatched).toBe(false);
+
+      // Step 13: Verify that Production users can see it in queue
+      const queueRes = await request(app)
+        .get('/api/v1/production-jobs/queue')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${operatorToken}`);
+      expect(queueRes.status).toBe(200);
+      const foundInQueue = queueRes.body.data.find((q: any) => q.jobId === createdBo.id || q.boNumber === createdBo.boNumber);
+      expect(foundInQueue).toBeDefined();
+      expect(foundInQueue.status).toBe('WAITING_FOR_PRODUCTION');
+      expect(foundInQueue.poNumber).toBe(mockPo.poNumber);
+      expect(foundInQueue.grnNumber).toBe(mockGrn.grnNumber);
+      expect(foundInQueue.itemCode).toBe(mockItem.itemCode);
+      expect(foundInQueue.materialGrade).toBe(mockItem.materialGrade);
+    });
+
+    // 2. Relationship Testing Rejection Matrix
+    it('deliberately tests and rejects all invalid relationship combinations', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      // Attempt 1: PO A + GRN B (Hierarchy Mismatch)
+      const foreignGrn = {
+        ...mockGrn,
+        id: 'grn_foreign',
+        poId: 'po_unrelated_999',
+        poNumber: 'PO-2026-09999'
+      };
+      jest.spyOn(grnRepository, 'findGrnById').mockResolvedValueOnce(foreignGrn as any);
+
+      const resMismatchedGrn = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: foreignGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+      expect(resMismatchedGrn.status).toBe(400);
+      expect(resMismatchedGrn.body.message).toContain('Hierarchy Violation');
+
+      // Attempt 2: GRN A + Part B (Part not received on GRN)
+      const unrelatedItem = {
+        id: 'item_unrelated_part',
+        itemCode: 'MAT-STEEL-4340',
+        materialGrade: 'AISI 4340'
+      };
+      jest.spyOn(itemRepository, 'findById').mockResolvedValueOnce(unrelatedItem as any);
+
+      const resUnrelatedPart = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: unrelatedItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+      expect(resUnrelatedPart.status).toBe(400);
+      expect(resUnrelatedPart.body.message).toContain('Part Membership Violation');
+
+      // Attempt 3: Part A + Recipe B (Metallurgical Incompatibility)
+      const incompatibleRecipe = {
+        id: 'rec_inconel_99',
+        recipeCode: 'REC-INCONEL-718',
+        name: 'Inconel 718 Vacuum Solution & Double Age',
+        materialGrade: 'Inconel 718',
+        processFamily: 'VACUUM_HEAT_TREATMENT',
+        revisionNumber: 1,
+        status: 'APPROVED'
+      };
+      jest.spyOn(recipeRepository, 'findById').mockResolvedValueOnce(incompatibleRecipe as any);
+
+      const resIncompatibleRecipe = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: incompatibleRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+      expect(resIncompatibleRecipe.status).toBe(400);
+      expect(resIncompatibleRecipe.body.message).toMatch(/Metallurgical Incompatibility|Recipe Mismatch Violation/);
+
+      // Attempt 4: Unrelated Customer (Cross-Record Contamination)
+      const resUnrelatedCustomer = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50,
+          customer: { customerName: 'Rogue Customer Inc', customerCode: 'CUST-ROGUE' }
+        });
+      expect(resUnrelatedCustomer.status).toBe(400);
+      expect(resUnrelatedCustomer.body.message).toContain('Cross-Record Contamination Violation');
+
+      // Attempt 5: Nonexistent Recipe
+      jest.spyOn(recipeRepository, 'findById').mockResolvedValueOnce(null);
+      const resNonexistentRecipe = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: 'rec_nonexistent_uuid',
+          quantity: 100,
+          weight: 50
+        });
+      expect([400, 404]).toContain(resNonexistentRecipe.status);
+
+      // Attempt 6: Nonexistent Part
+      jest.spyOn(itemRepository, 'findById').mockResolvedValueOnce(null);
+      const resNonexistentPart = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: 'item_nonexistent_uuid',
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50
+        });
+      expect([400, 404]).toContain(resNonexistentPart.status);
+
+      // Attempt 7: Invalid Workflow State Tampering at creation
+      const resTamperedState = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 100,
+          weight: 50,
+          status: 'QUALITY_CHECK'
+        });
+      expect([400, 422]).toContain(resTamperedState.status);
+      expect(JSON.stringify(resTamperedState.body)).toMatch(/Invalid State Manipulation|Initial status must be WAITING_FOR_PRODUCTION|validation failed/);
+    });
+
+    // 3. Authorization Testing for Users Without BO Permissions
+    it('strictly forbids users without BO permission from creating, modifying, or accessing protected planning APIs', async () => {
+      const unauthorizedToken = generateToken('usr_viewonly', ['VIEW_ONLY']);
+      const validPlannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      // Setup a valid BO first
+      const createRes = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${validPlannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 80,
+          weight: 40
+        });
+      expect(createRes.status).toBe(201);
+      const boId = createRes.body.data.id;
+
+      // Unauthenticated access -> 401 across all planning endpoints
+      const unauthPost = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .send({ poId: mockPo.id, grnId: mockGrn.id, itemId: mockItem.id, recipeId: mockRecipe.id, quantity: 10 });
+      expect(unauthPost.status).toBe(401);
+
+      const unauthGet = await request(app)
+        .get(`/api/v1/batch-orders/${boId}`)
+        .set('x-tenant-id', testTenant);
+      expect(unauthGet.status).toBe(401);
+
+      const unauthGenealogy = await request(app)
+        .get(`/api/v1/batch-orders/${boId}/genealogy`)
+        .set('x-tenant-id', testTenant);
+      expect(unauthGenealogy.status).toBe(401);
+
+      const unauthReadiness = await request(app)
+        .get(`/api/v1/batch-orders/${boId}/production-readiness`)
+        .set('x-tenant-id', testTenant);
+      expect(unauthReadiness.status).toBe(401);
+
+      // Unauthorized user (VIEW_ONLY) -> 403 Forbidden across creation, update, and detail endpoints
+      const forbidCreate = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${unauthorizedToken}`)
+        .send({ poId: mockPo.id, grnId: mockGrn.id, itemId: mockItem.id, recipeId: mockRecipe.id, quantity: 10 });
+      expect(forbidCreate.status).toBe(403);
+
+      const forbidGet = await request(app)
+        .get(`/api/v1/batch-orders/${boId}`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${unauthorizedToken}`);
+      expect(forbidGet.status).toBe(403);
+
+      const forbidGenealogy = await request(app)
+        .get(`/api/v1/batch-orders/${boId}/genealogy`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${unauthorizedToken}`);
+      expect(forbidGenealogy.status).toBe(403);
+
+      const forbidReadiness = await request(app)
+        .get(`/api/v1/batch-orders/${boId}/production-readiness`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${unauthorizedToken}`);
+      expect(forbidReadiness.status).toBe(403);
+
+      const forbidPatch = await request(app)
+        .patch(`/api/v1/production-jobs/${boId}`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${unauthorizedToken}`)
+        .send({ notes: 'Malicious modification' });
+      expect(forbidPatch.status).toBe(403);
+    });
+
+    // 4. Workflow Testing: Mutual Exclusivity and Transition Authority
+    it('enforces that exactly one workflow flag is active and prevents arbitrary downstream jumps', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const createRes = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 90,
+          weight: 45
+        });
+
+      expect(createRes.status).toBe(201);
+      const bo = createRes.body.data;
+
+      // Verify mutual exclusivity: exactly one flag is true
+      const flags = [
+        bo.workflowState.waitingForProduction,
+        bo.workflowState.inProduction,
+        bo.workflowState.waitingForInspection,
+        bo.workflowState.inInspection,
+        bo.workflowState.waitingForDispatch,
+        bo.workflowState.dispatched
+      ];
+      expect(flags.filter(Boolean)).toHaveLength(1);
+      expect(bo.workflowState.waitingForProduction).toBe(true);
+
+      // Verify planners cannot set downstream status directly
+      const patchRes = await request(app)
+        .patch(`/api/v1/production-jobs/${bo.id}`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({ status: 'IN_PROGRESS' });
+      expect([400, 422]).toContain(patchRes.status);
+      expect(JSON.stringify(patchRes.body)).toContain('State Transition Authority Violation');
+    });
+
+    // 5. Quantity Constraints and Concurrency Allocation Mutex
+    it('enforces quantity bounds and prevents concurrent over-allocation corruption', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      // Zero quantity
+      const resZero = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({ poId: mockPo.id, grnId: mockGrn.id, itemId: mockItem.id, recipeId: mockRecipe.id, quantity: 0, weight: 50 });
+      expect([400, 422]).toContain(resZero.status);
+
+      // Negative quantity
+      const resNeg = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({ poId: mockPo.id, grnId: mockGrn.id, itemId: mockItem.id, recipeId: mockRecipe.id, quantity: -25, weight: 50 });
+      expect([400, 422]).toContain(resNeg.status);
+
+      // Exceeding GRN received quantity (250 > 200)
+      const resExcess = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({ poId: mockPo.id, grnId: mockGrn.id, itemId: mockItem.id, recipeId: mockRecipe.id, quantity: 250, weight: 50 });
+      expect(resExcess.status).toBe(400);
+      expect(resExcess.body.message).toContain('exceeds GRN received quantity');
+
+      // Concurrent allocation: 120 + 120 against 200 KG available pool
+      const [res1, res2] = await Promise.all([
+        request(app)
+          .post('/api/v1/batch-orders')
+          .set('x-tenant-id', testTenant)
+          .set('Authorization', `Bearer ${plannerToken}`)
+          .send({ poId: mockPo.id, grnId: mockGrn.id, itemId: mockItem.id, recipeId: mockRecipe.id, quantity: 120, weight: 60 }),
+        request(app)
+          .post('/api/v1/batch-orders')
+          .set('x-tenant-id', testTenant)
+          .set('Authorization', `Bearer ${plannerToken}`)
+          .send({ poId: mockPo.id, grnId: mockGrn.id, itemId: mockItem.id, recipeId: mockRecipe.id, quantity: 120, weight: 60 })
+      ]);
+
+      const statuses = [res1.status, res2.status].sort();
+      expect(statuses).toEqual([201, 400]);
+    });
+
+    // 6. Traceability and Complete Genealogy Verification
+    it('verifies complete genealogy answering all 4 questions (PO -> GRN -> BO and Item -> Recipe -> BO)', async () => {
+      const plannerToken = generateToken('usr_mgr', ['PLANT_MANAGER']);
+
+      const createRes = await request(app)
+        .post('/api/v1/batch-orders')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`)
+        .send({
+          poId: mockPo.id,
+          grnId: mockGrn.id,
+          itemId: mockItem.id,
+          recipeId: mockRecipe.id,
+          quantity: 50,
+          weight: 25
+        });
+
+      expect(createRes.status).toBe(201);
+      const boId = createRes.body.data.id;
+
+      const genealogyRes = await request(app)
+        .get(`/api/v1/batch-orders/${boId}/genealogy`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${plannerToken}`);
+
+      expect(genealogyRes.status).toBe(200);
+      const { genealogy, answers, traceabilityChain } = genealogyRes.body.data;
+
+      expect(genealogy.isImmutable).toBe(true);
+      expect(genealogy.whichPo.poNumber).toBe(mockPo.poNumber);
+      expect(genealogy.whichGrn.grnNumber).toBe(mockGrn.grnNumber);
+      expect(genealogy.whichPart.itemCode).toBe(mockItem.itemCode);
+      expect(genealogy.whichRecipe.recipeCode).toBe(mockRecipe.recipeCode);
+
+      expect(answers.whichPoCreatedThisBo).toContain(mockPo.poNumber);
+      expect(answers.whichGrnSuppliedIt).toContain(mockGrn.grnNumber);
+      expect(answers.whichPartDoesItRepresent).toContain(mockItem.itemCode);
+      expect(answers.whichRecipeGovernsIt).toContain(mockRecipe.recipeCode);
+      expect(traceabilityChain).toContain(`PO (${mockPo.poNumber}) -> GRN (${mockGrn.grnNumber}) -> BO`);
+    });
+
+    // 7. Production Queue Pull Model and Incomplete BO Exclusion
+    it('ensures only complete BOs enter the production queue while incomplete records are filtered out', async () => {
+      const operatorToken = generateToken('usr_op', ['FURNACE_OPERATOR']);
+
+      // Incomplete BO directly injected into store
+      const incompleteBo = {
+        id: `job_inc_${Date.now()}`,
+        _id: `job_inc_${Date.now()}`,
+        tenantId: testTenant,
+        jobNumber: `JOB-INC-${Date.now()}`,
+        boNumber: `BO-INC-${Date.now()}`,
+        status: 'WAITING_FOR_PRODUCTION',
+        workflowState: { waitingForProduction: true, inProduction: false, waitingForInspection: false, inInspection: false, waitingForDispatch: false, dispatched: false },
+        waitingForProduction: true,
+        quantity: { targetQuantity: 0, loadedQuantity: 0, completedQuantity: 0, scrappedQuantity: 0 },
+        weightKg: 0,
+        processDetails: [],
+        timeline: { plannedStartDate: new Date(), targetCompletionDate: new Date() },
+        priority: 'NORMAL',
+        customer: { customerId: 'cust_inc', customerCode: '', customerName: '' },
+        item: { itemId: 'item_inc', itemCode: '', itemName: '', materialGrade: '', uom: 'PCS' },
+        save: async function () { return this; },
+        toJSON: function () { return { ...this }; }
+      };
+      jobStore.push(incompleteBo);
+
+      const queueRes = await request(app)
+        .get('/api/v1/production-jobs/queue')
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${operatorToken}`);
+
+      expect(queueRes.status).toBe(200);
+      const foundInQueue = queueRes.body.data.find((q: any) => q.jobId === incompleteBo.id);
+      expect(foundInQueue).toBeUndefined();
+
+      // Production readiness reports isReadyForProduction: false
+      const readinessRes = await request(app)
+        .get(`/api/v1/batch-orders/${incompleteBo.id}/production-readiness`)
+        .set('x-tenant-id', testTenant)
+        .set('Authorization', `Bearer ${operatorToken}`);
+
+      expect(readinessRes.status).toBe(200);
+      expect(readinessRes.body.data.isReadyForProduction).toBe(false);
+      expect(readinessRes.body.data.missingFields.length).toBeGreaterThan(0);
+    });
+
+    // 8. No Legacy Workflow / Direct Job Bypass Prevention
+    it('strictly prohibits direct job creation or legacy routes that bypass PO and GRN lineage', async () => {
+      const actor = {
+        userId: 'usr_mgr',
+        roles: ['PLANT_MANAGER']
+      };
+
+      // Attempting to call createDirectJob without poId/grnId must throw BadRequestError
+      await expect(
+        productionJobService.createDirectJob(testTenant, actor, {
+          targetQuantity: 100,
+          priority: 'NORMAL'
+        } as any)
+      ).rejects.toThrow(/Batch Order creation requires a valid PO \(poId\) and completed GRN \(grnId\) reference/);
     });
   });
 });

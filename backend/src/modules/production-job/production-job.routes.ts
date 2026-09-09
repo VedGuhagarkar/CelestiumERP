@@ -6,7 +6,6 @@ import { validateRequest } from '../../core/middleware/validate.middleware.js';
 import { asyncHandler } from '../../core/middleware/async-handler.middleware.js';
 import { PERMISSIONS } from '../rbac/rbac.constants.js';
 import {
-  createDirectJobSchema,
   createBatchOrderSchema,
   updateProcessDetailsSchema,
   getProcessDetailsSchema,

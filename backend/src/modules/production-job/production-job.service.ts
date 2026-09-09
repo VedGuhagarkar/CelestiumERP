@@ -2893,7 +2893,7 @@ export class ProductionJobService {
     const itemCode = (item as any)?.itemCode || 'ITEM-001';
 
     const jobNumber = await this.repo.generateNextJobNumber(tenantId);
-    const initialStatus = 'RELEASED';
+    const initialStatus = 'WAITING_FOR_PRODUCTION';
 
     const job = await this.repo.create(tenantId, {
       jobNumber,
@@ -2918,6 +2918,21 @@ export class ProductionJobService {
         scrappedQuantity: 0
       },
       status: initialStatus as any,
+      waitingForProduction: true,
+      inProduction: false,
+      waitingForInspection: false,
+      inInspection: false,
+      waitingForDispatch: false,
+      dispatched: false,
+      workflowState: {
+        waitingForProduction: true,
+        inProduction: false,
+        waitingForInspection: false,
+        inInspection: false,
+        waitingForDispatch: false,
+        dispatched: false
+      },
+      processDetails: this.buildDefaultProcessTable(),
       priority: (plan as any).demandRequirement?.priority || (plan as any).priority || 'NORMAL',
       recipeSnapshot,
       specificationSnapshot: specSnapshot,
