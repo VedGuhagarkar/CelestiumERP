@@ -95,7 +95,7 @@
    - 8.1 Database Seeding Engine (`backend/src/scripts/seed.ts`)
    - 8.2 Centralized Configuration Subsystem (`backend/src/config/`)
    - 8.3 Operational Runbooks & Technical Specifications (`docs/`)
-   - 8.4 Automated Test Suite Matrix (62 Backend Specs + Frontend Suites)
+   - 8.4 Automated Test Suite Matrix (63 Backend Specs + Frontend Suites)
 
 ---
 
@@ -991,6 +991,7 @@ _No direct HTTP routes mounted for this internal domain service._
   - Production Phase Methods: `findWaitingForProductionQueue()`, `findInProductionQueue()`, `findWaitingForInspectionQueue()`, `atomicTakeForProduction()`, `atomicApproveForInspection()`, `findInProductionJobsForPo(tenantId, poId)`, `findInProductionJobsForGrn(tenantId, grnId)`.
   - Concurrency & Lock Enforcement:
     - `updateById()` strictly intercepts update attempts on in-production jobs, preventing mutation of processDetails, timeline, quantity, items, recipe snapshots, and source genealogy.
+    - Post-Production Lock & Recipe Protection: `updateById()` permanently protects `recipeSnapshot` against substitution (`Recipe Protection Violation`), and intercepts updates on completed jobs in `waitingForInspection`, `inInspection`, `QUALITY_CHECK`, or `COMPLETED`, rejecting modifications to furnace charges, stage progress actuals, process details, customer, item, PO/GRN references, quantities, and furnace/operator assignments with `Post-Production Lock Violation`.
     - `atomicApproveForInspection()` asserts `status: 'IN_PRODUCTION' | 'IN_PROGRESS'` or `workflowState.inProduction: true`, preventing race conditions and multiple approvals (`409 Conflict`).
   - Planning Phase Methods: `generateNextJobNumber()`, `findJobByNumber()`, `findByPlanId()`, `findJobsByPlanId()`, `findByIdempotencyKey()`, `queryJobs()`, `findActiveQueueJobs()` (strictly delegates to `findWaitingForProductionQueue()`), `findConflictingJobs()`, `findEligiblePOs()`, `findEligibleGRNsForPO()`, `findEligiblePartsForGRN()`, `findActiveAllocationsForGRN()`.
 
@@ -1033,8 +1034,14 @@ _No direct HTTP routes mounted for this internal domain service._
       - Post-Approval Lock Enforcement: Rejects any subsequent attempts to record furnace charges, recipe progress actuals, partial saves, or process details on approved BOs (`Post-Production Lock Violation`).
       - Emits audit log `PRODUCTION_JOB_APPROVED_FOR_INSPECTION` and publishes domain events `Job.ApprovedForInspection` and `Job.Completed`.
       - Prohibits dispatch bypass: Prunes `STORAGE` from `WAITING_FOR_INSPECTION` allowed transitions, blocking direct transitions to storage or dispatch without QA clearance.
-  - *Production Lock Enforcement:*
-    - Server-side rejection (`In-Production Lock Violation`) for `updateJob()`, `updateProcessDetails()`, `assignOperator()`, `removeOperator()`, `assignFurnace()`, `removeFurnace()`, `transitionJob()`, and `cancelJob()` whenever `job.inProduction === true`.
+  - *Production Lock & Historical Record Integrity (Prompt 7):*
+    - **Post-Production Historical Integrity & Record Locking:** Once a BO enters `waitingForInspection` (or downstream), all historical production execution data is permanently frozen. The service strictly rejects mutations across `recordFurnaceCharge()`, `recordRecipeStageProgress()`, `saveProductionData()`, `updateJob()`, `assignOperator()`, `removeOperator()`, `assignFurnace()`, `removeFurnace()`, and `cancelJob()` with `Post-Production Lock Violation`.
+    - **Tampering Detection & Audit Trail:** Unauthorized post-production edit attempts automatically log an immutable security audit event `PRODUCTION_RECORD_LOCK_VIOLATION_ATTEMPT` capturing the actor, timestamp, entity ID, attempted operation, and current status.
+    - **Authoritative Recipe Immutability:** Pinned `recipeSnapshot` and revision number are permanently immutable across the lifecycle, preventing version substitution or drift from subsequent master recipe edits.
+    - **Strict Lifecycle Transition Guarding:** Transitions from `WAITING_FOR_INSPECTION` are restricted exclusively to `QUALITY_CHECK`. Rollbacks to `IN_PROGRESS` and bypass transitions to `STORAGE` or `READY_FOR_DISPATCH` are rejected with `State Transition Authority Violation`.
+    - **Mongoose Document Model Defense-in-Depth:** `productionJobSchema.pre('save')` enforces that `recipeSnapshot` cannot be modified for existing documents (`!this.isNew`), and blocks direct document saves attempting to alter locked execution fields (`execution.furnaceCharge`, `execution.stageProgress`, piece counts, customer, item, PO/GRN references) when in post-production.
+    - **Read-Only Historical Fidelity:** `GET /api/v1/production-jobs/:id` returns 100% complete execution history, thermal telemetry, piece balance, recipe snapshot, and genealogy in read-only mode.
+    - **Role & Route Separation:** Quality inspection roles (`QC_INSPECTOR`) without production execution permissions are restricted from production mutation routes (`403 Forbidden`).
   - *Planning Phase Methods:* `getEligiblePOs()`, `getEligibleGRNsForPO()`, `getEligiblePartsForGRN()`, `createBatchOrder()`, `getProcessDetails()`, `updateProcessDetails()`, `getBatchOrderGenealogy()`, `getBatchOrderProductionReadiness()`.
   - *Cleaned Up / Disabled:* `createDirectJob()` permanently disabled with `BadRequestError` to prevent un-genealogized work order bypass; legacy duplicate queue queries unified under `findWaitingForProductionQueue()`.
 
@@ -1841,9 +1848,11 @@ The frontend is built with React 19, Redux Toolkit, React Router 7, and a custom
       - **Recipe Compliance Alert:** Real-time analysis surfaces any out-of-tolerance stage excursions or non-compliant stages in an amber banner.
       - **Concession Authorization:** Requires explicit supervisory sign-off (`concessionApproved: true`) and mandatory documented rationale (`concessionReason`) if any stage deviations exist; blocks submit otherwise.
       - Triggers atomic transition via `POST /api/v1/production-jobs/:id/approve-for-inspection`, setting `waitingForInspection = true` and activating the post-production modification lock.
-  - **Waiting for Inspection Queue:**
+  - **Waiting for Inspection Queue & Post-Production Record Locking:**
     - Displays batch orders that have completed production execution and are awaiting Quality Inspection.
     - Shows completed piece counts, scrapped counts, furnace run history, and operator sign-offs.
+    - **Post-Production Historical Integrity & Record Locking Banner:** When viewing completed batch orders in `waitingForInspection`, `inInspection`, `QUALITY_CHECK`, or `COMPLETED`, renders the prominent lock banner: `🔒 Production Complete — Historical Record Locked: This Batch Order has completed heat-treatment production and is waiting for Quality Inspection. All production parameters (furnace charge, recipe stage progress actuals, piece counts, and thermal telemetry) are locked against further modification to guarantee historical integrity and regulatory auditability.`
+    - **Historical Production Execution Telemetry Card:** Renders full historical execution data in 100% read-only mode, showing assigned furnace, charge/load number, conforming vs. scrapped pieces, inspection handoff status, and complete stage actuals (temperatures, soak durations, compliance tags). Mutation buttons are completely disabled.
   - **4-Step Guided Batch Order Planning Wizard & Drawer:**
     - Multi-step PO -> GRN -> Part -> BO derivation with FIFO allocation lock.
     - 8-card immutable source genealogy inspection grid.
@@ -2493,10 +2502,10 @@ The platform includes 8 authoritative engineering specifications and operational
 7. **`PHASE_1_CERTIFICATION_REPORT.md`:** Verification findings for core platform stability, data boundary enforcement, and error resilience.
 8. **`FACTORY_ACCEPTANCE_REPORT.md`:** End-to-end metallurgical workflow verification and compliance sign-off.
 
-### 8.4 Automated Test Suite Matrix (62 Backend Specs + Frontend Suites)
+### 8.4 Automated Test Suite Matrix (63 Backend Specs + Frontend Suites)
 
 The codebase features comprehensive test suites validating layer boundaries, data integrity, and business logic:
-- **Backend Test Summary:** **62 Test Suites, 738 Tests Passed (0 Failures, 100% Pass Rate)**
+- **Backend Test Summary:** **63 Test Suites, 756 Tests Passed (0 Failures, 100% Pass Rate)**
 - **Frontend Test Summary:** **3 Test Suites, 50 Tests Passed (0 Failures, 100% Pass Rate)**
 
 #### 1. Backend Architecture Governance
@@ -2625,6 +2634,25 @@ The codebase features comprehensive test suites validating layer boundaries, dat
   - Invariant 18 (Post-Approval Modification Lock): Strictly prohibits subsequent furnace charges, recipe progress actuals, partial saves, or process detail updates once approved (`Post-Production Lock Violation`).
   - Invariant 19 (Dispatch / Storage Bypass Prohibition): Blocks direct lifecycle transitions from `WAITING_FOR_INSPECTION` to `STORAGE` or dispatch states without QA clearance.
   - Invariant 20 (Authentication & Authorization): Enforces JWT authentication (`401`) and Production RBAC permissions (`403`).
+- `backend/tests/production-record-lock.spec.ts` (18 tests):
+  - Invariant 1 (Furnace Charge Locking & Security Audit): Rejects furnace charge logging on post-production BOs awaiting inspection (`Post-Production Lock Violation`) and logs `PRODUCTION_RECORD_LOCK_VIOLATION_ATTEMPT`.
+  - Invariant 2 (Recipe Stage Progress Locking & Audit): Rejects telemetry stage updates on completed BOs with security audit logging.
+  - Invariant 3 (Partial Save Lock): Rejects incremental production saves once in `waitingForInspection`.
+  - Invariant 4 (Planning Modification Lock): Rejects `updateJob()` on post-production BOs.
+  - Invariant 5 (Operator Assignment/Removal Lock): Rejects operator mutations once production is complete.
+  - Invariant 6 (Furnace Assignment/Removal Lock): Rejects furnace equipment mutations once production is complete.
+  - Invariant 7 (Cancellation Lock): Rejects cancellation of completed BOs awaiting inspection.
+  - Invariant 8 (Backwards Rollback Prohibition): Rejects transition from `WAITING_FOR_INSPECTION` back to `IN_PROGRESS` (`State Transition Authority Violation`).
+  - Invariant 9 (Inspection Bypass Prohibition): Rejects transition from `WAITING_FOR_INSPECTION` directly to `STORAGE` or dispatch.
+  - Invariant 10 (Authorized Inspection Transition): Confirms transition from `WAITING_FOR_INSPECTION` strictly to `QUALITY_CHECK`.
+  - Invariant 11 (Repository Recipe Immutability Guard): Rejects `updateById` attempting to substitute or alter `recipeSnapshot` (`Recipe Protection Violation`).
+  - Invariant 12 (Repository Post-Production Mutation Guard): Rejects `updateById` modifying piece counts or furnace charges on post-production BOs.
+  - Invariant 13 (Mongoose Pre-Save Recipe Immutability Guard): Pre-save hook rejects direct document saves modifying `recipeSnapshot` on existing documents.
+  - Invariant 14 (Mongoose Pre-Save Post-Production Execution Lock): Pre-save hook rejects direct document saves modifying `execution.stageProgress` or furnace charges when `waitingForInspection = true`.
+  - Invariant 15 (Mongoose Pre-Save Piece Count Lock): Pre-save hook rejects direct document saves modifying completed/scrapped piece counts on post-production BOs.
+  - Invariant 16 (QC Inspector Role Separation - Furnace Charge): Rejects `QC_INSPECTOR` without production permissions from accessing furnace charge routes (`403 Forbidden`).
+  - Invariant 17 (QC Inspector Role Separation - Stage Progress): Rejects `QC_INSPECTOR` without production permissions from logging recipe stage progress (`403 Forbidden`).
+  - Invariant 18 (Historical Read-Only Fidelity): Asserts `GET /:id` returns 100% complete execution history, furnace charge details, stage progress actuals, compliance tags, and unbroken genealogy.
 
 #### 4. Domain Integration Suites (47 Core Specs in `backend/tests/`)
 - Production Execution & Lifecycle: `production-job.spec.ts`, `production-execution-workflow.spec.ts`, `production-scheduling.spec.ts`, `plan-to-job-handoff.spec.ts`.

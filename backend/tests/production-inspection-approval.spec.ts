@@ -639,7 +639,7 @@ describe('Production Phase Prompt 6: Production-to-Inspection Approval Verificat
 
       expect(res.status).toBe(400);
       expect(res.body.success).toBe(false);
-      expect(res.body.message).toMatch(/not in production/i);
+      expect(res.body.message).toMatch(/not in production|Post-Production Lock Violation/i);
     });
 
     it('should disallow saving partial production data once BO is approved for inspection', async () => {
@@ -659,7 +659,7 @@ describe('Production Phase Prompt 6: Production-to-Inspection Approval Verificat
 
       expect(res.status).toBe(400);
       expect(res.body.success).toBe(false);
-      expect(res.body.message).toMatch(/not in production/i);
+      expect(res.body.message).toMatch(/not in production|Post-Production Lock Violation/i);
     });
 
     it('should disallow updating process details once BO is in WAITING_FOR_INSPECTION', async () => {
@@ -720,7 +720,7 @@ describe('Production Phase Prompt 6: Production-to-Inspection Approval Verificat
 
       expect(res.status).toBe(400);
       expect(res.body.success).toBe(false);
-      expect(res.body.message).toMatch(/Cannot bypass Quality Inspection/i);
+      expect(res.body.message).toMatch(/Cannot bypass Quality Inspection|State Transition Authority Violation/i);
     });
   });
 });

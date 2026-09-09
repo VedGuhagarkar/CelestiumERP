@@ -2741,6 +2741,16 @@ export const JobsPage: React.FC = () => {
               </AppAlert>
             )}
 
+            {/* POST-PRODUCTION HISTORICAL INTEGRITY & RECORD LOCK BANNER (PROMPT 7 COMPLIANCE) */}
+            {(selectedJob.waitingForInspection || selectedJob.status === 'WAITING_FOR_INSPECTION' || selectedJob.inInspection || selectedJob.status === 'QUALITY_CHECK' || selectedJob.status === 'COMPLETED') && (
+              <AppAlert
+                variant="success"
+                title="🔒 Production Complete — Historical Record Locked"
+              >
+                This Batch Order has completed heat-treatment production and is waiting for Quality Inspection. All production parameters (furnace charge, recipe stage progress actuals, piece counts, and thermal telemetry) are locked against further modification to guarantee historical integrity and regulatory auditability. Production users cannot alter historical execution records.
+              </AppAlert>
+            )}
+
             {/* 1. HIERARCHY DISPLAY: PO / GRN / BO */}
             <AppCard style={{ padding: '16px', background: 'linear-gradient(180deg, rgba(15, 23, 42, 0.8) 0%, rgba(30, 41, 59, 0.6) 100%)', border: '1px solid rgba(56, 189, 248, 0.35)' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
@@ -3287,6 +3297,89 @@ export const JobsPage: React.FC = () => {
                 </table>
               </div>
             </AppCard>
+
+            {/* 6. HISTORICAL PRODUCTION EXECUTION TELEMETRY & LOCKED ACTUALS */}
+            {(selectedJob.execution || selectedJob.waitingForInspection || selectedJob.status === 'WAITING_FOR_INSPECTION' || selectedJob.status === 'QUALITY_CHECK' || selectedJob.status === 'COMPLETED') && (
+              <AppCard style={{ padding: '16px', background: 'rgba(15, 23, 42, 0.6)', border: '1px solid rgba(52, 211, 153, 0.3)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Thermometer size={16} color="#34d399" />
+                    <span style={{ fontSize: '12px', fontWeight: 800, color: '#ffffff', letterSpacing: '0.02em', textTransform: 'uppercase' }}>
+                      Historical Production Execution Record
+                    </span>
+                  </div>
+                  <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', background: 'rgba(52, 211, 153, 0.15)', color: '#34d399', border: '1px solid rgba(52, 211, 153, 0.3)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                    <Lock size={11} /> Historical Record Locked
+                  </span>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '14px', fontSize: '11px' }}>
+                  <div style={{ padding: '8px 10px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
+                    <div style={{ color: 'var(--color-text-tertiary)' }}>Furnace / Equipment</div>
+                    <div style={{ color: '#ffffff', fontWeight: 700, marginTop: '2px' }}>
+                      {selectedJob.assignedFurnaceCode || selectedJob.execution?.furnaceCharge?.furnaceCode || selectedJob.equipmentAssignment?.furnaceCode || 'FURNACE-VAC-01'}
+                    </div>
+                  </div>
+                  <div style={{ padding: '8px 10px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
+                    <div style={{ color: 'var(--color-text-tertiary)' }}>Charge / Load #</div>
+                    <div style={{ color: '#38bdf8', fontWeight: 700, marginTop: '2px' }}>
+                      {selectedJob.execution?.furnaceCharge?.chargeNumber || 'CHG-2026-001'}
+                    </div>
+                  </div>
+                  <div style={{ padding: '8px 10px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
+                    <div style={{ color: 'var(--color-text-tertiary)' }}>Conforming / Scrapped</div>
+                    <div style={{ color: '#34d399', fontWeight: 700, marginTop: '2px' }}>
+                      {selectedJob.quantity?.completedQuantity || selectedJob.quantity?.loadedQuantity || selectedJob.quantity?.targetQuantity || 0} / {selectedJob.quantity?.scrappedQuantity || 0} {selectedJob.item?.uom || 'PCS'}
+                    </div>
+                  </div>
+                  <div style={{ padding: '8px 10px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
+                    <div style={{ color: 'var(--color-text-tertiary)' }}>Inspection Handoff</div>
+                    <div style={{ color: '#fbbf24', fontWeight: 700, marginTop: '2px' }}>
+                      {selectedJob.waitingForInspection ? 'Awaiting QA Verification' : (selectedJob.status === 'QUALITY_CHECK' ? 'In QA Inspection' : 'Handoff Complete')}
+                    </div>
+                  </div>
+                </div>
+
+                {selectedJob.execution?.stageProgress && selectedJob.execution.stageProgress.length > 0 ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <div style={{ fontSize: '11px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', marginBottom: '2px' }}>
+                      Stage Thermal Telemetry & Compliance Actuals
+                    </div>
+                    {selectedJob.execution.stageProgress.map((stg: any, idx: number) => (
+                      <div
+                        key={idx}
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          background: 'rgba(255, 255, 255, 0.02)',
+                          padding: '6px 12px',
+                          borderRadius: '4px',
+                          fontSize: '11px',
+                          border: '1px solid rgba(255, 255, 255, 0.04)'
+                        }}
+                      >
+                        <span style={{ color: '#e2e8f0', fontWeight: 600 }}>
+                          Stage {stg.stageSequence || idx + 1}: {stg.stageName}
+                        </span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <span style={{ color: '#f59e0b', fontWeight: 700 }}>
+                            Actual: {stg.actualTemperatureC ?? stg.actualTempC ?? '—'}°C ({stg.actualSoakTimeMinutes ?? stg.actualDurationMinutes ?? '—'} min)
+                          </span>
+                          <span style={{ color: stg.isCompliant !== false ? '#34d399' : '#f87171', fontWeight: 700, fontSize: '10px', padding: '1px 6px', borderRadius: '3px', background: stg.isCompliant !== false ? 'rgba(52, 211, 153, 0.1)' : 'rgba(239, 68, 68, 0.1)' }}>
+                            {stg.isCompliant !== false ? 'COMPLIANT' : 'DEVIATION CONCESSION'}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', padding: '8px 10px', borderRadius: '4px', background: 'rgba(255, 255, 255, 0.02)' }}>
+                    ℹ️ Thermal cycle telemetry and pyrometry charts logged during execution are permanently attached to this Batch Order and available for QA certificate generation.
+                  </div>
+                )}
+              </AppCard>
+            )}
           </div>
         )}
       </AppDrawer>

@@ -86,33 +86,95 @@ export class ProductionJobRepository
     options: any = { new: true }
   ): Promise<ProductionJobDocument | null> {
     const existing = await this.findById(tenantId, id);
-    if (existing && (existing.inProduction || (existing.workflowState as any)?.inProduction)) {
-      const forbiddenFields = [
-        'processDetails',
-        'customer',
-        'item',
-        'poId',
-        'poNumber',
-        'grnId',
-        'grnNumber',
-        'boNumber',
-        'batchOrderNumber',
-        'recipeSnapshot',
-        'specificationSnapshot',
-        'materialAllocations',
-        'planId',
-        'planNumber',
-        'timeline.plannedStartDate',
-        'timeline.targetCompletionDate',
-        'quantity.targetQuantity',
-        'quantity.allocatedQuantity'
-      ];
+    if (existing) {
       const updateKeys = Object.keys(update?.$set || update);
-      const isAttemptingLockedField = forbiddenFields.some((field) => updateKeys.includes(field));
-      if (isAttemptingLockedField) {
+
+      // Recipe snapshot is permanently immutable once established
+      if (updateKeys.includes('recipeSnapshot') || Object.keys(update).some((k) => k.startsWith('recipeSnapshot'))) {
         throw new BadRequestError(
-          `In-Production Lock Violation: Batch Order '${existing.boNumber || existing.jobNumber}' is locked against modifications while in production. Only authorized production execution may modify production-owned fields.`
+          `Recipe Protection Violation: Recipe snapshot and revision governing Batch Order '${existing.boNumber || existing.jobNumber}' are immutable and cannot be rewritten.`
         );
+      }
+
+      // In-Production Lock Interceptor
+      if (existing.inProduction || (existing.workflowState as any)?.inProduction || existing.status === 'IN_PRODUCTION') {
+        const inProdForbiddenFields = [
+          'processDetails',
+          'customer',
+          'item',
+          'poId',
+          'poNumber',
+          'grnId',
+          'grnNumber',
+          'boNumber',
+          'batchOrderNumber',
+          'recipeSnapshot',
+          'specificationSnapshot',
+          'materialAllocations',
+          'planId',
+          'planNumber',
+          'timeline.plannedStartDate',
+          'timeline.targetCompletionDate',
+          'quantity.targetQuantity',
+          'quantity.allocatedQuantity'
+        ];
+        const isAttemptingLockedField = inProdForbiddenFields.some((field) => updateKeys.includes(field));
+        if (isAttemptingLockedField) {
+          throw new BadRequestError(
+            `In-Production Lock Violation: Batch Order '${existing.boNumber || existing.jobNumber}' is locked against modifications while in production. Only authorized production execution may modify production-owned fields.`
+          );
+        }
+      }
+
+      // Post-Production Historical Integrity Interceptor
+      const isPostProduction =
+        existing.waitingForInspection ||
+        (existing.workflowState as any)?.waitingForInspection ||
+        existing.inInspection ||
+        (existing.workflowState as any)?.inInspection ||
+        existing.status === 'WAITING_FOR_INSPECTION' ||
+        existing.status === 'QUALITY_CHECK' ||
+        existing.status === 'COMPLETED';
+
+      if (isPostProduction) {
+        const postProdForbiddenFields = [
+          'execution.furnaceCharge',
+          'execution.stageProgress',
+          'processDetails',
+          'customer',
+          'item',
+          'poId',
+          'poNumber',
+          'grnId',
+          'grnNumber',
+          'boNumber',
+          'batchOrderNumber',
+          'recipeSnapshot',
+          'specificationSnapshot',
+          'materialAllocations',
+          'planId',
+          'planNumber',
+          'timeline.plannedStartDate',
+          'timeline.targetCompletionDate',
+          'quantity.loadedQuantity',
+          'quantity.completedQuantity',
+          'quantity.scrappedQuantity',
+          'quantity.targetQuantity',
+          'quantity.allocatedQuantity',
+          'assignedFurnaceId',
+          'assignedOperatorId',
+          'equipmentAssignment',
+          'operatorAssignment'
+        ];
+        const isAttemptingPostProdField = postProdForbiddenFields.some((field) =>
+          updateKeys.includes(field) ||
+          (field.includes('.') && updateKeys.some((k) => k.startsWith(field.split('.')[0])))
+        );
+        if (isAttemptingPostProdField) {
+          throw new BadRequestError(
+            `Post-Production Lock Violation: Batch Order '${existing.boNumber || existing.jobNumber}' is locked against modifications once production has completed and entered Quality Inspection.`
+          );
+        }
       }
     }
     return super.updateById(tenantId, id, update, options);

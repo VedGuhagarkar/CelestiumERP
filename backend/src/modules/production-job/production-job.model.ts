@@ -545,6 +545,15 @@ productionJobSchema.pre('save', function (next) {
     if (this.isModified('genealogy')) {
       return next(new Error('Genealogy Violation: Batch Order source genealogy is strictly immutable once established.'));
     }
+
+    if (this.isModified('recipeSnapshot')) {
+      return next(
+        new Error(
+          'Recipe Protection Violation: Recipe snapshot and revision governing the Batch Order are immutable and cannot be rewritten.'
+        )
+      );
+    }
+
     if (this.inProduction) {
       if (
         this.isModified('processDetails') ||
@@ -556,7 +565,6 @@ productionJobSchema.pre('save', function (next) {
         this.isModified('grnNumber') ||
         this.isModified('boNumber') ||
         this.isModified('batchOrderNumber') ||
-        this.isModified('recipeSnapshot') ||
         this.isModified('specificationSnapshot') ||
         this.isModified('materialAllocations') ||
         this.isModified('planId') ||
@@ -569,6 +577,60 @@ productionJobSchema.pre('save', function (next) {
       ) {
         return next(
           new Error('In-Production Lock Violation: Batch Order is locked against unrelated modifications while in production.')
+        );
+      }
+    }
+
+    const isPostProduction =
+      this.waitingForInspection ||
+      (this.workflowState && this.workflowState.waitingForInspection) ||
+      this.inInspection ||
+      (this.workflowState && this.workflowState.inInspection) ||
+      this.waitingForDispatch ||
+      (this.workflowState && this.workflowState.waitingForDispatch) ||
+      this.dispatched ||
+      (this.workflowState && this.workflowState.dispatched) ||
+      this.status === 'WAITING_FOR_INSPECTION' ||
+      this.status === 'QUALITY_CHECK' ||
+      this.status === 'STORAGE' ||
+      this.status === 'READY_FOR_DISPATCH' ||
+      this.status === 'DISPATCHED' ||
+      this.status === 'COMPLETED';
+
+    if (isPostProduction) {
+      if (
+        this.isModified('execution.furnaceCharge') ||
+        this.isModified('execution.stageProgress') ||
+        this.isModified('processDetails') ||
+        this.isModified('customer') ||
+        this.isModified('item') ||
+        this.isModified('poId') ||
+        this.isModified('poNumber') ||
+        this.isModified('grnId') ||
+        this.isModified('grnNumber') ||
+        this.isModified('boNumber') ||
+        this.isModified('batchOrderNumber') ||
+        this.isModified('specificationSnapshot') ||
+        this.isModified('materialAllocations') ||
+        this.isModified('planId') ||
+        this.isModified('planNumber') ||
+        this.isModified('timeline.plannedStartDate') ||
+        this.isModified('timeline.targetCompletionDate') ||
+        this.isModified('quantity.loadedQuantity') ||
+        this.isModified('quantity.completedQuantity') ||
+        this.isModified('quantity.scrappedQuantity') ||
+        this.isModified('quantity.targetQuantity') ||
+        this.isModified('quantity.allocatedQuantity') ||
+        this.isModified('assignedFurnaceId') ||
+        this.isModified('assignedOperatorId') ||
+        this.isModified('equipmentAssignment') ||
+        this.isModified('operatorAssignment') ||
+        (this.isModified('isDeleted') && this.isDeleted)
+      ) {
+        return next(
+          new Error(
+            'Post-Production Lock Violation: Production record, piece counts, and historical telemetry are locked once Batch Order has completed production and entered Quality Inspection.'
+          )
         );
       }
     }

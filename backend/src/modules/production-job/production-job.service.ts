@@ -1495,6 +1495,20 @@ export class ProductionJobService {
     }
 
     if (
+      job.workflowState?.waitingForInspection ||
+      (job as any).waitingForInspection ||
+      job.status === 'WAITING_FOR_INSPECTION' ||
+      job.workflowState?.inInspection ||
+      (job as any).inInspection ||
+      job.status === 'QUALITY_CHECK' ||
+      job.status === 'COMPLETED'
+    ) {
+      throw new BadRequestError(
+        `Post-Production Lock Violation: Batch Order '${job.boNumber || job.jobNumber}' is locked against modifications once production has completed and entered Quality Inspection.`
+      );
+    }
+
+    if (
       (dto as any).genealogy ||
       (dto as any).poId ||
       (dto as any).poNumber ||
@@ -1612,6 +1626,19 @@ export class ProductionJobService {
       );
     }
 
+    if (
+      job.workflowState?.waitingForInspection ||
+      (job as any).waitingForInspection ||
+      job.status === 'WAITING_FOR_INSPECTION' ||
+      job.workflowState?.inInspection ||
+      (job as any).inInspection ||
+      job.status === 'QUALITY_CHECK'
+    ) {
+      throw new BadRequestError(
+        `Post-Production Lock Violation: Operator assignment cannot be modified once Batch Order '${job.boNumber || job.jobNumber}' has completed production and entered Quality Inspection.`
+      );
+    }
+
     if (job.status === 'COMPLETED' || job.status === 'CANCELLED') {
       throw new BadRequestError(`Cannot assign operator to job in '${job.status}' status`);
     }
@@ -1708,6 +1735,19 @@ export class ProductionJobService {
       );
     }
 
+    if (
+      job.workflowState?.waitingForInspection ||
+      (job as any).waitingForInspection ||
+      job.status === 'WAITING_FOR_INSPECTION' ||
+      job.workflowState?.inInspection ||
+      (job as any).inInspection ||
+      job.status === 'QUALITY_CHECK'
+    ) {
+      throw new BadRequestError(
+        `Post-Production Lock Violation: Cannot remove assigned operator once Batch Order '${job.boNumber || job.jobNumber}' has completed production and entered Quality Inspection.`
+      );
+    }
+
     const prevOpId = job.operatorAssignment?.operatorId || null;
     const prevOpCode = job.operatorAssignment?.operatorCode || null;
 
@@ -1754,6 +1794,19 @@ export class ProductionJobService {
     if (job.inProduction || (job.workflowState as any)?.inProduction || job.status === 'IN_PRODUCTION') {
       throw new BadRequestError(
         `In-Production Lock Violation: Furnace assignment cannot be modified while Batch Order '${job.boNumber || job.jobNumber}' is in production.`
+      );
+    }
+
+    if (
+      job.workflowState?.waitingForInspection ||
+      (job as any).waitingForInspection ||
+      job.status === 'WAITING_FOR_INSPECTION' ||
+      job.workflowState?.inInspection ||
+      (job as any).inInspection ||
+      job.status === 'QUALITY_CHECK'
+    ) {
+      throw new BadRequestError(
+        `Post-Production Lock Violation: Furnace assignment cannot be modified once Batch Order '${job.boNumber || job.jobNumber}' has completed production and entered Quality Inspection.`
       );
     }
 
@@ -1862,6 +1915,19 @@ export class ProductionJobService {
     if (job.inProduction || (job.workflowState as any)?.inProduction || job.status === 'IN_PRODUCTION' || job.status === 'IN_PROGRESS') {
       throw new BadRequestError(
         `In-Production Lock Violation: Cannot remove assigned furnace while Batch Order '${job.boNumber || job.jobNumber}' is in production.`
+      );
+    }
+
+    if (
+      job.workflowState?.waitingForInspection ||
+      (job as any).waitingForInspection ||
+      job.status === 'WAITING_FOR_INSPECTION' ||
+      job.workflowState?.inInspection ||
+      (job as any).inInspection ||
+      job.status === 'QUALITY_CHECK'
+    ) {
+      throw new BadRequestError(
+        `Post-Production Lock Violation: Cannot remove assigned furnace once Batch Order '${job.boNumber || job.jobNumber}' has completed production and entered Quality Inspection.`
       );
     }
 
@@ -2525,12 +2591,21 @@ export class ProductionJobService {
       }
     }
 
-    // State Transition Authority: Prevent phase skipping from WAITING_FOR_INSPECTION
+    // State Transition Authority: Prevent backwards transitions or phase skipping from WAITING_FOR_INSPECTION
     if (currentStatus === 'WAITING_FOR_INSPECTION') {
-      const bypassPhases = ['STORAGE', 'READY_FOR_DISPATCH', 'DISPATCHED', 'COMPLETED'];
-      if (bypassPhases.includes(targetStatus)) {
+      const forbiddenFromInspection = [
+        'IN_PROGRESS',
+        'IN_PRODUCTION',
+        'WAITING_FOR_PRODUCTION',
+        'CANCELLED',
+        'STORAGE',
+        'READY_FOR_DISPATCH',
+        'DISPATCHED',
+        'COMPLETED'
+      ];
+      if (forbiddenFromInspection.includes(targetStatus) || targetStatus !== 'QUALITY_CHECK') {
         throw new BadRequestError(
-          `State Transition Authority Violation: Invalid lifecycle transition from '${currentStatus}' to '${targetStatus}'. Cannot bypass Quality Inspection to enter Storage or Dispatch directly.`
+          `State Transition Authority Violation: Invalid lifecycle transition from '${currentStatus}' to '${targetStatus}'. Quality Inspection is the next authorized operational stage; backwards transitions to Production or bypass transitions are strictly prohibited.`
         );
       }
     }
@@ -2597,6 +2672,19 @@ export class ProductionJobService {
     if (job.inProduction || (job.workflowState as any)?.inProduction || job.status === 'IN_PRODUCTION') {
       throw new BadRequestError(
         `In-Production Lock Violation: Cannot cancel Batch Order '${job.boNumber || job.jobNumber}' while actively in production. Production execution is locked against cancellation.`
+      );
+    }
+
+    if (
+      job.workflowState?.waitingForInspection ||
+      (job as any).waitingForInspection ||
+      job.status === 'WAITING_FOR_INSPECTION' ||
+      job.workflowState?.inInspection ||
+      (job as any).inInspection ||
+      job.status === 'QUALITY_CHECK'
+    ) {
+      throw new BadRequestError(
+        `Post-Production Lock Violation: Cannot cancel Batch Order '${job.boNumber || job.jobNumber}' once production is complete and waiting for Quality Inspection.`
       );
     }
 
@@ -3134,6 +3222,35 @@ export class ProductionJobService {
       throw new NotFoundError(`Batch Order with ID '${jobId}' not found`);
     }
 
+    if (
+      job.workflowState?.waitingForInspection ||
+      (job as any).waitingForInspection ||
+      job.status === 'WAITING_FOR_INSPECTION' ||
+      job.workflowState?.inInspection ||
+      (job as any).inInspection ||
+      job.status === 'QUALITY_CHECK' ||
+      job.status === 'COMPLETED'
+    ) {
+      await auditService.record(tenantId, {
+        actorId: actor.userId,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        action: 'PRODUCTION_RECORD_LOCK_VIOLATION_ATTEMPT',
+        entityType: 'PRODUCTION_JOB',
+        entityId: job.id,
+        metadata: {
+          jobNumber: job.jobNumber,
+          boNumber: job.boNumber,
+          attemptedOperation: 'recordRecipeStageProgress',
+          stageSequence: dto.stageSequence,
+          currentStatus: job.status
+        }
+      });
+      throw new BadRequestError(
+        `Post-Production Lock Violation: Cannot record recipe stage progress for Batch Order '${job.boNumber || job.jobNumber}': Production has completed and Batch Order is in Quality Inspection.`
+      );
+    }
+
     if (!job.inProduction && job.status !== 'IN_PRODUCTION' && job.status !== 'IN_PROGRESS') {
       throw new BadRequestError(
         `Cannot record production data for '${job.jobNumber}'. Batch Order is not in production (Current status: '${job.status}').`
@@ -3291,6 +3408,34 @@ export class ProductionJobService {
       throw new NotFoundError(`Batch Order with ID '${jobId}' not found`);
     }
 
+    if (
+      job.workflowState?.waitingForInspection ||
+      (job as any).waitingForInspection ||
+      job.status === 'WAITING_FOR_INSPECTION' ||
+      job.workflowState?.inInspection ||
+      (job as any).inInspection ||
+      job.status === 'QUALITY_CHECK' ||
+      job.status === 'COMPLETED'
+    ) {
+      await auditService.record(tenantId, {
+        actorId: actor.userId,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        action: 'PRODUCTION_RECORD_LOCK_VIOLATION_ATTEMPT',
+        entityType: 'PRODUCTION_JOB',
+        entityId: job.id,
+        metadata: {
+          jobNumber: job.jobNumber,
+          boNumber: job.boNumber,
+          attemptedOperation: 'recordFurnaceCharge',
+          currentStatus: job.status
+        }
+      });
+      throw new BadRequestError(
+        `Post-Production Lock Violation: Cannot record furnace charge for Batch Order '${job.boNumber || job.jobNumber}': Production has completed and Batch Order is in Quality Inspection.`
+      );
+    }
+
     if (!job.inProduction && job.status !== 'IN_PRODUCTION' && job.status !== 'IN_PROGRESS') {
       throw new BadRequestError(
         `Cannot record furnace charge for '${job.boNumber || job.jobNumber}'. Batch Order is not in production (Current status: '${job.status}').`
@@ -3390,6 +3535,34 @@ export class ProductionJobService {
     const job = await this.repo.findById(tenantId, jobId);
     if (!job || job.isDeleted) {
       throw new NotFoundError(`Batch Order with ID '${jobId}' not found`);
+    }
+
+    if (
+      job.workflowState?.waitingForInspection ||
+      (job as any).waitingForInspection ||
+      job.status === 'WAITING_FOR_INSPECTION' ||
+      job.workflowState?.inInspection ||
+      (job as any).inInspection ||
+      job.status === 'QUALITY_CHECK' ||
+      job.status === 'COMPLETED'
+    ) {
+      await auditService.record(tenantId, {
+        actorId: actor.userId,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        action: 'PRODUCTION_RECORD_LOCK_VIOLATION_ATTEMPT',
+        entityType: 'PRODUCTION_JOB',
+        entityId: job.id,
+        metadata: {
+          jobNumber: job.jobNumber,
+          boNumber: job.boNumber,
+          attemptedOperation: 'saveProductionData',
+          currentStatus: job.status
+        }
+      });
+      throw new BadRequestError(
+        `Post-Production Lock Violation: Cannot save production data for Batch Order '${job.boNumber || job.jobNumber}': Production has completed and Batch Order is in Quality Inspection.`
+      );
     }
 
     if (!job.inProduction && job.status !== 'IN_PRODUCTION' && job.status !== 'IN_PROGRESS') {
