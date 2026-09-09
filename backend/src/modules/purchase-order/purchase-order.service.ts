@@ -1,5 +1,6 @@
 import { BaseService } from '../../core/services/base.service.js';
 import { IPurchaseOrderRepository, purchaseOrderRepository } from './purchase-order.repository.js';
+import { productionJobRepository } from '../production-job/production-job.repository.js';
 import { itemService, ItemService } from '../item/item.service.js';
 import { recipeService, RecipeService } from '../recipe/recipe.service.js';
 import { auditService, AuditService } from '../audit/audit.service.js';
@@ -294,6 +295,14 @@ export class PurchaseOrderService extends BaseService {
     }
 
     if (dto.status) {
+      if (dto.status === 'CLOSED' || dto.status === 'CANCELLED') {
+        const inProdJobs = await productionJobRepository.findInProductionJobsForPo(tenantId, po.id);
+        if (inProdJobs && inProdJobs.length > 0) {
+          throw new BadRequestError(
+            `Source Genealogy Protection: Cannot transition Purchase Order '${po.poNumber}' to '${dto.status}' because Batch Order '${inProdJobs[0].boNumber || inProdJobs[0].jobNumber}' is actively in production.`
+          );
+        }
+      }
       updateData.status = dto.status;
     }
 
@@ -329,6 +338,13 @@ export class PurchaseOrderService extends BaseService {
     reason?: string
   ): Promise<PurchaseOrderDocument> {
     const po = await this.getOrderById(tenantId, id);
+
+    const inProdJobs = await productionJobRepository.findInProductionJobsForPo(tenantId, po.id);
+    if (inProdJobs && inProdJobs.length > 0) {
+      throw new BadRequestError(
+        `Source Genealogy Protection: Cannot cancel Purchase Order '${po.poNumber}' because Batch Order '${inProdJobs[0].boNumber || inProdJobs[0].jobNumber}' is actively in production.`
+      );
+    }
 
     if (po.totalReceivedQuantity > 0) {
       throw new BadRequestError(

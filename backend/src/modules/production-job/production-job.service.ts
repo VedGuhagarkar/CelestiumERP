@@ -1149,6 +1149,12 @@ export class ProductionJobService {
       throw new NotFoundError(`Batch Order with ID '${jobId}' not found.`);
     }
 
+    if (job.inProduction || (job.workflowState as any)?.inProduction || job.status === 'IN_PRODUCTION') {
+      throw new BadRequestError(
+        `In-Production Lock Violation: Process details and recipe parameters are locked while Batch Order '${job.boNumber || job.jobNumber}' is in production.`
+      );
+    }
+
     if (!job.grnId) {
       throw new BadRequestError('Batch Order has no associated GRN.');
     }
@@ -1469,6 +1475,12 @@ export class ProductionJobService {
       throw new NotFoundError(`Production Job with ID '${jobId}' not found`);
     }
 
+    if (job.inProduction || (job.workflowState as any)?.inProduction || job.status === 'IN_PRODUCTION') {
+      throw new BadRequestError(
+        `In-Production Lock Violation: Batch Order '${job.boNumber || job.jobNumber}' is locked against modifications while in production. Only authorized production execution may modify production-owned fields.`
+      );
+    }
+
     if (
       (dto as any).genealogy ||
       (dto as any).poId ||
@@ -1581,6 +1593,12 @@ export class ProductionJobService {
       throw new NotFoundError(`Production Job with ID '${jobId}' not found`);
     }
 
+    if (job.inProduction || (job.workflowState as any)?.inProduction || job.status === 'IN_PRODUCTION') {
+      throw new BadRequestError(
+        `In-Production Lock Violation: Operator assignment cannot be modified through planning while Batch Order '${job.boNumber || job.jobNumber}' is in production.`
+      );
+    }
+
     if (job.status === 'COMPLETED' || job.status === 'CANCELLED') {
       throw new BadRequestError(`Cannot assign operator to job in '${job.status}' status`);
     }
@@ -1671,8 +1689,10 @@ export class ProductionJobService {
       throw new NotFoundError(`Production Job with ID '${jobId}' not found`);
     }
 
-    if (job.status === 'IN_PROGRESS') {
-      throw new BadRequestError(`Cannot remove assigned operator while job '${job.jobNumber}' is actively IN_PROGRESS`);
+    if (job.inProduction || (job.workflowState as any)?.inProduction || job.status === 'IN_PRODUCTION' || job.status === 'IN_PROGRESS') {
+      throw new BadRequestError(
+        `In-Production Lock Violation: Cannot remove assigned operator while Batch Order '${job.boNumber || job.jobNumber}' is in production.`
+      );
     }
 
     const prevOpId = job.operatorAssignment?.operatorId || null;
@@ -1716,6 +1736,12 @@ export class ProductionJobService {
     const job = await this.repo.findById(tenantId, jobId);
     if (!job || job.isDeleted) {
       throw new NotFoundError(`Production Job with ID '${jobId}' not found`);
+    }
+
+    if (job.inProduction || (job.workflowState as any)?.inProduction || job.status === 'IN_PRODUCTION') {
+      throw new BadRequestError(
+        `In-Production Lock Violation: Furnace assignment cannot be modified while Batch Order '${job.boNumber || job.jobNumber}' is in production.`
+      );
     }
 
     if (job.status === 'COMPLETED' || job.status === 'CANCELLED') {
@@ -1820,8 +1846,10 @@ export class ProductionJobService {
       throw new NotFoundError(`Production Job with ID '${jobId}' not found`);
     }
 
-    if (job.status === 'IN_PROGRESS') {
-      throw new BadRequestError(`Cannot remove assigned furnace while job '${job.jobNumber}' is actively IN_PROGRESS`);
+    if (job.inProduction || (job.workflowState as any)?.inProduction || job.status === 'IN_PRODUCTION' || job.status === 'IN_PROGRESS') {
+      throw new BadRequestError(
+        `In-Production Lock Violation: Cannot remove assigned furnace while Batch Order '${job.boNumber || job.jobNumber}' is in production.`
+      );
     }
 
     const prevFurnaceId = job.equipmentAssignment?.furnaceId || null;
@@ -2468,6 +2496,12 @@ export class ProductionJobService {
     const currentStatus = job.status;
     const targetStatus = dto.toStatus;
 
+    if (job.inProduction || (job.workflowState as any)?.inProduction || currentStatus === 'IN_PRODUCTION') {
+      throw new BadRequestError(
+        `In-Production Lock Violation: In-production Batch Orders cannot be manually transitioned through generic status endpoints. Quality handoff must be completed via approve-for-inspection.`
+      );
+    }
+
     // State Transition Authority: Prevent phase skipping from WAITING_FOR_PRODUCTION
     if (currentStatus === 'WAITING_FOR_PRODUCTION') {
       const downstreamPhases = ['QUALITY_CHECK', 'STORAGE', 'READY_FOR_DISPATCH', 'DISPATCHED', 'COMPLETED'];
@@ -2535,6 +2569,12 @@ export class ProductionJobService {
     const job = await this.repo.findById(tenantId, jobId);
     if (!job || job.isDeleted) {
       throw new NotFoundError(`Production Job with ID '${jobId}' not found`);
+    }
+
+    if (job.inProduction || (job.workflowState as any)?.inProduction || job.status === 'IN_PRODUCTION') {
+      throw new BadRequestError(
+        `In-Production Lock Violation: Cannot cancel Batch Order '${job.boNumber || job.jobNumber}' while actively in production. Production execution is locked against cancellation.`
+      );
     }
 
     if (job.status === 'COMPLETED' || job.status === 'CANCELLED') {
@@ -2715,54 +2755,7 @@ export class ProductionJobService {
     tenantId: string,
     filters: any = {}
   ): Promise<any[]> {
-    const activeJobs = await this.repo.findActiveQueueJobs(tenantId, filters);
-
-    // Prevent Premature Visibility: Incomplete or invalid BOs must not appear in the production queue
-    const readyJobs = activeJobs.filter((job) => {
-      if (job.status === 'WAITING_FOR_PRODUCTION' || (job as any).boNumber) {
-        const readiness = this.validateProductionReadiness(job);
-        return readiness.isReadyForProduction;
-      }
-      return true;
-    });
-
-    const sorted = [...readyJobs].sort((a, b) => {
-      const pA = PRIORITY_WEIGHTS[a.priority] || 4;
-      const pB = PRIORITY_WEIGHTS[b.priority] || 4;
-
-      if (pA !== pB) return pA - pB;
-
-      const dateA = new Date(a.timeline.targetCompletionDate).getTime();
-      const dateB = new Date(b.timeline.targetCompletionDate).getTime();
-      return dateA - dateB;
-    });
-
-    return sorted.map((job, idx) => ({
-      queuePosition: idx + 1,
-      jobId: job.id,
-      jobNumber: job.jobNumber,
-      boNumber: job.boNumber || job.jobNumber,
-      planNumber: job.planNumber,
-      poId: job.poId || (job.genealogy as any)?.whichPo?.poId || (job.genealogy as any)?.poId || null,
-      poNumber: job.poNumber || (job.genealogy as any)?.whichPo?.poNumber || (job.genealogy as any)?.poNumber || null,
-      grnId: job.grnId || (job.genealogy as any)?.whichGrn?.grnId || (job.genealogy as any)?.grnId || null,
-      grnNumber: job.grnNumber || (job.genealogy as any)?.whichGrn?.grnNumber || (job.genealogy as any)?.grnNumber || null,
-      customerName: job.customer?.customerName || (job as any).customerName,
-      itemCode: job.item?.itemCode,
-      itemName: job.item?.itemName,
-      materialGrade: job.item?.materialGrade,
-      recipeId: (job as any).recipeId || job.recipeSnapshot?.recipeId || null,
-      recipeCode: job.recipeSnapshot?.recipeCode || null,
-      recipeName: (job.recipeSnapshot as any)?.name || (job.recipeSnapshot as any)?.recipeName || null,
-      weightKg: job.weightKg || null,
-      targetQuantity: job.quantity?.targetQuantity,
-      priority: job.priority,
-      status: job.status,
-      workflowState: job.workflowState || null,
-      assignedFurnaceCode: job.equipmentAssignment?.furnaceCode || null,
-      assignedOperatorName: job.operatorAssignment?.operatorName || null,
-      targetCompletionDate: job.timeline?.targetCompletionDate
-    }));
+    return this.getWaitingForProductionQueue(tenantId, filters);
   }
 
   // --- Authoritative Revised Production Phase Methods (Waiting -> In Production -> Waiting for Inspection) ---
@@ -3041,14 +3034,39 @@ export class ProductionJobService {
 
     await auditService.record(tenantId, {
       actorId: actor.userId,
+      actorEmail: actor.email,
+      actorRole: actor.role,
       action: 'PRODUCTION_JOB_TAKE',
       entityType: 'PRODUCTION_JOB',
       entityId: updated.id,
+      beforeState: {
+        status: prevStatus,
+        waitingForProduction: true,
+        inProduction: false
+      },
+      afterState: {
+        status: 'IN_PRODUCTION',
+        waitingForProduction: false,
+        inProduction: true,
+        workflowState: updated.workflowState
+      },
       metadata: {
+        jobId: updated.id,
         jobNumber: updated.jobNumber,
         boNumber: updated.boNumber,
-        previousStatus: prevStatus,
-        status: 'IN_PRODUCTION'
+        actingUser: actor.userId,
+        actingUserEmail: actor.email,
+        timestamp: now.toISOString(),
+        resultingState: {
+          status: 'IN_PRODUCTION',
+          waitingForProduction: false,
+          inProduction: true,
+          workflowState: updated.workflowState
+        },
+        furnaceId: furnaceDoc?.id || null,
+        furnaceCode: furnaceDoc?.furnaceCode || null,
+        loadedPieceCount: loadedPieces,
+        loadedWeightKg: loadedWeight
       }
     });
 

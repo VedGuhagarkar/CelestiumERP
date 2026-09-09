@@ -3,6 +3,7 @@ import { BaseRepository } from '../../core/repository/base.repository.js';
 import { ProductionJobDocument, JobStatus } from './production-job.types.js';
 import { ProductionJobModel } from './production-job.model.js';
 import { PaginatedResult, PaginationOptions } from '../../core/types/pagination.js';
+import { BadRequestError } from '../../core/errors/app-error.js';
 
 export interface IProductionJobRepository {
   generateNextJobNumber(tenantId: string): Promise<string>;
@@ -12,6 +13,8 @@ export interface IProductionJobRepository {
   findJobsByPlanId(tenantId: string, planId: string): Promise<ProductionJobDocument[]>;
   findByPoId(tenantId: string, poId: string): Promise<ProductionJobDocument[]>;
   findByGrnId(tenantId: string, grnId: string): Promise<ProductionJobDocument[]>;
+  findInProductionJobsForPo(tenantId: string, poId: string): Promise<ProductionJobDocument[]>;
+  findInProductionJobsForGrn(tenantId: string, grnId: string): Promise<ProductionJobDocument[]>;
   findByIdempotencyKey(
     tenantId: string,
     planIdOrKey: string,
@@ -74,6 +77,93 @@ export class ProductionJobRepository
         { boNumber: new RegExp(`^${id}$`, 'i') }
       ]
     });
+  }
+
+  public override async updateById(
+    tenantId: string,
+    id: string,
+    update: any,
+    options: any = { new: true }
+  ): Promise<ProductionJobDocument | null> {
+    const existing = await this.findById(tenantId, id);
+    if (existing && (existing.inProduction || (existing.workflowState as any)?.inProduction)) {
+      const forbiddenFields = [
+        'processDetails',
+        'customer',
+        'item',
+        'poId',
+        'poNumber',
+        'grnId',
+        'grnNumber',
+        'boNumber',
+        'batchOrderNumber',
+        'recipeSnapshot',
+        'specificationSnapshot',
+        'materialAllocations',
+        'planId',
+        'planNumber',
+        'timeline.plannedStartDate',
+        'timeline.targetCompletionDate',
+        'quantity.targetQuantity',
+        'quantity.allocatedQuantity'
+      ];
+      const updateKeys = Object.keys(update?.$set || update);
+      const isAttemptingLockedField = forbiddenFields.some((field) => updateKeys.includes(field));
+      if (isAttemptingLockedField) {
+        throw new BadRequestError(
+          `In-Production Lock Violation: Batch Order '${existing.boNumber || existing.jobNumber}' is locked against modifications while in production. Only authorized production execution may modify production-owned fields.`
+        );
+      }
+    }
+    return super.updateById(tenantId, id, update, options);
+  }
+
+  public async findInProductionJobsForPo(
+    tenantId: string,
+    poId: string
+  ): Promise<ProductionJobDocument[]> {
+    return this.model
+      .find({
+        tenantId,
+        isDeleted: false,
+        $and: [
+          {
+            $or: [{ poId }, { 'genealogy.whichPo.poId': poId }]
+          },
+          {
+            $or: [
+              { inProduction: true },
+              { 'workflowState.inProduction': true },
+              { status: 'IN_PRODUCTION' }
+            ]
+          }
+        ]
+      })
+      .exec();
+  }
+
+  public async findInProductionJobsForGrn(
+    tenantId: string,
+    grnId: string
+  ): Promise<ProductionJobDocument[]> {
+    return this.model
+      .find({
+        tenantId,
+        isDeleted: false,
+        $and: [
+          {
+            $or: [{ grnId }, { 'genealogy.whichGrn.grnId': grnId }]
+          },
+          {
+            $or: [
+              { inProduction: true },
+              { 'workflowState.inProduction': true },
+              { status: 'IN_PRODUCTION' }
+            ]
+          }
+        ]
+      })
+      .exec();
   }
 
   public async generateNextJobNumber(tenantId: string): Promise<string> {
@@ -240,19 +330,7 @@ export class ProductionJobRepository
     tenantId: string,
     filters: any = {}
   ): Promise<ProductionJobDocument[]> {
-    const query: any = {
-      tenantId,
-      status: { $in: ['WAITING_FOR_PRODUCTION', 'DRAFT', 'APPROVED', 'SCHEDULED', 'IN_PROGRESS', 'PAUSED'] },
-      isDeleted: false
-    };
-
-    if (filters.furnaceId) query['equipmentAssignment.furnaceId'] = filters.furnaceId;
-    if (filters.status) query.status = filters.status;
-
-    return this.model
-      .find(query)
-      .sort({ priority: 1, 'timeline.targetCompletionDate': 1 })
-      .exec();
+    return this.findWaitingForProductionQueue(tenantId, filters);
   }
 
   public async findWaitingForProductionQueue(

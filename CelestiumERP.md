@@ -984,21 +984,24 @@ _No direct HTTP routes mounted for this internal domain service._
 
 #### Repositories
 - **`ProductionJobRepository`** (`production-job.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
-  - Production Phase Methods: `findWaitingForProductionQueue()`, `findInProductionQueue()`, `findWaitingForInspectionQueue()`, `atomicTakeForProduction()`, `atomicApproveForInspection()`.
-  - Planning Phase Methods: `generateNextJobNumber()`, `findJobByNumber()`, `findByPlanId()`, `findJobsByPlanId()`, `findByIdempotencyKey()`, `queryJobs()`, `findActiveQueueJobs()`, `findConflictingJobs()`, `findEligiblePOs()`, `findEligibleGRNsForPO()`, `findEligiblePartsForGRN()`, `findActiveAllocationsForGRN()`.
+  - Production Phase Methods: `findWaitingForProductionQueue()`, `findInProductionQueue()`, `findWaitingForInspectionQueue()`, `atomicTakeForProduction()`, `atomicApproveForInspection()`, `findInProductionJobsForPo(tenantId, poId)`, `findInProductionJobsForGrn(tenantId, grnId)`.
+  - Concurrency & Lock Enforcement: `updateById()` strictly intercepts update attempts on in-production jobs, preventing mutation of processDetails, timeline, quantity, items, recipe snapshots, and source genealogy.
+  - Planning Phase Methods: `generateNextJobNumber()`, `findJobByNumber()`, `findByPlanId()`, `findJobsByPlanId()`, `findByIdempotencyKey()`, `queryJobs()`, `findActiveQueueJobs()` (strictly delegates to `findWaitingForProductionQueue()`), `findConflictingJobs()`, `findEligiblePOs()`, `findEligibleGRNsForPO()`, `findEligiblePartsForGRN()`, `findActiveAllocationsForGRN()`.
 
 #### Services
 - **`ProductionJobService`** (`production-job.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
-  - *Reconstructed Production Phase Methods:*
+  - *Authoritative Production Phase Methods:*
     - `getWaitingForProductionQueue()`: Surfaces all BOs awaiting production entry (`waitingForProduction: true`).
     - `getInProductionQueue()`: Surfaces active production jobs (`inProduction: true`).
     - `getWaitingForInspectionQueue()`: Surfaces production jobs approved and awaiting quality inspection (`waitingForInspection: true`).
-    - `takeForProduction()`: Atomically transitions BO to `IN_PRODUCTION`, asserts single active flag, emits `Job.InProduction`.
-    - `recordRecipeStageProgress()`: Validates and logs progress for a specific stage from the bound recipe.
+    - `takeForProduction()`: Atomically transitions BO to `IN_PRODUCTION`, asserts single active flag, enforces exclusive ownership (409 Conflict on race), records authoritative audit trail with before/after diffs, and emits `Job.InProduction`.
+    - `recordRecipeStageProgress()`: Validates and logs progress for a specific stage from the bound recipe snapshot.
     - `evaluateProductionExecutionReadiness()`: Evaluates completion of all recipe stages and verified piece balance ($Q_{\text{completed}} + Q_{\text{scrapped}} = Q_{\text{loaded}}$).
     - `approveForInspection()`: Validates execution completeness, clears `inProduction`, sets `waitingForInspection = true`, and emits `Job.ApprovedForInspection`.
+  - *Production Lock Enforcement:*
+    - Server-side rejection (`In-Production Lock Violation`) for `updateJob()`, `updateProcessDetails()`, `assignOperator()`, `removeOperator()`, `assignFurnace()`, `removeFurnace()`, `transitionJob()`, and `cancelJob()` whenever `job.inProduction === true`.
   - *Planning Phase Methods:* `getEligiblePOs()`, `getEligibleGRNsForPO()`, `getEligiblePartsForGRN()`, `createBatchOrder()`, `getProcessDetails()`, `updateProcessDetails()`, `getBatchOrderGenealogy()`, `getBatchOrderProductionReadiness()`.
-  - *Cleaned Up / Disabled:* `createDirectJob()` permanently disabled with `BadRequestError` to prevent un-genealogized work order bypass.
+  - *Cleaned Up / Disabled:* `createDirectJob()` permanently disabled with `BadRequestError` to prevent un-genealogized work order bypass; legacy duplicate queue queries unified under `findWaitingForProductionQueue()`.
 
 #### Controllers
 - **`ProductionJobController`** (`production-job.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping for Batch Orders and Production Phase operations.
@@ -1640,6 +1643,7 @@ _No direct HTTP routes mounted for this internal domain service._
 #### Services
 - **`PurchaseOrderService`** (`purchase-order.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
   - Methods: `createOrder()`, `queryOrders()`, `getOrderById()`, `getOrderByPoNumber()`, `updateOrder()`, `cancelOrder()`, `recordReceiptFulfillment()`.
+  - Source Genealogy Protection: `cancelOrder()` and `updateOrder()` strictly check for active in-production Batch Orders (`findInProductionJobsForPo`) and reject attempts to cancel or close a parent PO with `400 Bad Request` while downstream manufacturing is actively running.
 
 #### Controllers
 - **`PurchaseOrderController`** (`purchase-order.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
@@ -2053,7 +2057,35 @@ $$\mathbf{PO} \longrightarrow \mathbf{GRN} \longrightarrow \mathbf{BO} \longrigh
    - **Read-Only Master Data Protection:**
      - Taking a BO for production or viewing queue details never mutates PO, GRN, Item, or Recipe master data. Non-execution modifications through unrelated ERP endpoints are strictly rejected.
 
-3. **Recipe-Driven Execution & Progress Logging:**
+3. **Authoritative BO Production Lock & Exclusive Ownership Semantics (`inProduction = true`):**
+   - Once a Batch Order enters production (`inProduction: true`), it becomes locked server-side against any modification other than authorized viewing and the authorized production workflow (`recordRecipeStageProgress`, `approveForInspection`).
+   - **Exclusive Ownership:** Exactly one production operation holds the claim. Race conditions between concurrent users are rejected with `409 Conflict`.
+   - **Queue Lock Semantics:**
+     - The BO immediately disappears from the `waiting-for-production` queue.
+     - Attempts by other operators to take or restart the BO are rejected with `409 Conflict`.
+   - **Planning Operations Lock:**
+     - Planning parameters cannot be altered while the job is in the furnace. `updateJob()` (`PATCH /api/v1/production-jobs/:id` or `PATCH /api/v1/batch-orders/:id`) and `updateProcessDetails()` (`PUT /api/v1/production-jobs/:id/process-details`) are strictly blocked with `400 Bad Request` (`In-Production Lock Violation`).
+     - Operator assignments cannot be reassigned or removed (`POST /:id/assign-operator`, `POST /:id/remove-operator`).
+     - Furnace assignments cannot be reassigned or removed (`POST /:id/assign-furnace`, `POST /:id/remove-furnace`).
+   - **Lifecycle & Cancellation Lock:**
+     - Arbitrary status transitions (`POST /api/v1/production-jobs/:id/transition`) and planning cancellations (`POST /api/v1/production-jobs/:id/cancel`) are rejected with `400 Bad Request` while in production.
+   - **Recipe Protection:**
+     - The Recipe governing the BO cannot be replaced, substituted, or amended during production. Operators must execute against the bound `recipeSnapshot`.
+   - **Source Genealogy Protection ($\mathbf{PO} \longrightarrow \mathbf{GRN} \longrightarrow \mathbf{BO}$):**
+     - The linkage between the parent Purchase Order, Goods Receipt Note, and Batch Order is strictly immutable.
+     - Parent POs cannot be cancelled or closed while an associated Batch Order is active in production (`PurchaseOrderService.cancelOrder()` and `updateOrder()` throw `400 Bad Request`).
+   - **Backend Multi-Layer Enforcement:**
+     - Enforced at the Mongoose document model level (`pre('save')` hook strictly rejects changes to locked fields), Repository level (`updateById()` interceptor), and Service level (`In-Production Lock Violation` guards).
+     - Direct API manipulation bypassing UI controls is completely neutralized.
+   - **Workflow Exclusivity:**
+     - Exactly one workflow flag is active at any time ($\sum \text{flag}_i = 1$). When production begins, `waitingForProduction = false`, `inProduction = true`, and all later flags remain `false`.
+   - **Authoritative Audit Trail:**
+     - The production start event is recorded in the centralized audit log capturing the BO ID, acting user, timestamp, state diffs, and `resultingState: 'IN_PRODUCTION'`.
+   - **Authorized Production Editing & Read-Only Viewing:**
+     - In-production records remain fully accessible for viewing by authorized personnel in the manufacturing workbench.
+     - Only authorized production endpoints (`recordRecipeStageProgress`, `approveForInspection`) may update execution fields.
+
+4. **Recipe-Driven Execution & Progress Logging:**
    - While in production, the operator must execute the exact thermal stages defined by the Recipe snapshot bound to the Batch Order (`recipeSnapshot.stages`).
    - Operators log milestone progress via `POST /api/v1/production-jobs/:id/recipe-progress` (capturing stage name, target & actual temperature, target & actual duration, quench medium, atmosphere, and operator notes).
    - Validation strictly enforces that logged stages exist in the bound Recipe without field invention or omission.
@@ -2439,6 +2471,22 @@ The codebase features comprehensive test suites validating layer boundaries, dat
   - Read-Only Master Data Protection: Queue operations never modify PO, GRN, Item, or Recipe master collections.
   - Direct API Access Protection: Validates direct HTTP calls against `/api/v1/production-jobs/waiting-for-production` and alias `/queue/waiting-for-production`.
   - Take Production Aliases: Confirms both `/take-for-production` and `/take-production` endpoints enforce identical authorization, invariants, and atomic concurrency.
+- `backend/tests/production-lock.spec.ts` (15 tests):
+  - Invariant 1 (Atomic Transition & Workflow Exclusivity): Atomically mutates `waitingForProduction = false` and `inProduction = true` with strictly one active flag ($\sum \text{flag}_i = 1$).
+  - Invariant 2 (Exclusive Ownership & Race Protection): Allows only one winner when concurrent users claim the same BO; rejects competitor with `409 Conflict`.
+  - Invariant 3 (Already In-Production Guard): Rejects attempts to start an already running BO with `409 Conflict`.
+  - Invariant 4 (Queue Lock Semantics): Confirms in-production BO is excluded from `waiting-for-production` queue queries.
+  - Invariant 5 (Planning Mutation Lock): Rejects `PATCH /api/v1/production-jobs/:id` (and alias `/batch-orders/:id`) with `400 Bad Request` (`In-Production Lock Violation`).
+  - Invariant 6 (Process Details Lock): Rejects `PUT /api/v1/production-jobs/:id/process-details` with `400 Bad Request` (`In-Production Lock Violation`).
+  - Invariant 7 (Operator Assignment Lock): Rejects `POST /:id/assign-operator` and `POST /:id/remove-operator` while in production.
+  - Invariant 8 (Furnace Assignment Lock): Rejects `POST /:id/assign-furnace` and `POST /:id/remove-furnace` while in production.
+  - Invariant 9 (Lifecycle Transition Lock): Rejects arbitrary transitions via `POST /:id/transition` while in production.
+  - Invariant 10 (Planning Cancellation Lock): Rejects cancellation via `POST /:id/cancel` while in production.
+  - Invariant 11 (Source Genealogy Protection): Rejects cancelling or closing parent PO via `POST /api/v1/purchase-orders/:id/cancel` when downstream BO is actively in production.
+  - Invariant 12 (Authoritative Audit Trail): Records production start event in the audit log capturing BO ID, acting user, timestamp, state diffs, and resulting state `IN_PRODUCTION`.
+  - Invariant 13 (Read-Only Record Viewing): Allows authorized operators to view complete BO record (`GET /:id`) while in production without modification.
+  - Invariant 14 (Authorized Production Execution): Allows logging recipe stage progress via `POST /:id/recipe-progress` against the bound Recipe snapshot.
+  - Invariant 15 (Recipe Substitution Prohibition): Rejects logging progress for stage names not present in the bound Recipe snapshot.
 
 #### 4. Domain Integration Suites (47 Core Specs in `backend/tests/`)
 - Production Execution & Lifecycle: `production-job.spec.ts`, `production-execution-workflow.spec.ts`, `production-scheduling.spec.ts`, `plan-to-job-handoff.spec.ts`.

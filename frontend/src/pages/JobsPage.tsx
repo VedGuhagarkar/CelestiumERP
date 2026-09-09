@@ -115,6 +115,7 @@ export interface ProductionJob {
     furnaceCode?: string;
     locationBay?: string;
   };
+  assignedFurnaceCode?: string;
   timeline: {
     plannedStartDate: string;
     targetCompletionDate: string;
@@ -2496,6 +2497,16 @@ export const JobsPage: React.FC = () => {
       >
         {selectedJob && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            {/* IN-PRODUCTION LOCK BANNER */}
+            {(selectedJob.inProduction || selectedJob.status === 'IN_PRODUCTION') && (
+              <AppAlert
+                variant="warning"
+                title="🔒 Batch Order In-Production Lock Active"
+              >
+                This Batch Order is actively in production (Furnace: {selectedJob.assignedFurnaceCode || selectedJob.equipmentAssignment?.furnaceCode || 'Assigned'}). All planning parameters, recipe stages, part specifications, and source genealogy records (PO → GRN → BO) are strictly locked against modification. Only authorized production stage logging and quality inspection handoff may proceed.
+              </AppAlert>
+            )}
+
             {/* 1. HIERARCHY DISPLAY: PO / GRN / BO */}
             <AppCard style={{ padding: '16px', background: 'linear-gradient(180deg, rgba(15, 23, 42, 0.8) 0%, rgba(30, 41, 59, 0.6) 100%)', border: '1px solid rgba(56, 189, 248, 0.35)' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>

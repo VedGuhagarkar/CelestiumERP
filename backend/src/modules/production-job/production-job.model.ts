@@ -534,7 +534,7 @@ productionJobSchema.pre('save', function (next) {
     );
   }
 
-  if (!this.isNew && !this.isModified('isDeleted')) {
+  if (!this.isNew) {
     if (this.isModified('genealogy')) {
       return next(new Error('Genealogy Violation: Batch Order source genealogy is strictly immutable once established.'));
     }
@@ -544,8 +544,21 @@ productionJobSchema.pre('save', function (next) {
         this.isModified('customer') ||
         this.isModified('item') ||
         this.isModified('poId') ||
+        this.isModified('poNumber') ||
         this.isModified('grnId') ||
-        this.isModified('quantity.targetQuantity')
+        this.isModified('grnNumber') ||
+        this.isModified('boNumber') ||
+        this.isModified('batchOrderNumber') ||
+        this.isModified('recipeSnapshot') ||
+        this.isModified('specificationSnapshot') ||
+        this.isModified('materialAllocations') ||
+        this.isModified('planId') ||
+        this.isModified('planNumber') ||
+        this.isModified('timeline.plannedStartDate') ||
+        this.isModified('timeline.targetCompletionDate') ||
+        this.isModified('quantity.targetQuantity') ||
+        this.isModified('quantity.allocatedQuantity') ||
+        (this.isModified('isDeleted') && this.isDeleted)
       ) {
         return next(
           new Error('In-Production Lock Violation: Batch Order is locked against unrelated modifications while in production.')
