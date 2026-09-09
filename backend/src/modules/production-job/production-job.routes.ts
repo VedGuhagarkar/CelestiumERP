@@ -164,7 +164,12 @@ productionJobRouter.get(
 
 // 0o. Approve Batch Order for Inspection (in production -> waiting for inspection atomic handoff)
 productionJobRouter.post(
-  ['/:id/approve-inspection', '/batch-orders/:id/approve-inspection'],
+  [
+    '/:id/approve-for-inspection',
+    '/:id/approve-inspection',
+    '/batch-orders/:id/approve-for-inspection',
+    '/batch-orders/:id/approve-inspection'
+  ],
   authenticateJwt,
   requireAnyPermission(
     PERMISSIONS.PRODUCTION_JOB_COMPLETE,

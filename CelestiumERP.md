@@ -95,7 +95,7 @@
    - 8.1 Database Seeding Engine (`backend/src/scripts/seed.ts`)
    - 8.2 Centralized Configuration Subsystem (`backend/src/config/`)
    - 8.3 Operational Runbooks & Technical Specifications (`docs/`)
-   - 8.4 Automated Test Suite Matrix (61 Backend Specs + Frontend Suites)
+   - 8.4 Automated Test Suite Matrix (62 Backend Specs + Frontend Suites)
 
 ---
 
@@ -969,7 +969,7 @@ _No direct HTTP routes mounted for this internal domain service._
 >    - **Waiting for Production Queue:** Production operators inspect eligible batch orders (`GET /production-jobs/waiting-for-production`).
 >    - **Atomic Take into Production:** When an operator takes a BO (`POST /production-jobs/:id/take-for-production`), the system atomically clears prior workflow flags, transitions state to `inProduction = true` (invariant: $\sum \text{flag}_i = 1$), locks against concurrent operator assignment (`409 Conflict`), and prohibits unrelated ERP mutations while the BO is in production.
 >    - **Recipe-Driven Execution:** Execution strictly follows the Recipe snapshot bound to the BO (`recipeSnapshot.stages`). Operators log stage milestones (`POST /production-jobs/:id/recipe-progress`) validating against recipe stages without field invention or omission.
->    - **Production Completion & Inspection Approval:** Evaluates execution readiness (`GET /production-jobs/:id/execution-readiness`). Approves for inspection (`POST /production-jobs/:id/approve-for-inspection`) only when all recipe stages are completed and piece counts balance ($Q_{\text{completed}} + Q_{\text{scrapped}} = Q_{\text{loaded}}$). Clears `inProduction`, sets `waitingForInspection = true`, removes the BO from active production jobs, and handoffs directly to Quality Inspection.
+>    - **Production Completion & Inspection Approval:** Evaluates execution readiness (`GET /production-jobs/:id/execution-readiness`). Approves for inspection (`POST /production-jobs/:id/approve-for-inspection` or alias `POST /approve-inspection`) only when all recipe stages are completed and piece counts balance ($Q_{\text{completed}} + Q_{\text{scrapped}} = Q_{\text{loaded}}$). Evaluates Recipe tolerance compliance; out-of-spec excursions require explicit authorized concession (`concessionApproved: true`, `concessionReason: string`). Atomically sets `waitingForInspection = true`, clears `inProduction` (invariant $\sum \text{flag}_i = 1$), removes the BO from active production jobs, establishes post-approval modification lock, and hands off directly to Quality Inspection.
 
 #### Models & Schemas
 - **`production-job.model.ts`** — Mongoose model: `ProductionJob`. Exported interfaces:
@@ -981,6 +981,7 @@ _No direct HTTP routes mounted for this internal domain service._
   - `IProductionExecution`: Reconstructed execution state tracking furnace, operator, shift, loaded piece count, loaded weight, completed piece count, scrapped piece count, furnace charge parameters (`furnaceCharge`), recipe stage progress logs (`IJobStageProgress[]`), and approval metadata.
   - `RecordFurnaceChargeDto`: Authoritative furnace charge input payload (`furnaceId`, `shiftId`, `loadNumber`, `loadedPieces`, `loadedWeightKg`, `setpointTempC`, `atmosphereType`, `notes`).
   - `SaveProductionDataDto`: Partial production execution payload allowing incremental saves of furnace charge, stage progress actuals, and operator thermal notes without triggering workflow state transitions.
+  - `ApproveForInspectionDto`: Authoritative approval payload (`completedQuantity`, `scrappedQuantity`, `notes`, `concessionApproved`, `concessionReason`).
   - `IJobStageProgress`: Authoritative Recipe execution progress telemetry: `stageName`, `sequence`, `targetTemperatureC`, `actualTemperatureC`, `targetDurationMinutes`, `actualDurationMinutes`, `temperatureDeviationC`, `durationDeviationMinutes`, `isCompliant`, `deviationWarning`, `quenchMedium`, `quenchParameters` (`medium`, `agitationSpeedRpm`, `mediaInitialTempC`, `mediaFinalTempC`), `atmosphereLevel`, `atmosphereDetails`, `operatorNotes`, `loggedAt`, `loggedBy`.
   - `IProductionExecutionReadiness`: Execution readiness audit evaluating all recipe stages completed, piece count balance ($Q_{\text{completed}} + Q_{\text{scrapped}} = Q_{\text{loaded}}$), furnace equipment assigned, and operator assigned.
   - `IJobStageLog`, `IJobDowntimeLog`, `IJobTransitionLog`: Telemetry and lifecycle logs.
@@ -988,7 +989,9 @@ _No direct HTTP routes mounted for this internal domain service._
 #### Repositories
 - **`ProductionJobRepository`** (`production-job.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
   - Production Phase Methods: `findWaitingForProductionQueue()`, `findInProductionQueue()`, `findWaitingForInspectionQueue()`, `atomicTakeForProduction()`, `atomicApproveForInspection()`, `findInProductionJobsForPo(tenantId, poId)`, `findInProductionJobsForGrn(tenantId, grnId)`.
-  - Concurrency & Lock Enforcement: `updateById()` strictly intercepts update attempts on in-production jobs, preventing mutation of processDetails, timeline, quantity, items, recipe snapshots, and source genealogy.
+  - Concurrency & Lock Enforcement:
+    - `updateById()` strictly intercepts update attempts on in-production jobs, preventing mutation of processDetails, timeline, quantity, items, recipe snapshots, and source genealogy.
+    - `atomicApproveForInspection()` asserts `status: 'IN_PRODUCTION' | 'IN_PROGRESS'` or `workflowState.inProduction: true`, preventing race conditions and multiple approvals (`409 Conflict`).
   - Planning Phase Methods: `generateNextJobNumber()`, `findJobByNumber()`, `findByPlanId()`, `findJobsByPlanId()`, `findByIdempotencyKey()`, `queryJobs()`, `findActiveQueueJobs()` (strictly delegates to `findWaitingForProductionQueue()`), `findConflictingJobs()`, `findEligiblePOs()`, `findEligibleGRNsForPO()`, `findEligiblePartsForGRN()`, `findActiveAllocationsForGRN()`.
 
 #### Services
@@ -1018,7 +1021,18 @@ _No direct HTTP routes mounted for this internal domain service._
       - Excludes laboratory post-treatment hardness/case-depth inspection fields (phase boundary preservation).
       - Generates audit logs: `PRODUCTION_RECIPE_STAGE_RECORDED` and `PRODUCTION_STAGE_DEVIATION_FLAGGED`.
     - `evaluateProductionExecutionReadiness()`: Evaluates execution completeness: all recipe stages completed, loaded piece count balanced ($Q_{\text{completed}} + Q_{\text{scrapped}} = Q_{\text{loaded}}$), furnace equipment assigned, and operator assigned.
-    - `approveForInspection()`: Validates execution completeness in ordered stages (1. piece count balance, 2. all recipe stages executed, 3. all stage actual temperatures and soak durations $> 0$), clears `inProduction`, sets `waitingForInspection = true`, and emits `Job.ApprovedForInspection`.
+    - `approveForInspection()`: Authoritative production-to-inspection handoff operation:
+      - Validates BO is actively `inProduction = true` (rejects non-in-production BOs).
+      - Verifies piece count balance ($Q_{\text{completed}} + Q_{\text{scrapped}} = Q_{\text{loaded}}$).
+      - Verifies all recipe stages from the bound Recipe snapshot are completed.
+      - Enforces mandatory positive telemetry ($T > 0$°C, soak duration $> 0$ min).
+      - Verifies operational furnace equipment and operator assignment.
+      - Recipe Compliance & Concession Gating: Detects out-of-tolerance excursions and non-compliant stages. Automatically rejects unapproved deviations unless explicit concession authorization is provided (`concessionApproved: true`, non-empty `concessionReason`). Records concession details in `job.execution.qualityHandoff.concession`.
+      - Atomically sets `waitingForProduction = false`, `inProduction = false`, `waitingForInspection = true`, preserving single-active flag invariant ($\sum \text{flag}_i = 1$).
+      - Concurrency & Race Protection: Atomic filter asserts `inProduction: true` / `status: 'IN_PRODUCTION'`; concurrent approval returns `409 Conflict`.
+      - Post-Approval Lock Enforcement: Rejects any subsequent attempts to record furnace charges, recipe progress actuals, partial saves, or process details on approved BOs (`Post-Production Lock Violation`).
+      - Emits audit log `PRODUCTION_JOB_APPROVED_FOR_INSPECTION` and publishes domain events `Job.ApprovedForInspection` and `Job.Completed`.
+      - Prohibits dispatch bypass: Prunes `STORAGE` from `WAITING_FOR_INSPECTION` allowed transitions, blocking direct transitions to storage or dispatch without QA clearance.
   - *Production Lock Enforcement:*
     - Server-side rejection (`In-Production Lock Violation`) for `updateJob()`, `updateProcessDetails()`, `assignOperator()`, `removeOperator()`, `assignFurnace()`, `removeFurnace()`, `transitionJob()`, and `cancelJob()` whenever `job.inProduction === true`.
   - *Planning Phase Methods:* `getEligiblePOs()`, `getEligibleGRNsForPO()`, `getEligiblePartsForGRN()`, `createBatchOrder()`, `getProcessDetails()`, `updateProcessDetails()`, `getBatchOrderGenealogy()`, `getBatchOrderProductionReadiness()`.
@@ -1029,7 +1043,7 @@ _No direct HTTP routes mounted for this internal domain service._
 
 #### Validators (Zod Schemas)
 - **`production-job.validator.ts`**: Exported Zod validation schemas:
-  - Reconstructed Production Phase: `takeForProductionSchema`, `recordRecipeStageProgressSchema`, `recordFurnaceChargeSchema`, `saveProductionDataSchema` (with custom `superRefine` inspection boundary rejection), `approveForInspectionSchema`.
+  - Reconstructed Production Phase: `takeForProductionSchema`, `recordRecipeStageProgressSchema`, `recordFurnaceChargeSchema`, `saveProductionDataSchema` (with custom `superRefine` inspection boundary rejection), `approveForInspectionSchema` (with custom `superRefine` inspection boundary rejection and conditional `concessionReason` validation).
   - Planning Phase: `createBatchOrderSchema`, `updateProcessDetailsSchema`, `getProcessDetailsSchema`, `getBatchOrderGenealogySchema`, `getBatchOrderProductionReadinessSchema`, `convertPlanToJobSchema`, `queryJobsSchema`, `getJobByIdSchema`, `updateJobSchema`.
 
 #### API Endpoints & Routes
@@ -1044,7 +1058,7 @@ _No direct HTTP routes mounted for this internal domain service._
   - `POST /api/v1/production-jobs/:id/save-production-data` (aliases `PUT /:id/production-data`) — Atomically saves partial production execution data without advancing the workflow state from `inProduction`. Protected with `requireAnyPermission(PRODUCTION_JOB_UPDATE, MACHINES_FURNACE_OPERATE)`.
   - `POST /api/v1/production-jobs/:id/recipe-progress` (aliases `POST /:id/recipe-stage-progress`, `POST /batch-orders/:id/recipe-progress`) — Records recipe stage milestone progress against the bound Recipe snapshot with strict process sequencing, planned vs actual thermal tracking, and non-silent deviation detection.
   - `GET /api/v1/production-jobs/:id/execution-readiness` — Evaluates recipe stage completeness and piece balance before QA handoff.
-  - `POST /api/v1/production-jobs/:id/approve-for-inspection` — Validates complete execution, sets `waitingForInspection = true`, removes from active production jobs, and hands off to Quality.
+  - `POST /api/v1/production-jobs/:id/approve-for-inspection` (aliases `POST /:id/approve-inspection`, `POST /batch-orders/:id/approve-for-inspection`) — Validates complete execution, evaluates tolerance excursions, enforces concession gating, sets `waitingForInspection = true`, removes from active production jobs, and hands off to Quality. Protected with `requireAnyPermission(PRODUCTION_JOB_COMPLETE, PRODUCTION_JOB_TRANSITION, PRODUCTION_JOB_UPDATE, MACHINES_FURNACE_OPERATE)`.
 - **Planning Phase & Batch Order Endpoints:**
   - `GET /api/v1/production-jobs/eligible-pos` (also `/planning/eligible-pos`) — Returns POs with completed GRNs available for planning.
   - `GET /api/v1/production-jobs/pos/:poId/grns` (also `/planning/pos/:poId/grns`) — Returns eligible GRNs strictly linked to the specified PO.
@@ -1821,8 +1835,12 @@ The frontend is built with React 19, Redux Toolkit, React Router 7, and a custom
       - Strict Process Sequence Blocker: Enforces sequential execution; stage $N$ inputs are locked until stage $N-1$ is fully logged and completed.
       - Phase Boundary Notice: Explicitly alerts operators that laboratory metallurgical inspection fields (`surfaceHardness`, `coreHardness`, `caseDepth`, `microstructure`, `mechanical`, `pyrometryCertification`) are reserved strictly for Quality Inspection.
       - **"Save Partial Work" Action:** Dedicated button enabling operators to save intermediate actuals, furnace charge parameters, and thermal notes incrementally (`POST /api/v1/production-jobs/:id/save-production-data`) without advancing workflow state.
-    - **Live Execution Readiness Evaluator:** Real-time audit inspecting furnace equipment assignment, operator assignment, completion of every recipe stage, and piece count balance.
-    - **"Approve for Inspection" Modal Dialog:** Validates completed and scrapped pieces balance against loaded pieces ($Q_{\text{completed}} + Q_{\text{scrapped}} = Q_{\text{loaded}}$) and all stages executed before handing off to Quality Inspection.
+    - **Live Execution Readiness Evaluator:** Real-time audit inspecting furnace equipment assignment, operator assignment, completion of every recipe stage, piece count balance, and recipe tolerance compliance.
+    - **"Approve for Inspection" Modal Dialog & Concession Authorization Gate:**
+      - Validates completed and scrapped pieces balance against loaded pieces ($Q_{\text{completed}} + Q_{\text{scrapped}} = Q_{\text{loaded}}$) and all stages executed.
+      - **Recipe Compliance Alert:** Real-time analysis surfaces any out-of-tolerance stage excursions or non-compliant stages in an amber banner.
+      - **Concession Authorization:** Requires explicit supervisory sign-off (`concessionApproved: true`) and mandatory documented rationale (`concessionReason`) if any stage deviations exist; blocks submit otherwise.
+      - Triggers atomic transition via `POST /api/v1/production-jobs/:id/approve-for-inspection`, setting `waitingForInspection = true` and activating the post-production modification lock.
   - **Waiting for Inspection Queue:**
     - Displays batch orders that have completed production execution and are awaiting Quality Inspection.
     - Shows completed piece counts, scrapped counts, furnace run history, and operator sign-offs.
@@ -2475,10 +2493,10 @@ The platform includes 8 authoritative engineering specifications and operational
 7. **`PHASE_1_CERTIFICATION_REPORT.md`:** Verification findings for core platform stability, data boundary enforcement, and error resilience.
 8. **`FACTORY_ACCEPTANCE_REPORT.md`:** End-to-end metallurgical workflow verification and compliance sign-off.
 
-### 8.4 Automated Test Suite Matrix (61 Backend Specs + Frontend Suites)
+### 8.4 Automated Test Suite Matrix (62 Backend Specs + Frontend Suites)
 
 The codebase features comprehensive test suites validating layer boundaries, data integrity, and business logic:
-- **Backend Test Summary:** **61 Test Suites, 718 Tests Passed (0 Failures, 100% Pass Rate)**
+- **Backend Test Summary:** **62 Test Suites, 738 Tests Passed (0 Failures, 100% Pass Rate)**
 - **Frontend Test Summary:** **3 Test Suites, 50 Tests Passed (0 Failures, 100% Pass Rate)**
 
 #### 1. Backend Architecture Governance
@@ -2586,6 +2604,27 @@ The codebase features comprehensive test suites validating layer boundaries, dat
   - Invariant 12 (Complete Execution Approval Success): Transitions cleanly from `inProduction` to `waitingForInspection` when all stages are complete and piece count balances.
   - Invariant 13 (Concurrent Partial Save Mutual Exclusion): Prevents conflicting concurrent partial updates from corrupting production records.
   - Invariant 14 (Authorization Check on Capture Routes): Rejects unauthenticated or unauthorized users lacking production execution permissions with `401/403`.
+- `backend/tests/production-inspection-approval.spec.ts` (20 tests):
+  - Invariant 1 (State Eligibility Validation): Strictly allows approval only for batch orders in `inProduction = true` / `IN_PRODUCTION`; rejects `WAITING_FOR_PRODUCTION` with 400 Bad Request.
+  - Invariant 2 (Already Approved Rejection): Rejects approving batch orders already in `WAITING_FOR_INSPECTION` with `400 Bad Request`.
+  - Invariant 3 (Route Aliasing): Verifies `/approve-for-inspection` and `/approve-inspection` behave identically.
+  - Invariant 4 (Piece Count Conservation Balance): Requires $Q_{\text{completed}} + Q_{\text{scrapped}} = Q_{\text{loaded}}$; rejects discrepancies (`Piece count balance discrepancy`).
+  - Invariant 5 (Negative Quantity Rejection): Rejects negative completed or scrapped pieces.
+  - Invariant 6 (Zero Balance Rejection): Rejects empty / zero piece counts.
+  - Invariant 7 (Recipe Stage Completeness): Enforces execution of every stage in `recipeSnapshot.stages`; blocks approval if any stage is missing.
+  - Invariant 8 (Empty Execution Guard): Rejects approval when no stage progress has been recorded.
+  - Invariant 9 (Furnace Equipment Assignment): Rejects approval when no operational furnace equipment is assigned.
+  - Invariant 10 (Operator Assignment): Rejects approval when no production operator is assigned.
+  - Invariant 11 (Mandatory Positive Telemetry - Temperature): Rejects actual temperature $\le 0$°C.
+  - Invariant 12 (Mandatory Positive Telemetry - Soak Time): Rejects actual soak duration $\le 0$ min.
+  - Invariant 13 (Recipe Compliance Gating & Rejection): Automatically blocks approval when stage deviations exist without explicit concession authorization (`400 Bad Request`).
+  - Invariant 14 (Authorized Concession Approval): Successfully approves non-compliant batch orders when supervisory concession is provided (`concessionApproved: true`, `concessionReason: string`).
+  - Invariant 15 (Concession Reason Validation): Rejects concession approval when `concessionReason` is empty or missing (`400 Bad Request`).
+  - Invariant 16 (Laboratory Inspection Field Exclusion): Rejects QA measurement inputs (`surfaceHardness`, `caseDepth`, etc.) during production approval (`400 Bad Request`).
+  - Invariant 17 (Atomic Concurrency & Race Protection): Rejects concurrent approval attempts on the same BO with `409 Conflict`.
+  - Invariant 18 (Post-Approval Modification Lock): Strictly prohibits subsequent furnace charges, recipe progress actuals, partial saves, or process detail updates once approved (`Post-Production Lock Violation`).
+  - Invariant 19 (Dispatch / Storage Bypass Prohibition): Blocks direct lifecycle transitions from `WAITING_FOR_INSPECTION` to `STORAGE` or dispatch states without QA clearance.
+  - Invariant 20 (Authentication & Authorization): Enforces JWT authentication (`401`) and Production RBAC permissions (`403`).
 
 #### 4. Domain Integration Suites (47 Core Specs in `backend/tests/`)
 - Production Execution & Lifecycle: `production-job.spec.ts`, `production-execution-workflow.spec.ts`, `production-scheduling.spec.ts`, `plan-to-job-handoff.spec.ts`.

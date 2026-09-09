@@ -1157,6 +1157,17 @@ export class ProductionJobService {
       );
     }
 
+    if (
+      job.workflowState?.waitingForInspection ||
+      (job as any).waitingForInspection ||
+      job.status === 'WAITING_FOR_INSPECTION' ||
+      job.status === 'COMPLETED'
+    ) {
+      throw new BadRequestError(
+        `Post-Production Lock Violation: Process details cannot be modified once production is complete and Batch Order '${job.boNumber || job.jobNumber}' is waiting for inspection.`
+      );
+    }
+
     if (!job.grnId) {
       throw new BadRequestError('Batch Order has no associated GRN.');
     }
@@ -2514,6 +2525,16 @@ export class ProductionJobService {
       }
     }
 
+    // State Transition Authority: Prevent phase skipping from WAITING_FOR_INSPECTION
+    if (currentStatus === 'WAITING_FOR_INSPECTION') {
+      const bypassPhases = ['STORAGE', 'READY_FOR_DISPATCH', 'DISPATCHED', 'COMPLETED'];
+      if (bypassPhases.includes(targetStatus)) {
+        throw new BadRequestError(
+          `State Transition Authority Violation: Invalid lifecycle transition from '${currentStatus}' to '${targetStatus}'. Cannot bypass Quality Inspection to enter Storage or Dispatch directly.`
+        );
+      }
+    }
+
     const allowedNext = ALLOWED_STATUS_TRANSITIONS[currentStatus] || [];
     if (!allowedNext.includes(targetStatus)) {
       throw new BadRequestError(
@@ -3508,17 +3529,46 @@ export class ProductionJobService {
       throw new NotFoundError(`Batch Order with ID '${jobId}' not found`);
     }
 
-    if (!job.inProduction && job.status !== 'IN_PRODUCTION' && job.status !== 'IN_PROGRESS') {
+    // 1. Eligibility Enforcement: Only inProduction state may be approved
+    if (
+      job.workflowState?.waitingForInspection === true ||
+      job.status === 'WAITING_FOR_INSPECTION'
+    ) {
       throw new BadRequestError(
-        `Cannot approve Batch Order '${job.boNumber || job.jobNumber}' for inspection: It is not in production (Current status: '${job.status}').`
+        `Eligibility Violation: Batch Order '${job.boNumber || job.jobNumber}' is already approved and waiting for inspection.`
       );
     }
 
-    // 1. Piece count balance verification
+    if (
+      job.workflowState?.waitingForProduction === true ||
+      job.status === 'WAITING_FOR_PRODUCTION'
+    ) {
+      throw new BadRequestError(
+        `Eligibility Violation: Batch Order '${job.boNumber || job.jobNumber}' is waiting for production and cannot be approved for inspection.`
+      );
+    }
+
+    const isInProduction =
+      job.inProduction === true ||
+      (job.workflowState as any)?.inProduction === true ||
+      job.status === 'IN_PRODUCTION' ||
+      job.status === 'IN_PROGRESS';
+
+    if (!isInProduction) {
+      throw new BadRequestError(
+        `Eligibility Violation: Cannot approve Batch Order '${job.boNumber || job.jobNumber}' for inspection: It is not in production (Current status: '${job.status}').`
+      );
+    }
+
+    // 2. Piece count balance verification
     const loadedPieceCount =
       job.quantity?.loadedQuantity || job.execution?.furnaceCharge?.loadedPieceCount || job.quantity?.targetQuantity || 1;
     const completedQty = dto.completedQuantity ?? (loadedPieceCount - (dto.scrappedQuantity || 0));
     const scrappedQty = dto.scrappedQuantity ?? 0;
+
+    if (completedQty < 0 || scrappedQty < 0) {
+      throw new BadRequestError('Completed and scrapped quantities must be non-negative.');
+    }
 
     if (completedQty + scrappedQty !== loadedPieceCount) {
       throw new BadRequestError(
@@ -3526,7 +3576,7 @@ export class ProductionJobService {
       );
     }
 
-    // 2. Recipe Stage Completion verification
+    // 3. Recipe Stage Completion verification
     const recipeStages = job.recipeSnapshot?.stages || [];
     if (recipeStages.length > 0) {
       const executedSequences = new Set((job.execution?.stageProgress || []).map((s) => s.stageSequence));
@@ -3544,7 +3594,34 @@ export class ProductionJobService {
       }
     }
 
-    // 3. Mandatory Telemetry Validation
+    // 4. Equipment and Operator Assignment Verification
+    const hasFurnaceAssigned = Boolean(
+      job.assignedFurnaceId ||
+      job.furnaceId ||
+      (job as any).equipmentAssignment?.furnaceId ||
+      (job as any).equipmentAssignment?.furnaceCode ||
+      job.execution?.furnaceCharge?.furnaceId
+    );
+    if (!hasFurnaceAssigned) {
+      throw new BadRequestError(
+        `Cannot approve for inspection: No operational furnace equipment has been assigned to Batch Order '${job.boNumber || job.jobNumber}'.`
+      );
+    }
+
+    const hasOperatorAssigned = Boolean(
+      job.assignedOperatorId ||
+      (job as any).operatorAssignment?.operatorId ||
+      job.execution?.furnaceCharge?.operatorId ||
+      job.execution?.operatorId ||
+      actor.userId
+    );
+    if (!hasOperatorAssigned) {
+      throw new BadRequestError(
+        `Cannot approve for inspection: No production operator is assigned to Batch Order '${job.boNumber || job.jobNumber}'.`
+      );
+    }
+
+    // 5. Mandatory Telemetry Validation
     for (const stage of job.execution?.stageProgress || []) {
       if (stage.actualTemperatureC !== undefined && stage.actualTemperatureC <= 0) {
         throw new BadRequestError(
@@ -3556,6 +3633,20 @@ export class ProductionJobService {
           `Cannot approve for inspection: Invalid actual soak duration (${stage.actualDurationMinutes} min) for Stage ${stage.stageSequence} (${stage.stageName}). Must be > 0 min.`
         );
       }
+    }
+
+    // 6. Recipe Compliance Verification & Concession Gate
+    const nonCompliantStages = (job.execution?.stageProgress || []).filter(
+      (s: any) => s.isCompliant === false || Boolean(s.deviationWarning)
+    );
+
+    if (nonCompliantStages.length > 0 && dto.concessionApproved !== true) {
+      const stageAlerts = nonCompliantStages
+        .map((s: any) => `Seq ${s.stageSequence || 1} (${s.stageName}): ${s.deviationWarning || 'Out-of-tolerance excursion'}`)
+        .join('; ');
+      throw new BadRequestError(
+        `Recipe Compliance Violation: Batch Order '${job.boNumber || job.jobNumber}' contains unapproved Recipe deviations / non-compliant stages [${stageAlerts}]. Automatic approval is prohibited unless concession is explicitly authorized (concessionApproved: true and concessionReason).`
+      );
     }
 
     const now = new Date();
@@ -3574,6 +3665,7 @@ export class ProductionJobService {
       inInspection: false,
       waitingForDispatch: false,
       dispatched: false,
+      inspection: false,
       workflowState: {
         waitingForProduction: false,
         inProduction: false,
@@ -3593,7 +3685,21 @@ export class ProductionJobService {
         pyrometryArchiveId,
         completedQuantity: completedQty,
         scrappedQuantity: scrappedQty,
-        notes: dto.operatorNotes || dto.notes || null
+        notes: dto.operatorNotes || dto.notes || null,
+        concession: nonCompliantStages.length > 0 ? {
+          hasConcession: true,
+          concessionApproved: true,
+          concessionReason: dto.concessionReason || dto.notes || 'Authorized process deviation',
+          approvedBy: { userId: actor.userId, email: actor.email, role: actor.role },
+          approvedAt: now,
+          nonCompliantStages: nonCompliantStages.map((s: any) => ({
+            sequence: s.stageSequence,
+            stageName: s.stageName,
+            deviationWarning: s.deviationWarning,
+            actualTemperatureC: s.actualTemperatureC,
+            actualDurationMinutes: s.actualDurationMinutes
+          }))
+        } : undefined
       }
     };
 
@@ -3605,7 +3711,7 @@ export class ProductionJobService {
           toStatus: 'WAITING_FOR_INSPECTION',
           timestamp: now,
           performedBy: { userId: actor.userId, email: actor.email, role: actor.role },
-          reason: `Production completed following Recipe '${job.recipeSnapshot?.recipeCode || 'STANDARD'}'. Approved for Inspection (${inspectionRequestId}).`,
+          reason: `Production completed following Recipe '${job.recipeSnapshot?.recipeCode || 'STANDARD'}'. Approved for Inspection (${inspectionRequestId}).${dto.concessionApproved ? ` [Concession Approved: ${dto.concessionReason || dto.notes}]` : ''}`,
           notes: dto.notes || null
         }
       }
@@ -3613,7 +3719,7 @@ export class ProductionJobService {
 
     if (!updated) {
       throw new ConflictError(
-        `Batch Order '${job.boNumber || job.jobNumber}' could not be transitioned to waiting for inspection.`
+        `Batch Order '${job.boNumber || job.jobNumber}' could not be transitioned to waiting for inspection (Already transitioned or concurrent modification detected).`
       );
     }
 
@@ -3629,9 +3735,14 @@ export class ProductionJobService {
         boNumber: updated.boNumber,
         previousStatus: prevStatus,
         status: 'WAITING_FOR_INSPECTION',
+        transition: 'inProduction -> waitingForInspection',
+        approvedAt: now.toISOString(),
+        approvingUser: { userId: actor.userId, email: actor.email, role: actor.role },
         inspectionRequestId,
         completedQuantity: completedQty,
-        scrappedQuantity: scrappedQty
+        scrappedQuantity: scrappedQty,
+        concessionApproved: Boolean(dto.concessionApproved),
+        concessionReason: dto.concessionReason || null
       }
     });
 

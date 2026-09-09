@@ -457,7 +457,17 @@ export class ProductionJobRepository
     const filter: any = {
       tenantId,
       $or: identifierMatches,
-      isDeleted: false
+      isDeleted: false,
+      $and: [
+        {
+          $or: [
+            { inProduction: true },
+            { 'workflowState.inProduction': true },
+            { status: 'IN_PRODUCTION' },
+            { status: 'IN_PROGRESS' }
+          ]
+        }
+      ]
     };
 
     return this.model.findOneAndUpdate(filter, updateData, { new: true }).exec();

@@ -790,7 +790,37 @@ export const approveForInspectionSchema: ValidationSchema = {
       completedQuantity: z.number().min(0, 'Completed quantity must be non-negative').optional(),
       scrappedQuantity: z.number().min(0).optional().default(0),
       notes: z.string().trim().max(500).optional(),
-      operatorNotes: z.string().trim().max(500).optional()
+      operatorNotes: z.string().trim().max(500).optional(),
+      concessionApproved: z.boolean().optional(),
+      concessionReason: z.string().trim().max(500).optional()
+    })
+    .superRefine((data, ctx) => {
+      if (!data) return;
+      // Phase boundary: reject inspection measurement fields
+      const forbiddenInspectionKeys = [
+        'surfaceHardness',
+        'coreHardness',
+        'caseDepth',
+        'microstructure',
+        'mechanical',
+        'pyrometryCertification'
+      ];
+      for (const key of forbiddenInspectionKeys) {
+        if ((data as any)[key] !== undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Inspection Boundary Violation: Field '${key}' cannot be submitted during Production Approval. Hardness surveys, case depth traverses, microstructure, mechanical testing, and pyrometry certification are strictly reserved for the Quality Inspection phase.`,
+            path: [key]
+          });
+        }
+      }
+      if (data.concessionApproved && !data.concessionReason && !data.notes) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Concession reason or notes are required when concession is authorized.',
+          path: ['concessionReason']
+        });
+      }
     })
     .optional()
 };

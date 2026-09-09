@@ -498,6 +498,8 @@ export const JobsPage: React.FC = () => {
   const [approveCompletedQty, setApproveCompletedQty] = useState<number>(100);
   const [approveScrappedQty, setApproveScrappedQty] = useState<number>(0);
   const [approveNotes, setApproveNotes] = useState<string>('');
+  const [approveConcessionApproved, setApproveConcessionApproved] = useState<boolean>(false);
+  const [approveConcessionReason, setApproveConcessionReason] = useState<string>('');
 
   // Authoritative Planning Phase Wizard & Workspace State
   const [isNewJobOpen, setIsNewJobOpen] = useState(false);
@@ -1040,6 +1042,8 @@ export const JobsPage: React.FC = () => {
     setApproveCompletedQty(loaded);
     setApproveScrappedQty(0);
     setApproveNotes('All recipe stages executed in strict compliance with metallurgical specification. Production operation verified complete.');
+    setApproveConcessionApproved(false);
+    setApproveConcessionReason('');
     setIsApproveModalOpen(true);
   };
 
@@ -1060,14 +1064,31 @@ export const JobsPage: React.FC = () => {
       return;
     }
 
+    const hasDeviations = Boolean(
+      targetApproveJob.execution?.stageProgress?.some(
+        (s: any) => s.isCompliant === false || Boolean(s.deviationWarning)
+      )
+    );
+
+    if (hasDeviations && !approveConcessionApproved) {
+      setFeedback({
+        type: 'error',
+        message: 'Recipe Compliance Violation: Batch Order contains unapproved Recipe deviations. Concession must be explicitly authorized before handoff to Quality Inspection.'
+      });
+      setIsSubmitting(false);
+      return;
+    }
+
     try {
-      const res = await authenticatedFetch(`${env.API_BASE_URL}/production-jobs/${jobId}/approve-inspection`, {
+      const res = await authenticatedFetch(`${env.API_BASE_URL}/production-jobs/${jobId}/approve-for-inspection`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           completedQuantity: Number(approveCompletedQty),
           scrappedQuantity: Number(approveScrappedQty),
-          notes: approveNotes
+          notes: approveNotes,
+          concessionApproved: approveConcessionApproved,
+          concessionReason: approveConcessionReason || undefined
         })
       });
 
@@ -3866,6 +3887,34 @@ export const JobsPage: React.FC = () => {
             {Number(approveCompletedQty) + Number(approveScrappedQty) !== (targetApproveJob.quantity?.loadedQuantity || targetApproveJob.quantity?.targetQuantity || 100) && (
               <div style={{ padding: '8px 12px', borderRadius: '6px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#f87171', fontSize: '12px' }}>
                 ⚠️ Piece balance error: Completed ({approveCompletedQty}) + Scrapped ({approveScrappedQty}) must equal Loaded ({targetApproveJob.quantity?.loadedQuantity || targetApproveJob.quantity?.targetQuantity || 100}).
+              </div>
+            )}
+
+            {targetApproveJob.execution?.stageProgress?.some((s: any) => s.isCompliant === false || Boolean(s.deviationWarning)) && (
+              <div style={{ background: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)', borderRadius: 'var(--radius-md)', padding: '12px' }}>
+                <div style={{ fontWeight: 700, color: '#f59e0b', fontSize: '12px', marginBottom: '4px' }}>
+                  ⚠️ Recipe Compliance Alert: Process Deviations Detected
+                </div>
+                <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginBottom: '8px' }}>
+                  One or more recipe stages contain out-of-tolerance excursions. Automatic approval is prohibited unless concession is explicitly authorized.
+                </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#ffffff', cursor: 'pointer', marginBottom: '8px' }}>
+                  <input
+                    type="checkbox"
+                    checked={approveConcessionApproved}
+                    onChange={(e) => setApproveConcessionApproved(e.target.checked)}
+                  />
+                  <span>Authorize Concession for Non-Compliant Thermal Cycle</span>
+                </label>
+                {approveConcessionApproved && (
+                  <AppInput
+                    label="Concession Reason / Metallurgical Engineering Authorization *"
+                    placeholder="Authorized by Plant Metallurgist per Deviation Report / Concession #..."
+                    value={approveConcessionReason}
+                    onChange={(e) => setApproveConcessionReason(e.target.value)}
+                    required
+                  />
+                )}
               </div>
             )}
 
