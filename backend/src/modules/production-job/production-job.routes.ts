@@ -67,7 +67,12 @@ productionJobRouter.get(
 
 // 0l. Take Batch Order for Production (waiting for production -> in production atomic transition)
 productionJobRouter.post(
-  ['/:id/take-production', '/batch-orders/:id/take-production'],
+  [
+    '/:id/take-production',
+    '/:id/take-for-production',
+    '/batch-orders/:id/take-production',
+    '/batch-orders/:id/take-for-production'
+  ],
   authenticateJwt,
   requireAnyPermission(
     PERMISSIONS.PRODUCTION_JOB_START,

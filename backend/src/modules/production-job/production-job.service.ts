@@ -2782,30 +2782,56 @@ export class ProductionJobService {
       jobId: job.id,
       jobNumber: job.jobNumber,
       boNumber: job.boNumber || job.jobNumber,
+      batchOrderNumber: job.batchOrderNumber || job.boNumber || job.jobNumber,
+      // Authoritative PO details
       poId: job.poId || (job.genealogy as any)?.whichPo?.poId || null,
       poNumber: job.poNumber || (job.genealogy as any)?.whichPo?.poNumber || null,
+      supplierName: (job.genealogy as any)?.whichPo?.supplierName || job.customer?.customerName || null,
+      orderDate: (job.genealogy as any)?.whichPo?.orderDate || null,
+      // Authoritative GRN details
       grnId: job.grnId || (job.genealogy as any)?.whichGrn?.grnId || null,
       grnNumber: job.grnNumber || (job.genealogy as any)?.whichGrn?.grnNumber || null,
+      receivedDate: (job.genealogy as any)?.whichGrn?.receivedDate || null,
+      heatLotNumber: (job.materialAllocations?.[0]?.heatLotNumber) || (job.materialAllocations?.[0]?.supplierHeatNumber) || null,
+      // Customer & Part details
       customerName: job.customer?.customerName,
+      customerCode: job.customer?.customerCode,
+      itemId: job.item?.itemId || (job.genealogy as any)?.whichPart?.itemId || null,
       itemCode: job.item?.itemCode,
       itemName: job.item?.itemName,
       materialGrade: job.item?.materialGrade,
-      recipeId: job.recipeSnapshot?.recipeId || null,
-      recipeCode: job.recipeSnapshot?.recipeCode || null,
-      recipeName: job.recipeSnapshot?.name || null,
+      drawingNumber: (job.item as any)?.drawingNumber || null,
+      uom: job.item?.uom || 'PCS',
+      // Authoritative Recipe referenced by BO
+      recipeId: job.recipeSnapshot?.recipeId || (job.genealogy as any)?.whichRecipe?.recipeId || null,
+      recipeCode: job.recipeSnapshot?.recipeCode || (job.genealogy as any)?.whichRecipe?.recipeCode || null,
+      recipeName: job.recipeSnapshot?.name || (job.genealogy as any)?.whichRecipe?.recipeName || null,
+      recipeRevision: job.recipeSnapshot?.revisionNumber || (job.genealogy as any)?.whichRecipe?.revisionNumber || 1,
+      processFamily: job.recipeSnapshot?.processFamily || (job.genealogy as any)?.whichRecipe?.processFamily || null,
       recipeStagesCount: job.recipeSnapshot?.stages?.length || 0,
       recipeStages: job.recipeSnapshot?.stages || [],
-      weightKg: job.weightKg || null,
+      // Quantities & Weight
+      weightKg: job.weightKg || job.weight || null,
       targetQuantity: job.quantity?.targetQuantity,
+      allocatedQuantity: job.materialAllocations?.[0]?.allocatedQuantity || job.quantity?.targetQuantity,
+      loadedQuantity: job.quantity?.loadedQuantity || 0,
+      // Timeline & Due Date
+      dueDate: job.timeline?.dueDate || (job as any).dueDate || null,
+      plannedStartDate: job.timeline?.plannedStartDate || null,
+      targetCompletionDate: job.timeline?.targetCompletionDate || null,
+      // Status & Workflow Flags
       priority: job.priority,
       status: job.status,
       waitingForProduction: true,
       inProduction: false,
       waitingForInspection: false,
-      workflowState: job.workflowState || null,
+      workflowState: job.workflowState || { waitingForProduction: true, inProduction: false, waitingForInspection: false },
       assignedFurnaceCode: job.equipmentAssignment?.furnaceCode || null,
+      assignedFurnaceId: job.equipmentAssignment?.furnaceId || null,
       assignedOperatorName: job.operatorAssignment?.operatorName || null,
-      targetCompletionDate: job.timeline?.targetCompletionDate
+      notes: job.notes || null,
+      createdAt: (job as any).createdAt || null,
+      isReadOnlyRecord: true
     }));
   }
 
@@ -2895,13 +2921,14 @@ export class ProductionJobService {
       throw new NotFoundError(`Batch Order with ID '${jobId}' not found`);
     }
 
-    if (job.inProduction || job.status === 'IN_PRODUCTION') {
+    if (job.inProduction || job.status === 'IN_PRODUCTION' || (job.workflowState as any)?.inProduction) {
       throw new ConflictError(
         `Batch Order '${job.boNumber || job.jobNumber}' is already in production and cannot be taken simultaneously by another user.`
       );
     }
 
-    if (!job.waitingForProduction && job.status !== 'WAITING_FOR_PRODUCTION' && job.status !== 'SCHEDULED' && job.status !== 'APPROVED') {
+    const isWaiting = job.waitingForProduction || (job.workflowState as any)?.waitingForProduction || job.status === 'WAITING_FOR_PRODUCTION';
+    if (!isWaiting) {
       throw new BadRequestError(
         `Cannot take Batch Order '${job.boNumber || job.jobNumber}' into production. Current status is '${job.status}'. Only Batch Orders waiting for production may be taken.`
       );

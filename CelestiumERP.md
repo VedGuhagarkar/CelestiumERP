@@ -1012,10 +1012,10 @@ _No direct HTTP routes mounted for this internal domain service._
 *Mounted at `/api/v1/production-jobs`, `/api/v1/batch-orders`, and `/api/v1/planning` in Express routing.*
 
 - **Reconstructed Production Phase Endpoints:**
-  - `GET /api/v1/production-jobs/waiting-for-production` — Returns eligible BO queue in `WAITING_FOR_PRODUCTION`.
+  - `GET /api/v1/production-jobs/waiting-for-production` (alias `GET /api/v1/production-jobs/queue/waiting-for-production`) — Returns eligible BO queue strictly in `workflowState.waitingForProduction = true` with complete authoritative lineage (`PO -> GRN -> BO`), customer, part specs, bound recipe stages, quantities, and due date. Protected with `requireAnyPermission(PRODUCTION_JOB_VIEW, BATCH_ORDER_VIEW)`.
   - `GET /api/v1/production-jobs/in-production` — Returns active shop-floor jobs in `IN_PRODUCTION`.
   - `GET /api/v1/production-jobs/waiting-for-inspection` — Returns BOs approved for QA and in `WAITING_FOR_INSPECTION`.
-  - `POST /api/v1/production-jobs/:id/take-for-production` — Atomically takes BO into production (`waiting_for_production` -> `in_production`), enforcing single active flag and concurrency lock.
+  - `POST /api/v1/production-jobs/:id/take-for-production` (aliases `POST /:id/take-production`, `POST /batch-orders/:id/take-production`, `POST /batch-orders/:id/take-for-production`) — Atomically takes BO into production (`waitingForProduction` -> `inProduction`), verifying waiting state at invocation, enforcing single active flag ($\sum \text{flags} = 1$) and atomic concurrency lock (`409 Conflict` on race). Protected with `requireAnyPermission(PRODUCTION_JOB_START, PRODUCTION_JOB_TRANSITION, PRODUCTION_JOB_UPDATE, MACHINES_FURNACE_OPERATE)`.
   - `POST /api/v1/production-jobs/:id/recipe-progress` — Records recipe stage milestone progress against the bound Recipe snapshot.
   - `GET /api/v1/production-jobs/:id/execution-readiness` — Evaluates recipe stage completeness and piece balance before QA handoff.
   - `POST /api/v1/production-jobs/:id/approve-for-inspection` — Validates complete execution, sets `waitingForInspection = true`, removes from active production jobs, and hands off to Quality.
@@ -1773,10 +1773,12 @@ The frontend is built with React 19, Redux Toolkit, React Router 7, and a custom
 - **Role:** Authoritative manufacturing workbench supporting both Batch Order Planning (`PO -> GRN -> Part -> BO`) and reconstructed Production Phase execution (`waiting for production` → `in production` → `waiting for inspection`).
 - **State & Sub-Views:** `activeTab` ('WAITING_FOR_PRODUCTION', 'IN_PRODUCTION', 'WAITING_FOR_INSPECTION', 'PLANNING_AND_ALL'), `jobs`, `selectedJob`, `isCreateModalOpen`, `isTakeModalOpen`, `isApproveModalOpen`.
 - **Key Capabilities:**
-  - **Waiting for Production Queue:**
-    - Displays all batch orders in `WAITING_FOR_PRODUCTION` with immutable PO and GRN genealogy cards, allocated quantities, and bound recipe snapshots.
-    - Operator "Take for Production" action dialog capturing calibrated furnace code, shift identifier, operator name, verified loaded piece count, and charge weight (kg).
-    - Atomically transitions job to `inProduction = true`, asserts single-active flag, and locks job against concurrent execution (`409 Conflict`).
+  - **Authoritative Waiting for Production Queue:**
+    - Displays strictly batch orders in `workflowState.waitingForProduction = true` directly from server state (`hasFetchedQueues`), preventing premature or invalid BO presentation.
+    - Authoritative Data Presentation: Lineage pill (`PO -> GRN -> BO`), Priority badge (`CRITICAL`, `URGENT`, `HIGH`, `NORMAL`), Customer and Part specs (`itemCode`, `itemName`, `materialGrade`), Pieces & Weight (`targetQuantity`, `weightKg`), Due Date, and Assigned Furnace.
+    - **Inspect Recipe Stages Action & Dialog:** Dedicated inspection modal (`AppDialog`) allowing operators to review all thermal stages, target temperatures, soak times, and atmosphere criteria directly from the bound recipe snapshot. Strictly read-only and immutable; recipe substitution is prohibited.
+    - **Operator "Take for Production" Action Dialog:** Captures furnace code, shift identifier, charge/load number, verified loaded piece count, and charge weight (kg).
+    - **Atomic Concurrency Feedback:** Atomically transitions job to `inProduction = true`, asserts single-active flag ($\sum \text{flags} = 1$), and gracefully handles `409 Conflict` if another operator took the BO simultaneously, immediately refreshing the queue to clear stale records.
   - **In-Production Execution Panel:**
     - Live tracking of active batch orders undergoing heat-treatment.
     - Displays bound Recipe snapshot checklist (`recipeSnapshot.stages`) showing stage names, target temperatures, soak durations, atmospheres, and quench media.
@@ -2020,20 +2022,36 @@ stateDiagram-v2
 The Production Phase establishes the authoritative, closed-loop manufacturing pipeline:
 $$\mathbf{PO} \longrightarrow \mathbf{GRN} \longrightarrow \mathbf{BO} \longrightarrow \mathbf{Recipe} \longrightarrow \mathbf{Production\ Execution} \longrightarrow \mathbf{Inspection\ Queue}$$
 
-1. **Phase Inception (`waiting for production`):**
-   - The Production Phase strictly begins with a completed Batch Order in `waiting for production` status (`workflowState.waitingForProduction: true`, $\sum \text{flags} = 1$).
-   - The Batch Order's unbroken source lineage ($\text{PO} \longrightarrow \text{GRN} \longrightarrow \text{BO}$) and bound Recipe snapshot (`recipeSnapshot.stages`) remain completely intact and immutable (`isImmutable: true`).
-   - Users with Production permissions (`PRODUCTION_VIEW`, `PRODUCTION_EXECUTE`, `FURNACE_OPERATOR`, `PLANT_MANAGER`) view the prioritized list of eligible batch orders via `GET /api/v1/production-jobs/waiting-for-production`.
+1. **Phase Inception & Production Queue (`waiting for production`):**
+   - The Production Phase strictly begins with an approved Batch Order in `waiting for production` status (`workflowState.waitingForProduction: true`, $\sum \text{flags} = 1$).
+   - **Server-Side Authorization Enforcement:**
+     - Access to the queue requires explicit Production viewing privileges (`PRODUCTION_JOB_VIEW` or `BATCH_ORDER_VIEW`). Unauthorized users are rejected with `403 Forbidden` at the API boundary; frontend UI hiding or route guards are never solely relied upon.
+     - Taking a BO requires execution privileges (`PRODUCTION_JOB_START`, `PRODUCTION_JOB_TRANSITION`, `PRODUCTION_JOB_UPDATE`, or `MACHINES_FURNACE_OPERATE`).
+   - **Authoritative Server-Side State Filtering:**
+     - Backend queries strictly match `{ 'workflowState.waitingForProduction': true }` / `{ waitingForProduction: true }`, explicitly excluding `inProduction: true`, `waitingForInspection: true`, and `isDeleted: true`.
+     - The frontend never relies on client-side filtering to establish eligibility.
+   - **Authoritative Job & Lineage Visibility Without Master Data Duplication:**
+     - Each queue entry includes authoritative job identification from BO (`jobNumber`, `boNumber`), PO (`poId`, `poNumber`, `supplierName`), GRN (`grnId`, `grnNumber`, `receivedDate`, `heatLotNumber`), Part (`itemCode`, `itemName`, `materialGrade`), Recipe (`recipeCode`, `recipeName`, `recipeRevision`), Quantities (`targetQuantity`, `allocatedQuantity`, `loadedQuantity`), Weight (`weightKg`), Due Date, and Priority.
+   - **Recipe Visibility & Substitution Prohibition:**
+     - The Recipe governing the BO is strictly the authoritative Recipe referenced by the Batch Order (`recipeSnapshot`).
+     - Operators can view complete thermal stages, setpoints (°C), soak durations (min), atmosphere criteria, and quench media via the dedicated Inspect Recipe Stages modal.
+     - Recipe substitution is prohibited by design; queue interactions are strictly read-only regarding master data (PO, GRN, Item, Recipe).
 
 2. **Atomic Production Ingestion (`waiting for production` $\longrightarrow$ `in production`):**
-   - An authorized Production operator initiates production via `POST /api/v1/production-jobs/:id/take-for-production`, providing furnace code, shift identifier, operator name, verified loaded piece count, and charge weight (kg).
+   - An authorized Production operator initiates production via `POST /api/v1/production-jobs/:id/take-for-production` (or `POST /api/v1/production-jobs/:id/take-production`), providing furnace code, shift identifier, operator name, verified loaded piece count, and charge weight (kg).
+   - **State Verification at Moment of Operation:**
+     - The backend verifies that the BO is still legitimately waiting for production at the exact instant of execution.
    - **Atomic State Mutation:**
      - Previous workflow flags are cleared.
-     - `inProduction` becomes the sole active workflow state (`workflowState.inProduction: true`, invariant: $\sum \text{flag}_i = 1$).
-     - System updates status to `IN_PRODUCTION` and publishes domain event `Job.InProduction`.
-   - **Concurrency & Tamper Protection:**
-     - The atomic MongoDB operation uses conditional query matching `{ 'workflowState.waitingForProduction': true }`. If another operator attempts to take the same batch order simultaneously, the transaction immediately rejects with `409 Conflict`.
-     - The batch order becomes unavailable for any function other than authorized viewing of its record; non-execution modifications through unrelated ERP endpoints are strictly rejected by model-level pre-save assertions.
+     - Atomically sets `workflowState.waitingForProduction = false` and `workflowState.inProduction = true` (invariant: $\sum \text{flag}_i = 1$).
+     - System updates status to `IN_PRODUCTION`, sets execution timestamps (`startedAt`, `actualStartDate`), and publishes domain event `Job.InProduction`.
+   - **Concurrency Collision Control (Single-Winner Guarantee):**
+     - The atomic MongoDB operation uses conditional query matching `{ _id: id, 'workflowState.waitingForProduction': true, 'workflowState.inProduction': { $ne: true } }`.
+     - If two operators attempt to take the same BO concurrently, exactly one succeeds and the other immediately receives `409 Conflict`, leaving the BO in an unambiguous state.
+   - **Queue Refresh & Active Session Isolation:**
+     - The successfully taken BO is immediately removed from the waiting-for-production queue and surfaces in the in-production workbench tab, preventing duplicate active production sessions.
+   - **Read-Only Master Data Protection:**
+     - Taking a BO for production or viewing queue details never mutates PO, GRN, Item, or Recipe master data. Non-execution modifications through unrelated ERP endpoints are strictly rejected.
 
 3. **Recipe-Driven Execution & Progress Logging:**
    - While in production, the operator must execute the exact thermal stages defined by the Recipe snapshot bound to the Batch Order (`recipeSnapshot.stages`).
@@ -2406,6 +2424,21 @@ The codebase features comprehensive test suites validating layer boundaries, dat
   - Single active flag invariant: Exactly one boolean flag active ($\sum \text{flag}_i = 1$) at all lifecycle phases.
   - Queue visibility: Approved BOs immediately appear in `/waiting-for-inspection` and vanish from active production jobs.
   - Tamper protection: In-production BO is locked against non-execution updates.
+- `backend/tests/production-queue.spec.ts` (15 tests):
+  - Strict Authorization: Rejects unauthorized users without Production view permission with `403 Forbidden` (`requireAnyPermission(PRODUCTION_JOB_VIEW, BATCH_ORDER_VIEW)`).
+  - Permitted Access: Successfully grants queue access (`200 OK`) to authorized Production operators (`FURNACE_OPERATOR`, `PLANT_MANAGER`).
+  - Empty Queue Handling: Returns clean empty array (`[]`, total: 0) when no batch orders are in `waitingForProduction`.
+  - Server-Side State Filtering: Excludes in-production, waiting-for-inspection, completed, cancelled, or draft jobs; returns strictly eligible BOs.
+  - Comprehensive Job Metadata: Confirms complete authoritative identification fields from BO, PO, GRN, Part, Recipe, Quantities, Due Date, and Priority without master data duplication.
+  - Authoritative Recipe Immutability: Guarantees recipe stages match bound recipe snapshot and rejects any recipe substitution attempts.
+  - Atomic State Mutation: Takes a waiting BO, sets `waitingForProduction = false`, `inProduction = true`, `status = IN_PRODUCTION`, and maintains single active flag.
+  - Concurrency Collision Control: Simulates two operators taking the same BO concurrently; exactly one wins (`200 OK`), competitor receives `409 Conflict`.
+  - Already-In-Production Guard: Rejects taking a BO that has already moved to production with `409 Conflict`.
+  - Invalid BO Handling: Returns `404 Not Found` when attempting to take a non-existent or deleted BO.
+  - Post-Take Queue Refresh Isolation: Successfully taken BO immediately disappears from the waiting-for-production queue and surfaces in in-production.
+  - Read-Only Master Data Protection: Queue operations never modify PO, GRN, Item, or Recipe master collections.
+  - Direct API Access Protection: Validates direct HTTP calls against `/api/v1/production-jobs/waiting-for-production` and alias `/queue/waiting-for-production`.
+  - Take Production Aliases: Confirms both `/take-for-production` and `/take-production` endpoints enforce identical authorization, invariants, and atomic concurrency.
 
 #### 4. Domain Integration Suites (47 Core Specs in `backend/tests/`)
 - Production Execution & Lifecycle: `production-job.spec.ts`, `production-execution-workflow.spec.ts`, `production-scheduling.spec.ts`, `plan-to-job-handoff.spec.ts`.

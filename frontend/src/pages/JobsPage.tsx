@@ -466,6 +466,9 @@ export const JobsPage: React.FC = () => {
   const [waitingQueue, setWaitingQueue] = useState<any[]>([]);
   const [inProductionQueue, setInProductionQueue] = useState<any[]>([]);
   const [waitingInspectionQueue, setWaitingInspectionQueue] = useState<any[]>([]);
+  const [hasFetchedQueues, setHasFetchedQueues] = useState<boolean>(false);
+  const [isInspectRecipeOpen, setIsInspectRecipeOpen] = useState<boolean>(false);
+  const [inspectedRecipeJob, setInspectedRecipeJob] = useState<ProductionJob | null>(null);
 
   // Take for Production Dialog State
   const [isTakeModalOpen, setIsTakeModalOpen] = useState(false);
@@ -557,6 +560,7 @@ export const JobsPage: React.FC = () => {
         const json = await waitRes.json();
         if (json.data && Array.isArray(json.data)) {
           setWaitingQueue(json.data);
+          setHasFetchedQueues(true);
         }
       }
       if (inProdRes && inProdRes.ok) {
@@ -909,6 +913,12 @@ export const JobsPage: React.FC = () => {
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
+        if (res.status === 409) {
+          throw new Error(
+            err.message ||
+              'CONCURRENCY CONFLICT: This Batch Order was already taken for production by another user or is no longer in WAITING_FOR_PRODUCTION state.'
+          );
+        }
         throw new Error(err.message || 'Failed to take Batch Order into production');
       }
 
@@ -927,6 +937,8 @@ export const JobsPage: React.FC = () => {
       setActiveWorkflowTab('IN_PRODUCTION');
     } catch (err: any) {
       setFeedback({ type: 'error', message: err.message || 'Error taking job into production' });
+      // Always refresh queues so conflicting or already taken records are immediately removed from view
+      await fetchQueues();
     } finally {
       setIsSubmitting(false);
     }
@@ -1069,15 +1081,30 @@ export const JobsPage: React.FC = () => {
     return matchesStatus && matchesSearch;
   });
 
-  const waitingJobs = waitingQueue.length > 0 ? waitingQueue : jobs.filter(
-    (j) => j.waitingForProduction || j.status === 'WAITING_FOR_PRODUCTION'
-  );
-  const inProdJobs = inProductionQueue.length > 0 ? inProductionQueue : jobs.filter(
-    (j) => j.inProduction || j.status === 'IN_PRODUCTION' || j.status === 'IN_PROGRESS'
-  );
-  const waitingInspJobs = waitingInspectionQueue.length > 0 ? waitingInspectionQueue : jobs.filter(
-    (j) => j.waitingForInspection || j.status === 'WAITING_FOR_INSPECTION'
-  );
+  const waitingJobs = hasFetchedQueues
+    ? waitingQueue
+    : jobs.filter(
+        (j) =>
+          (j.waitingForProduction || (j.workflowState as any)?.waitingForProduction || j.status === 'WAITING_FOR_PRODUCTION') &&
+          !j.inProduction &&
+          !(j.workflowState as any)?.inProduction
+      );
+  const inProdJobs = hasFetchedQueues
+    ? inProductionQueue
+    : jobs.filter(
+        (j) =>
+          (j.inProduction || (j.workflowState as any)?.inProduction || j.status === 'IN_PRODUCTION' || j.status === 'IN_PROGRESS') &&
+          !j.waitingForProduction &&
+          !(j.workflowState as any)?.waitingForProduction
+      );
+  const waitingInspJobs = hasFetchedQueues
+    ? waitingInspectionQueue
+    : jobs.filter(
+        (j) =>
+          (j.waitingForInspection || (j.workflowState as any)?.waitingForInspection || j.status === 'WAITING_FOR_INSPECTION') &&
+          !j.inProduction &&
+          !(j.workflowState as any)?.inProduction
+      );
 
   const waitingCount = waitingJobs.length;
   const inProgressCount = inProdJobs.length;
@@ -1290,13 +1317,38 @@ export const JobsPage: React.FC = () => {
                       return (
                         <tr key={job._id || job.id || job.jobNumber} style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
                           <td style={{ padding: '14px 16px' }}>
-                            <div style={{ fontWeight: 700, color: 'var(--color-primary)', fontSize: '14px' }}>{boDisplay}</div>
-                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginTop: '4px', padding: '2px 6px', borderRadius: '4px', background: 'rgba(255, 255, 255, 0.04)', fontSize: '11px' }}>
-                              <span style={{ color: '#93c5fd' }}>{poDisplay}</span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span style={{ fontWeight: 700, color: 'var(--color-primary)', fontSize: '14px' }}>{boDisplay}</span>
+                              <span
+                                style={{
+                                  fontSize: '10px',
+                                  fontWeight: 800,
+                                  padding: '1px 6px',
+                                  borderRadius: '4px',
+                                  background:
+                                    job.priority === 'URGENT' || job.priority === 'CRITICAL' || job.priority === 'AOG_CRITICAL'
+                                      ? 'rgba(239, 68, 68, 0.2)'
+                                      : 'rgba(245, 158, 11, 0.2)',
+                                  color:
+                                    job.priority === 'URGENT' || job.priority === 'CRITICAL' || job.priority === 'AOG_CRITICAL'
+                                      ? '#f87171'
+                                      : '#fcd34d',
+                                  border: `1px solid ${
+                                    job.priority === 'URGENT' || job.priority === 'CRITICAL' || job.priority === 'AOG_CRITICAL'
+                                      ? 'rgba(239, 68, 68, 0.4)'
+                                      : 'rgba(245, 158, 11, 0.4)'
+                                  }`
+                                }}
+                              >
+                                {job.priority || 'NORMAL'}
+                              </span>
+                            </div>
+                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginTop: '6px', padding: '2px 6px', borderRadius: '4px', background: 'rgba(255, 255, 255, 0.04)', fontSize: '11px' }}>
+                              <span style={{ color: '#93c5fd' }}>PO: {poDisplay}</span>
                               <span>→</span>
-                              <span style={{ color: '#6ee7b7' }}>{grnDisplay}</span>
+                              <span style={{ color: '#6ee7b7' }}>GRN: {grnDisplay}</span>
                               <span>→</span>
-                              <span style={{ color: '#fca5a5' }}>{boDisplay}</span>
+                              <span style={{ color: '#fca5a5' }}>BO: {boDisplay}</span>
                             </div>
                           </td>
                           <td style={{ padding: '14px 16px' }}>
@@ -1304,17 +1356,54 @@ export const JobsPage: React.FC = () => {
                             <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
                               {job.item?.itemName} [{job.item?.materialGrade}]
                             </div>
+                            <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>
+                              Part: {job.item?.itemCode}
+                            </div>
                           </td>
                           <td style={{ padding: '14px 16px' }}>
-                            <div style={{ fontWeight: 700, color: '#a3e635' }}>{job.recipeSnapshot?.recipeCode || 'REC-STANDARD'}</div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <span style={{ fontWeight: 700, color: '#a3e635' }}>{job.recipeSnapshot?.recipeCode || 'REC-STANDARD'}</span>
+                              {job.recipeSnapshot?.revisionNumber && (
+                                <span style={{ fontSize: '10px', padding: '1px 5px', borderRadius: '4px', background: 'rgba(163, 230, 53, 0.15)', color: '#a3e635', fontWeight: 600 }}>
+                                  rev {job.recipeSnapshot.revisionNumber}
+                                </span>
+                              )}
+                            </div>
                             <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>
                               {job.recipeSnapshot?.name || 'Metallurgical Heat Treat Cycle'} ({job.recipeSnapshot?.stages?.length || 3} Stages)
                             </div>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setInspectedRecipeJob(job);
+                                setIsInspectRecipeOpen(true);
+                              }}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                marginTop: '4px',
+                                padding: '3px 8px',
+                                borderRadius: '4px',
+                                background: 'rgba(163, 230, 53, 0.1)',
+                                border: '1px solid rgba(163, 230, 53, 0.3)',
+                                color: '#bef264',
+                                fontSize: '11px',
+                                fontWeight: 600,
+                                cursor: 'pointer'
+                              }}
+                            >
+                              <FileText size={11} /> Inspect Recipe Stages
+                            </button>
                           </td>
                           <td style={{ padding: '14px 16px' }}>
                             <div style={{ fontWeight: 700, color: '#ffffff' }}>{job.quantity?.targetQuantity} {job.item?.uom || 'PCS'}</div>
                             <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>
                               {job.weightKg || job.weight || 50} kg total
+                            </div>
+                            <div style={{ fontSize: '11px', color: '#93c5fd', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                              <Clock size={10} /> Due: {job.dueDate ? new Date(job.dueDate).toLocaleDateString() : job.timeline?.targetCompletionDate ? new Date(job.timeline.targetCompletionDate).toLocaleDateString() : 'Standard'}
                             </div>
                           </td>
                           <td style={{ padding: '14px 16px' }}>
@@ -3568,6 +3657,109 @@ export const JobsPage: React.FC = () => {
               🔒 <strong>Handoff Invariant:</strong> Approving this Batch Order clears <code>inProduction</code>, activates <code>waitingForInspection</code>, removes the job from active production execution, and forwards it to Quality Inspection users.
             </div>
           </form>
+        )}
+      </AppDialog>
+
+      {/* 3. Inspect Authoritative Recipe Dialog */}
+      <AppDialog
+        isOpen={isInspectRecipeOpen}
+        onClose={() => setIsInspectRecipeOpen(false)}
+        title={`Authoritative Recipe Inspection — ${inspectedRecipeJob?.boNumber || inspectedRecipeJob?.jobNumber || 'Batch Order'}`}
+        size="lg"
+        footer={
+          <AppButton variant="secondary" onClick={() => setIsInspectRecipeOpen(false)}>
+            Close Inspection
+          </AppButton>
+        }
+      >
+        {inspectedRecipeJob && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div style={{ background: 'rgba(163, 230, 53, 0.08)', border: '1px solid rgba(163, 230, 53, 0.3)', borderRadius: 'var(--radius-md)', padding: '14px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                <span style={{ fontSize: '11px', fontWeight: 800, color: '#bef264', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Authoritative Bound Recipe Specification
+                </span>
+                <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '4px', background: 'rgba(255, 255, 255, 0.08)', color: '#ffffff', fontWeight: 700 }}>
+                  Read-Only Master Data
+                </span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>Recipe Code & Revision:</div>
+                  <div style={{ fontSize: '14px', fontWeight: 700, color: '#a3e635', marginTop: '2px' }}>
+                    {inspectedRecipeJob.recipeSnapshot?.recipeCode || 'REC-STANDARD'}
+                    {inspectedRecipeJob.recipeSnapshot?.revisionNumber ? ` (Rev ${inspectedRecipeJob.recipeSnapshot.revisionNumber})` : ''}
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#ffffff', marginTop: '2px' }}>
+                    {inspectedRecipeJob.recipeSnapshot?.name || 'Standard Metallurgical Heat Treatment'}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>Governed Batch Order & Part:</div>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: '#ffffff', marginTop: '2px' }}>
+                    {inspectedRecipeJob.boNumber || inspectedRecipeJob.jobNumber}
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
+                    {inspectedRecipeJob.item?.itemCode} — {inspectedRecipeJob.item?.itemName} [{inspectedRecipeJob.item?.materialGrade}]
+                  </div>
+                </div>
+              </div>
+              <div style={{ marginTop: '10px', fontSize: '11px', color: '#bef264', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <ShieldCheck size={14} /> Process Family: {inspectedRecipeJob.recipeSnapshot?.processFamily || 'THERMAL_PROCESS'} | Substitution Strictly Forbidden
+              </div>
+            </div>
+
+            <div style={{ fontSize: '13px', fontWeight: 700, color: '#ffffff', marginTop: '4px' }}>
+              Thermal Stages & Soak Specifications ({inspectedRecipeJob.recipeSnapshot?.stages?.length || 0} Stages)
+            </div>
+
+            <div style={{ overflowX: 'auto', border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-md)' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '12px' }}>
+                <thead>
+                  <tr style={{ background: 'rgba(255, 255, 255, 0.04)', borderBottom: '1px solid var(--color-border-subtle)' }}>
+                    <th style={{ padding: '10px 12px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>SEQ</th>
+                    <th style={{ padding: '10px 12px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>STAGE NAME</th>
+                    <th style={{ padding: '10px 12px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>TARGET TEMP</th>
+                    <th style={{ padding: '10px 12px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>SOAK TIME</th>
+                    <th style={{ padding: '10px 12px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>ATMOSPHERE / CRITERIA</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(inspectedRecipeJob.recipeSnapshot?.stages && inspectedRecipeJob.recipeSnapshot.stages.length > 0) ? (
+                    inspectedRecipeJob.recipeSnapshot.stages.map((stg, idx) => (
+                      <tr key={idx} style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
+                        <td style={{ padding: '10px 12px', fontWeight: 700, color: 'var(--color-primary)' }}>
+                          {stg.sequence || stg.stageSequence || idx + 1}
+                        </td>
+                        <td style={{ padding: '10px 12px', fontWeight: 600, color: '#ffffff' }}>
+                          {stg.stageName}
+                        </td>
+                        <td style={{ padding: '10px 12px', color: '#f59e0b', fontWeight: 700 }}>
+                          {stg.targetTemperatureC}°C
+                        </td>
+                        <td style={{ padding: '10px 12px', color: '#38bdf8', fontWeight: 700 }}>
+                          {stg.soakTimeMinutes ?? stg.targetDurationMinutes ?? 0} min
+                        </td>
+                        <td style={{ padding: '10px 12px', color: 'var(--color-text-secondary)' }}>
+                          {stg.soakCriteria || stg.stageType || 'Controlled Atmosphere / Soak to Core'}
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={5} style={{ padding: '24px', textAlign: 'center', color: 'var(--color-text-muted)' }}>
+                        No stage breakdown attached to this recipe snapshot. Standard thermal cycle applies.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ fontSize: '11px', color: 'var(--color-text-muted)', lineHeight: '1.4' }}>
+              🔒 <strong>Metallurgical Traceability Notice:</strong> This recipe specification was immutably captured when the Batch Order was created from planning. The Production Queue and furnace operators cannot substitute or modify this recipe. Master data records in PO, GRN, Item, and Recipe collections remain strictly unmodifiable.
+            </div>
+          </div>
         )}
       </AppDialog>
     </PageContainer>

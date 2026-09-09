@@ -261,11 +261,25 @@ export class ProductionJobRepository
   ): Promise<ProductionJobDocument[]> {
     const query: any = {
       tenantId,
-      $or: [
-        { waitingForProduction: true },
-        { status: 'WAITING_FOR_PRODUCTION' }
+      $and: [
+        {
+          $or: [
+            { 'workflowState.waitingForProduction': true },
+            { waitingForProduction: true },
+            { 'workflow.waitingForProduction': true }
+          ]
+        },
+        {
+          $or: [
+            { status: 'WAITING_FOR_PRODUCTION' },
+            { status: { $exists: false } }
+          ]
+        }
       ],
+      'workflowState.inProduction': { $ne: true },
       inProduction: { $ne: true },
+      'workflowState.waitingForInspection': { $ne: true },
+      waitingForInspection: { $ne: true },
       isDeleted: false
     };
 
@@ -335,6 +349,16 @@ export class ProductionJobRepository
     const filter: any = {
       tenantId,
       $or: identifierMatches,
+      $and: [
+        {
+          $or: [
+            { 'workflowState.waitingForProduction': true },
+            { waitingForProduction: true },
+            { 'workflow.waitingForProduction': true }
+          ]
+        }
+      ],
+      'workflowState.inProduction': { $ne: true },
       inProduction: { $ne: true },
       isDeleted: false
     };
