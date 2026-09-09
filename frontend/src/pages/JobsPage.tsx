@@ -492,6 +492,17 @@ export const JobsPage: React.FC = () => {
   const [stageQuenchTemp, setStageQuenchTemp] = useState<number>(55);
   const [stageOperatorNotes, setStageOperatorNotes] = useState<string>('');
 
+  // Furnace Charge Parameter Update State (Prompt 8 Operator Workspace)
+  const [chargeNumber, setChargeNumber] = useState<string>('');
+  const [chargeFurnaceCode, setChargeFurnaceCode] = useState<string>('FURNACE-VAC-01');
+  const [chargeShift, setChargeShift] = useState<'SHIFT_A' | 'SHIFT_B' | 'SHIFT_C'>('SHIFT_A');
+  const [chargeLoadedPieces, setChargeLoadedPieces] = useState<number>(100);
+  const [chargeLoadedWeight, setChargeLoadedWeight] = useState<number>(50);
+  const [chargeInitialTemp, setChargeInitialTemp] = useState<number>(25);
+  const [chargeNotes, setChargeNotes] = useState<string>('');
+  const [isUpdatingCharge, setIsUpdatingCharge] = useState<boolean>(false);
+  const [isEditChargeOpen, setIsEditChargeOpen] = useState<boolean>(false);
+
   // Approve for Inspection Dialog State
   const [isApproveModalOpen, setIsApproveModalOpen] = useState(false);
   const [targetApproveJob, setTargetApproveJob] = useState<ProductionJob | null>(null);
@@ -1036,6 +1047,50 @@ export const JobsPage: React.FC = () => {
     }
   };
 
+  const handleUpdateFurnaceCharge = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const targetJob = selectedInProdJob || activeInProdJob;
+    if (!targetJob) return;
+    setIsUpdatingCharge(true);
+    setFeedback(null);
+    const jobId = targetJob._id || targetJob.id || targetJob.jobNumber;
+    try {
+      const res = await authenticatedFetch(`${env.API_BASE_URL}/production-jobs/${jobId}/charge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chargeNumber,
+          shift: chargeShift,
+          loadedPieceCount: Number(chargeLoadedPieces),
+          loadedWeightKg: Number(chargeLoadedWeight),
+          initialFurnaceTempC: Number(chargeInitialTemp),
+          notes: chargeNotes || undefined
+        })
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || 'Failed to update furnace charge');
+      }
+
+      const json = await res.json();
+      setFeedback({
+        type: 'success',
+        message: `Furnace charge parameters updated successfully for Batch Order ${targetJob.boNumber || targetJob.jobNumber}.`
+      });
+      if (json.data) {
+        setSelectedInProdJob(json.data);
+      }
+      setIsEditChargeOpen(false);
+      await fetchJobs();
+      await fetchQueues();
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Error updating furnace charge' });
+    } finally {
+      setIsUpdatingCharge(false);
+    }
+  };
+
   const handleOpenApproveModal = (job: ProductionJob) => {
     setTargetApproveJob(job);
     const loaded = job.quantity?.loadedQuantity || job.quantity?.targetQuantity || 100;
@@ -1182,6 +1237,34 @@ export const JobsPage: React.FC = () => {
     selectedInProdJob && inProdJobs.some((j) => (j._id || j.id || j.jobNumber) === (selectedInProdJob._id || selectedInProdJob.id || selectedInProdJob.jobNumber))
       ? selectedInProdJob
       : inProdJobs[0] || null;
+
+  useEffect(() => {
+    if (activeInProdJob) {
+      const fc = activeInProdJob.execution?.furnaceCharge;
+      const now = new Date();
+      setChargeNumber(
+        fc?.chargeNumber ||
+          `CHG-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}-001`
+      );
+      setChargeFurnaceCode(
+        fc?.furnaceCode ||
+          activeInProdJob.assignedFurnaceCode ||
+          activeInProdJob.equipmentAssignment?.furnaceCode ||
+          'FURNACE-VAC-01'
+      );
+      setChargeShift(fc?.shift || 'SHIFT_A');
+      setChargeLoadedPieces(
+        fc?.loadedPieces ||
+          fc?.loadedPieceCount ||
+          activeInProdJob.quantity?.loadedQuantity ||
+          activeInProdJob.quantity?.targetQuantity ||
+          100
+      );
+      setChargeLoadedWeight(fc?.loadedWeightKg || activeInProdJob.weightKg || 50);
+      setChargeInitialTemp(fc?.initialFurnaceTempC ?? 25);
+      setChargeNotes(fc?.notes || '');
+    }
+  }, [activeInProdJob?._id, activeInProdJob?.id, activeInProdJob?.jobNumber]);
 
   return (
     <PageContainer>
@@ -1594,399 +1677,749 @@ export const JobsPage: React.FC = () => {
 
               {/* Active Workbench Grid */}
               {activeInProdJob && (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '20px', alignItems: 'start' }}>
-                  {/* Left Column: Live Charge & Inspection Handoff */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                    {/* Live Furnace Card */}
-                    <AppCard style={{ padding: '18px', border: '1px solid rgba(56, 189, 248, 0.3)' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <Flame size={18} color="#38bdf8" />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                  {/* 1. AUTHORITATIVE HEADER CONTEXT BANNER (PROMPT 8 SHOP-FLOOR READOUT) */}
+                  <AppCard
+                    style={{
+                      padding: '20px 24px',
+                      background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.95) 0%, rgba(30, 41, 59, 0.85) 100%)',
+                      border: '1px solid rgba(56, 189, 248, 0.4)',
+                      boxShadow: '0 8px 32px -4px rgba(0, 0, 0, 0.5), 0 0 16px 0 rgba(56, 189, 248, 0.15)'
+                    }}
+                  >
+                    {/* Identity & Status Ribbon */}
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'flex-start',
+                        flexWrap: 'wrap',
+                        gap: '14px',
+                        marginBottom: '16px',
+                        borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+                        paddingBottom: '16px'
+                      }}
+                    >
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: '20px', fontWeight: 900, color: '#38bdf8', letterSpacing: '0.03em' }}>
+                            {activeInProdJob.boNumber || activeInProdJob.jobNumber}
+                          </span>
+                          <span
+                            style={{
+                              fontSize: '11px',
+                              fontWeight: 800,
+                              padding: '3px 10px',
+                              borderRadius: '999px',
+                              background: 'rgba(56, 189, 248, 0.2)',
+                              color: '#38bdf8',
+                              border: '1px solid rgba(56, 189, 248, 0.4)',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '5px'
+                            }}
+                          >
+                            <Flame size={12} /> IN PRODUCTION
+                          </span>
+                          <span
+                            style={{
+                              fontSize: '11px',
+                              fontWeight: 700,
+                              padding: '3px 8px',
+                              borderRadius: '4px',
+                              background: 'rgba(52, 211, 153, 0.15)',
+                              color: '#34d399',
+                              border: '1px solid rgba(52, 211, 153, 0.3)',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                          >
+                            <Lock size={12} /> Master Recipe Protected (Read-Only)
+                          </span>
+                        </div>
+                        {/* Lineage Breadcrumb */}
+                        <div
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            marginTop: '8px',
+                            padding: '4px 10px',
+                            borderRadius: '6px',
+                            background: 'rgba(0, 0, 0, 0.3)',
+                            border: '1px solid rgba(255, 255, 255, 0.06)',
+                            fontSize: '12px'
+                          }}
+                        >
+                          <span style={{ color: '#93c5fd', fontWeight: 600 }}>PO: {activeInProdJob.poNumber || 'PO-2026-00101'}</span>
+                          <span style={{ color: 'var(--color-text-muted)' }}>→</span>
+                          <span style={{ color: '#6ee7b7', fontWeight: 600 }}>GRN: {activeInProdJob.grnNumber || 'GRN-202609-0501'}</span>
+                          <span style={{ color: 'var(--color-text-muted)' }}>→</span>
+                          <span style={{ color: '#fca5a5', fontWeight: 700 }}>BO: {activeInProdJob.boNumber || activeInProdJob.jobNumber}</span>
+                        </div>
+                      </div>
+
+                      {/* Customer & Due Date */}
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: '13px', fontWeight: 700, color: '#ffffff' }}>
+                          {activeInProdJob.customer?.customerName || 'Customer Specification'}
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--color-text-muted)', marginTop: '2px' }}>
+                          Code: {activeInProdJob.customer?.customerCode || 'CUST-001'}
+                        </div>
+                        <div style={{ fontSize: '11px', color: '#93c5fd', marginTop: '6px', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '4px' }}>
+                          <Clock size={12} /> Due: {activeInProdJob.dueDate ? new Date(activeInProdJob.dueDate).toLocaleDateString() : '2026-09-15'}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 4 Metrics Context Strip */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
+                      {/* Part & Metallurgy */}
+                      <div style={{ padding: '10px 14px', borderRadius: '8px', background: 'rgba(0, 0, 0, 0.25)', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
+                        <div style={{ fontSize: '10px', color: 'var(--color-text-muted)', fontWeight: 700, textTransform: 'uppercase' }}>Part & Material</div>
+                        <div style={{ fontSize: '14px', fontWeight: 700, color: '#ffffff', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {activeInProdJob.item?.itemName}
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px' }}>
+                          <span style={{ fontSize: '11px', fontWeight: 800, color: '#34d399', padding: '1px 6px', borderRadius: '3px', background: 'rgba(52, 211, 153, 0.15)' }}>
+                            {activeInProdJob.item?.materialGrade}
+                          </span>
+                          <span style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>{activeInProdJob.item?.itemCode}</span>
+                        </div>
+                      </div>
+
+                      {/* Piece Counts */}
+                      <div style={{ padding: '10px 14px', borderRadius: '8px', background: 'rgba(0, 0, 0, 0.25)', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
+                        <div style={{ fontSize: '10px', color: 'var(--color-text-muted)', fontWeight: 700, textTransform: 'uppercase' }}>Piece Balance</div>
+                        <div style={{ fontSize: '20px', fontWeight: 900, color: '#ffffff', marginTop: '2px' }}>
+                          {activeInProdJob.quantity?.loadedQuantity || activeInProdJob.quantity?.targetQuantity || 100} <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-secondary)' }}>{activeInProdJob.item?.uom || 'PCS'} LOADED</span>
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--color-text-muted)', marginTop: '2px' }}>
+                          Target: {activeInProdJob.quantity?.targetQuantity || 100} • Weight: {activeInProdJob.execution?.furnaceCharge?.loadedWeightKg || activeInProdJob.weightKg || 50} kg
+                        </div>
+                      </div>
+
+                      {/* Recipe Authority */}
+                      <div style={{ padding: '10px 14px', borderRadius: '8px', background: 'rgba(0, 0, 0, 0.25)', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
+                        <div style={{ fontSize: '10px', color: 'var(--color-text-muted)', fontWeight: 700, textTransform: 'uppercase' }}>Bound Recipe</div>
+                        <div style={{ fontSize: '14px', fontWeight: 800, color: '#a3e635', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          {activeInProdJob.recipeSnapshot?.recipeCode || 'REC-VAC-4340'}
+                          <span style={{ fontSize: '10px', padding: '1px 5px', borderRadius: '3px', background: 'rgba(163, 230, 53, 0.2)', color: '#a3e635' }}>
+                            REV {activeInProdJob.recipeSnapshot?.revisionNumber ?? 1}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
+                          {activeInProdJob.recipeSnapshot?.processFamily || 'VACUUM_HEAT_TREATMENT'}
+                        </div>
+                      </div>
+
+                      {/* Furnace Station */}
+                      <div style={{ padding: '10px 14px', borderRadius: '8px', background: 'rgba(0, 0, 0, 0.25)', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
+                        <div style={{ fontSize: '10px', color: 'var(--color-text-muted)', fontWeight: 700, textTransform: 'uppercase' }}>Equipment Bay</div>
+                        <div style={{ fontSize: '14px', fontWeight: 800, color: '#38bdf8', marginTop: '2px' }}>
+                          {activeInProdJob.equipmentAssignment?.furnaceCode || activeInProdJob.assignedFurnaceCode || 'FURNACE-VAC-01'}
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
+                          {activeInProdJob.equipmentAssignment?.locationBay || 'Bay 1 Vacuum Bay'} • Pyrometry CLASS_2
+                        </div>
+                      </div>
+                    </div>
+                  </AppCard>
+
+                  {/* 2. PROCESS PROGRESS & SEQUENTIAL STEPPER */}
+                  {(() => {
+                    const stages = activeInProdJob.recipeSnapshot?.stages || [
+                      { sequence: 1, stageName: 'Preheat Ramp', targetTemperatureC: 650, soakTimeMinutes: 45, temperatureToleranceMinusC: 10, temperatureTolerancePlusC: 10 },
+                      { sequence: 2, stageName: 'Austenitizing Soak', targetTemperatureC: 845, soakTimeMinutes: 90, temperatureToleranceMinusC: 10, temperatureTolerancePlusC: 10 },
+                      { sequence: 3, stageName: 'High Pressure N2 Quench', targetTemperatureC: 45, soakTimeMinutes: 20, temperatureToleranceMinusC: 10, temperatureTolerancePlusC: 10 }
+                    ];
+                    const executedList = activeInProdJob.execution?.stageProgress || [];
+                    const executedSeqs = new Set(executedList.map((s: any) => s.stageSequence));
+                    const totalStages = stages.length;
+                    const completedStages = executedList.length;
+                    const progressPct = totalStages > 0 ? Math.round((completedStages / totalStages) * 100) : 0;
+
+                    return (
+                      <AppCard style={{ padding: '16px 20px', border: '1px solid rgba(56, 189, 248, 0.3)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <Layers size={18} color="#38bdf8" />
+                            <span style={{ fontSize: '13px', fontWeight: 800, color: '#ffffff', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+                              Process Progress Stepper: Stage {completedStages} of {totalStages} Completed ({progressPct}%)
+                            </span>
+                          </div>
+                          <span style={{ fontSize: '11px', fontWeight: 700, color: progressPct === 100 ? '#34d399' : '#38bdf8' }}>
+                            {progressPct === 100 ? '✓ Ready for Inspection Handoff' : `${totalStages - completedStages} Stages Remaining`}
+                          </span>
+                        </div>
+
+                        {/* Visual Completion Percentage Bar */}
+                        <div style={{ width: '100%', height: '8px', background: 'rgba(255, 255, 255, 0.08)', borderRadius: '4px', overflow: 'hidden', marginBottom: '16px' }}>
+                          <div
+                            style={{
+                              width: `${progressPct}%`,
+                              height: '100%',
+                              background: progressPct === 100 ? 'linear-gradient(90deg, #10b981 0%, #34d399 100%)' : 'linear-gradient(90deg, #0284c7 0%, #38bdf8 100%)',
+                              transition: 'width 0.4s ease'
+                            }}
+                          />
+                        </div>
+
+                        {/* Multi-Stage Cards */}
+                        <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(180px, 1fr))`, gap: '10px' }}>
+                          {stages.map((stg: any, idx: number) => {
+                            const seq = stg.sequence || stg.stageSequence || idx + 1;
+                            const logged = executedList.find((s: any) => s.stageSequence === seq);
+                            const isCompleted = !!logged;
+                            const isCompliant = logged ? logged.isCompliant !== false && !logged.deviationWarning : true;
+                            const isActionable = seq === 1 || executedSeqs.has(seq - 1);
+                            const statusType = isCompleted
+                              ? isCompliant ? 'COMPLETED_COMPLIANT' : 'COMPLETED_DEVIATION'
+                              : isActionable ? 'NEXT_IN_SEQUENCE' : 'LOCKED';
+
+                            return (
+                              <div
+                                key={seq}
+                                style={{
+                                  padding: '10px 12px',
+                                  borderRadius: '6px',
+                                  background:
+                                    statusType === 'COMPLETED_COMPLIANT'
+                                      ? 'rgba(52, 211, 153, 0.1)'
+                                      : statusType === 'COMPLETED_DEVIATION'
+                                      ? 'rgba(239, 68, 68, 0.1)'
+                                      : statusType === 'NEXT_IN_SEQUENCE'
+                                      ? 'rgba(56, 189, 248, 0.1)'
+                                      : 'rgba(255, 255, 255, 0.02)',
+                                  border:
+                                    statusType === 'COMPLETED_COMPLIANT'
+                                      ? '1px solid rgba(52, 211, 153, 0.4)'
+                                      : statusType === 'COMPLETED_DEVIATION'
+                                      ? '1px solid rgba(239, 68, 68, 0.45)'
+                                      : statusType === 'NEXT_IN_SEQUENCE'
+                                      ? '1px solid rgba(56, 189, 248, 0.4)'
+                                      : '1px solid var(--color-border-subtle)',
+                                  fontSize: '11px'
+                                }}
+                              >
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                                  <span style={{ fontWeight: 800, color: '#ffffff' }}>Stage {seq}</span>
+                                  {statusType === 'COMPLETED_COMPLIANT' && (
+                                    <span style={{ color: '#34d399', fontWeight: 700, fontSize: '10px' }}>✓ PASS</span>
+                                  )}
+                                  {statusType === 'COMPLETED_DEVIATION' && (
+                                    <span style={{ color: '#f87171', fontWeight: 800, fontSize: '10px' }}>⚠️ EXCURSION</span>
+                                  )}
+                                  {statusType === 'NEXT_IN_SEQUENCE' && (
+                                    <span style={{ color: '#38bdf8', fontWeight: 800, fontSize: '10px' }}>READY</span>
+                                  )}
+                                  {statusType === 'LOCKED' && (
+                                    <span style={{ color: 'var(--color-text-muted)', fontSize: '10px' }}><Lock size={10} /></span>
+                                  )}
+                                </div>
+                                <div style={{ fontWeight: 700, color: statusType === 'COMPLETED_DEVIATION' ? '#f87171' : '#ffffff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                  {stg.stageName}
+                                </div>
+                                <div style={{ color: 'var(--color-text-secondary)', fontSize: '10px', marginTop: '2px' }}>
+                                  {isCompleted ? `${logged.actualTemperatureC}°C • ${logged.actualDurationMinutes}m` : `${stg.targetTemperatureC}°C • ${stg.soakTimeMinutes}m`}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </AppCard>
+                    );
+                  })()}
+
+                  {/* 3. WORKBENCH TWO-COLUMN SPLIT */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '20px', alignItems: 'start' }}>
+                    {/* Left Column: Live Furnace Charge State & Inspection Handoff */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                      {/* Live Furnace Card */}
+                      <AppCard style={{ padding: '18px', border: '1px solid rgba(56, 189, 248, 0.3)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <Flame size={18} color="#38bdf8" />
+                            <h3 style={{ margin: 0, fontSize: '14px', fontWeight: 800, color: '#ffffff' }}>
+                              FURNACE CHARGE PARAMETERS
+                            </h3>
+                          </div>
+                          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                            <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '4px', background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8', fontWeight: 700 }}>
+                              {activeInProdJob.equipmentAssignment?.furnaceCode || chargeFurnaceCode || 'FURNACE-VAC-01'}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setIsEditChargeOpen(!isEditChargeOpen)}
+                              style={{
+                                background: isEditChargeOpen ? 'rgba(56, 189, 248, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                                border: '1px solid rgba(56, 189, 248, 0.3)',
+                                borderRadius: '4px',
+                                color: '#38bdf8',
+                                fontSize: '11px',
+                                padding: '2px 8px',
+                                cursor: 'pointer',
+                                fontWeight: 700
+                              }}
+                            >
+                              {isEditChargeOpen ? 'Cancel' : 'Edit Charge'}
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Read-Only Charge Readouts */}
+                        {!isEditChargeOpen && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '12px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '4px' }}>
+                              <span style={{ color: 'var(--color-text-secondary)' }}>Charge Number:</span>
+                              <span style={{ fontWeight: 700, color: '#f59e0b' }}>
+                                {activeInProdJob.execution?.furnaceCharge?.chargeNumber || chargeNumber || 'CHG-202609-ACTIVE'}
+                              </span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '4px' }}>
+                              <span style={{ color: 'var(--color-text-secondary)' }}>Operating Shift:</span>
+                              <span style={{ fontWeight: 700, color: '#ffffff' }}>
+                                {activeInProdJob.execution?.furnaceCharge?.shift || chargeShift || 'SHIFT_A'}
+                              </span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '4px' }}>
+                              <span style={{ color: 'var(--color-text-secondary)' }}>Loaded Pieces:</span>
+                              <span style={{ fontWeight: 800, color: '#ffffff' }}>
+                                {activeInProdJob.quantity?.loadedQuantity || activeInProdJob.quantity?.targetQuantity || 100} {activeInProdJob.item?.uom || 'PCS'}
+                              </span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '4px' }}>
+                              <span style={{ color: 'var(--color-text-secondary)' }}>Loaded Weight:</span>
+                              <span style={{ fontWeight: 800, color: '#ffffff' }}>
+                                {activeInProdJob.execution?.furnaceCharge?.loadedWeightKg || activeInProdJob.weightKg || 50} kg
+                              </span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '4px' }}>
+                              <span style={{ color: 'var(--color-text-secondary)' }}>Initial Furnace Temp:</span>
+                              <span style={{ fontWeight: 700, color: '#38bdf8' }}>
+                                {activeInProdJob.execution?.furnaceCharge?.initialFurnaceTempC ?? chargeInitialTemp ?? 25}°C
+                              </span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Editable Charge Form */}
+                        {isEditChargeOpen && (
+                          <form onSubmit={handleUpdateFurnaceCharge} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                              <AppInput
+                                label="Charge Number *"
+                                value={chargeNumber}
+                                onChange={(e) => setChargeNumber(e.target.value)}
+                                required
+                              />
+                              <AppSelect
+                                label="Shift *"
+                                value={chargeShift}
+                                onChange={(e) => setChargeShift(e.target.value as any)}
+                                options={[
+                                  { value: 'SHIFT_A', label: 'Shift A (Morning)' },
+                                  { value: 'SHIFT_B', label: 'Shift B (Evening)' },
+                                  { value: 'SHIFT_C', label: 'Shift C (Night)' }
+                                ]}
+                              />
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                              <AppInput
+                                label="Loaded Pieces *"
+                                type="number"
+                                min={1}
+                                value={chargeLoadedPieces}
+                                onChange={(e) => setChargeLoadedPieces(Number(e.target.value))}
+                                required
+                              />
+                              <AppInput
+                                label="Loaded Weight (kg) *"
+                                type="number"
+                                min={0.1}
+                                step={0.1}
+                                value={chargeLoadedWeight}
+                                onChange={(e) => setChargeLoadedWeight(Number(e.target.value))}
+                                required
+                              />
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                              <AppInput
+                                label="Initial Temp (°C) *"
+                                type="number"
+                                value={chargeInitialTemp}
+                                onChange={(e) => setChargeInitialTemp(Number(e.target.value))}
+                                required
+                              />
+                              <AppInput
+                                label="Charge Notes"
+                                value={chargeNotes}
+                                placeholder="Trailing thermocouples verified..."
+                                onChange={(e) => setChargeNotes(e.target.value)}
+                              />
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
+                              <AppButton
+                                type="submit"
+                                variant="primary"
+                                size="sm"
+                                isLoading={isUpdatingCharge}
+                                disabled={!canOperateProduction}
+                              >
+                                Save Charge Parameters
+                              </AppButton>
+                              <AppButton
+                                type="button"
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => setIsEditChargeOpen(false)}
+                              >
+                                Cancel
+                              </AppButton>
+                            </div>
+                          </form>
+                        )}
+                      </AppCard>
+
+                      {/* Inspection Handoff Gate Card */}
+                      <AppCard style={{ padding: '18px', border: '1px solid rgba(52, 211, 153, 0.35)', background: 'rgba(52, 211, 153, 0.03)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                          <ShieldCheck size={18} color="#34d399" />
                           <h3 style={{ margin: 0, fontSize: '14px', fontWeight: 800, color: '#ffffff' }}>
-                            LIVE FURNACE CHARGE EXECUTION
+                            PRODUCTION COMPLETION & INSPECTION APPROVAL
                           </h3>
                         </div>
-                        <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '4px', background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8', fontWeight: 700 }}>
-                          {activeInProdJob.equipmentAssignment?.furnaceCode || 'FURNACE-VAC-01'}
-                        </span>
-                      </div>
+                        <p style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginBottom: '14px', lineHeight: '1.5' }}>
+                          After all required Recipe stages are verified complete and piece balance confirmed ($Q_{'{'}completed{'}'} + Q_{'{'}scrapped{'}'} = Q_{'{'}loaded{'}'}$), approve this Batch Order to hand off to the Quality Inspection Queue.
+                        </p>
+                        <AppButton
+                          variant="primary"
+                          size="md"
+                          style={{ width: '100%', background: '#059669', borderColor: '#10b981' }}
+                          leftIcon={<ShieldCheck size={16} />}
+                          disabled={!canApproveInspection}
+                          onClick={() => handleOpenApproveModal(activeInProdJob)}
+                        >
+                          {canApproveInspection ? 'Approve for Inspection' : 'Inspection Approval Permission Required'}
+                        </AppButton>
+                      </AppCard>
+                    </div>
 
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '12px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '4px' }}>
-                          <span style={{ color: 'var(--color-text-secondary)' }}>Batch Order Lineage:</span>
-                          <span style={{ fontWeight: 700, color: '#ffffff' }}>
-                            {activeInProdJob.poNumber || 'PO'} → {activeInProdJob.grnNumber || 'GRN'} → {activeInProdJob.boNumber || activeInProdJob.jobNumber}
-                          </span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '4px' }}>
-                          <span style={{ color: 'var(--color-text-secondary)' }}>Customer & Item:</span>
-                          <span style={{ fontWeight: 600, color: '#ffffff' }}>
-                            {activeInProdJob.customer?.customerName} • {activeInProdJob.item?.itemName}
-                          </span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '4px' }}>
-                          <span style={{ color: 'var(--color-text-secondary)' }}>Material Grade:</span>
-                          <span style={{ fontWeight: 700, color: '#34d399' }}>{activeInProdJob.item?.materialGrade}</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '4px' }}>
-                          <span style={{ color: 'var(--color-text-secondary)' }}>Charge Number:</span>
-                          <span style={{ fontWeight: 700, color: '#f59e0b' }}>
-                            {activeInProdJob.execution?.furnaceCharge?.chargeNumber || 'CHG-202609-ACTIVE'}
-                          </span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '4px' }}>
-                          <span style={{ color: 'var(--color-text-secondary)' }}>Loaded Pieces:</span>
-                          <span style={{ fontWeight: 700, color: '#ffffff' }}>
-                            {activeInProdJob.quantity?.loadedQuantity || activeInProdJob.quantity?.targetQuantity} {activeInProdJob.item?.uom || 'PCS'}
-                          </span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '4px' }}>
-                          <span style={{ color: 'var(--color-text-secondary)' }}>Loaded Weight:</span>
-                          <span style={{ fontWeight: 700, color: '#ffffff' }}>
-                            {activeInProdJob.execution?.furnaceCharge?.loadedWeightKg || activeInProdJob.weightKg || 50} kg
-                          </span>
-                        </div>
-                      </div>
-                    </AppCard>
-
-                    {/* Inspection Handoff Gate Card */}
-                    <AppCard style={{ padding: '18px', border: '1px solid rgba(52, 211, 153, 0.35)', background: 'rgba(52, 211, 153, 0.03)' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                        <ShieldCheck size={18} color="#34d399" />
-                        <h3 style={{ margin: 0, fontSize: '14px', fontWeight: 800, color: '#ffffff' }}>
-                          PRODUCTION COMPLETION & INSPECTION APPROVAL
-                        </h3>
-                      </div>
-                      <p style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginBottom: '14px', lineHeight: '1.5' }}>
-                        After all required Recipe stages are verified complete and pieces balanced ($Q_{'{'}completed{'}'} + Q_{'{'}scrapped{'}'} = Q_{'{'}loaded{'}'}$), approve this Batch Order to hand off to the Quality Inspection Queue.
-                      </p>
-                      <AppButton
-                        variant="primary"
-                        size="md"
-                        style={{ width: '100%', background: '#059669', borderColor: '#10b981' }}
-                        leftIcon={<ShieldCheck size={16} />}
-                        disabled={!canApproveInspection}
-                        onClick={() => handleOpenApproveModal(activeInProdJob)}
-                      >
-                        {canApproveInspection ? 'Approve for Inspection' : 'Inspection Approval Permission Required'}
-                      </AppButton>
-                    </AppCard>
-                  </div>
-
-                  {/* Right Column: Recipe Stages Checklist & Stage Progress Logger */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                    {/* Bound Recipe Stages */}
-                    <AppCard style={{ padding: '18px', border: '1px solid rgba(163, 230, 53, 0.3)' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
-                        <div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <span style={{ fontSize: '11px', fontWeight: 800, color: '#a3e635', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                              AUTHORITATIVE RECIPE PROCESS SPECIFICATION
-                            </span>
-                            <span style={{ fontSize: '10px', padding: '1px 6px', borderRadius: '4px', background: 'rgba(163, 230, 53, 0.2)', color: '#a3e635', fontWeight: 800 }}>
-                              REV {activeInProdJob.recipeSnapshot?.revisionNumber ?? 1}
-                            </span>
+                    {/* Right Column: Recipe Specification & Stage Progress Logger */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                      {/* Recipe Specification Panel (Read-Only Master Data Distinction) */}
+                      <AppCard style={{ padding: '18px', border: '1px solid rgba(163, 230, 53, 0.3)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
+                          <div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <span style={{ fontSize: '11px', fontWeight: 800, color: '#a3e635', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                AUTHORITATIVE RECIPE SPECIFICATION (READ-ONLY)
+                              </span>
+                              <span style={{ fontSize: '10px', padding: '1px 6px', borderRadius: '4px', background: 'rgba(163, 230, 53, 0.2)', color: '#a3e635', fontWeight: 800 }}>
+                                REV {activeInProdJob.recipeSnapshot?.revisionNumber ?? 1}
+                              </span>
+                            </div>
+                            <div style={{ fontWeight: 700, color: '#ffffff', fontSize: '15px', marginTop: '2px' }}>
+                              {activeInProdJob.recipeSnapshot?.recipeCode || 'REC-VAC-4340'} — {activeInProdJob.recipeSnapshot?.name || 'Standard Heat Treat Cycle'}
+                            </div>
                           </div>
-                          <div style={{ fontWeight: 700, color: '#ffffff', fontSize: '15px', marginTop: '2px' }}>
-                            {activeInProdJob.recipeSnapshot?.recipeCode || 'REC-STANDARD'} — {activeInProdJob.recipeSnapshot?.name || 'Standard Heat Treat Cycle'}
-                          </div>
+                          <span style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
+                            Process: <strong>{activeInProdJob.recipeSnapshot?.processFamily || 'THERMAL'}</strong>
+                          </span>
                         </div>
-                        <span style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
-                          Process: <strong>{activeInProdJob.recipeSnapshot?.processFamily || 'THERMAL'}</strong>
-                        </span>
-                      </div>
 
-                      {/* Sequential Stages List */}
+                        {/* Sequential Stages List with High-Contrast Readouts */}
+                        {(() => {
+                          const stages = activeInProdJob.recipeSnapshot?.stages || [
+                            { sequence: 1, stageName: 'Preheat Ramp', targetTemperatureC: 650, soakTimeMinutes: 45, temperatureToleranceMinusC: 10, temperatureTolerancePlusC: 10 },
+                            { sequence: 2, stageName: 'Austenitizing Soak', targetTemperatureC: 845, soakTimeMinutes: 90, temperatureToleranceMinusC: 10, temperatureTolerancePlusC: 10 },
+                            { sequence: 3, stageName: 'High Pressure N2 Quench', targetTemperatureC: 45, soakTimeMinutes: 20, temperatureToleranceMinusC: 10, temperatureTolerancePlusC: 10 }
+                          ];
+                          const executedList = activeInProdJob.execution?.stageProgress || [];
+                          const executedSeqs = new Set(executedList.map((s: any) => s.stageSequence));
+
+                          return (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                              {stages.map((stg: any, idx: number) => {
+                                const seq = stg.sequence || stg.stageSequence || idx + 1;
+                                const logged = executedList.find((s: any) => s.stageSequence === seq);
+                                const isCompleted = !!logged;
+                                const isCompliant = logged ? logged.isCompliant !== false && !logged.deviationWarning : true;
+                                const isActionable = seq === 1 || executedSeqs.has(seq - 1);
+                                const targetT = stg.targetTemperatureC;
+                                const tolMinus = stg.temperatureToleranceMinusC ?? 10;
+                                const tolPlus = stg.temperatureTolerancePlusC ?? 10;
+                                const minT = targetT - tolMinus;
+                                const maxT = targetT + tolPlus;
+
+                                return (
+                                  <div
+                                    key={seq}
+                                    style={{
+                                      padding: '12px 14px',
+                                      borderRadius: '8px',
+                                      background: isCompleted
+                                        ? isCompliant
+                                          ? 'rgba(52, 211, 153, 0.08)'
+                                          : 'rgba(239, 68, 68, 0.08)'
+                                        : isActionable
+                                        ? 'rgba(56, 189, 248, 0.05)'
+                                        : 'rgba(255, 255, 255, 0.02)',
+                                      border: isCompleted
+                                        ? isCompliant
+                                          ? '1px solid rgba(52, 211, 153, 0.35)'
+                                          : '1px solid rgba(239, 68, 68, 0.4)'
+                                        : isActionable
+                                        ? '1px solid rgba(56, 189, 248, 0.35)'
+                                        : '1px solid var(--color-border-subtle)',
+                                      display: 'flex',
+                                      flexDirection: 'column',
+                                      gap: '6px',
+                                      fontSize: '12px'
+                                    }}
+                                  >
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <span
+                                          style={{
+                                            width: '20px',
+                                            height: '20px',
+                                            borderRadius: '50%',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            fontSize: '11px',
+                                            fontWeight: 800,
+                                            background: isCompleted
+                                              ? isCompliant ? '#059669' : '#dc2626'
+                                              : isActionable ? '#0284c7' : 'rgba(255, 255, 255, 0.1)',
+                                            color: '#ffffff'
+                                          }}
+                                        >
+                                          {seq}
+                                        </span>
+                                        <span style={{ fontWeight: 800, fontSize: '13px', color: isCompleted ? (isCompliant ? '#34d399' : '#f87171') : isActionable ? '#38bdf8' : '#ffffff' }}>
+                                          {stg.stageName}
+                                        </span>
+                                      </div>
+                                      <div style={{ textAlign: 'right' }}>
+                                        {isCompleted ? (
+                                          isCompliant ? (
+                                            <span style={{ fontSize: '11px', fontWeight: 700, color: '#34d399', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                              <CheckCircle2 size={13} /> {logged.actualTemperatureC}°C • {logged.actualDurationMinutes}m (PASS)
+                                            </span>
+                                          ) : (
+                                            <span style={{ fontSize: '11px', fontWeight: 700, color: '#f87171', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                              <AlertTriangle size={13} /> {logged.actualTemperatureC}°C • {logged.actualDurationMinutes}m (DEVIATION Δ={logged.actualTemperatureC - targetT > 0 ? `+${logged.actualTemperatureC - targetT}` : `${logged.actualTemperatureC - targetT}`}°C)
+                                            </span>
+                                          )
+                                        ) : isActionable ? (
+                                          <span style={{ fontSize: '11px', fontWeight: 700, color: '#38bdf8', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                            <Clock size={13} /> NEXT IN SEQUENCE
+                                          </span>
+                                        ) : (
+                                          <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text-muted)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                            <Lock size={12} /> WAITING FOR STAGE {seq - 1}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+
+                                    {/* Requirements Row with 20px+ Readout */}
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', color: 'var(--color-text-secondary)', fontSize: '11px' }}>
+                                      <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
+                                        <span>Target Temp:</span>
+                                        <span style={{ fontSize: '20px', fontWeight: 900, color: '#f59e0b' }}>{targetT}°C</span>
+                                        <span style={{ color: 'var(--color-text-muted)', fontSize: '11px' }}>
+                                          [{minT}°C – {maxT}°C]
+                                        </span>
+                                      </div>
+                                      <div>
+                                        Planned Duration: <strong style={{ color: '#ffffff', fontSize: '14px' }}>{stg.soakTimeMinutes || stg.targetDurationMinutes || 60}m</strong> ({stg.soakCriteria || 'LOAD_THERMOCOUPLE_REACHED'})
+                                      </div>
+                                    </div>
+
+                                    {/* Deviation Warning Pill if Out of Spec */}
+                                    {logged && !isCompliant && logged.deviationWarning && (
+                                      <div style={{ padding: '4px 8px', borderRadius: '4px', background: 'rgba(239, 68, 68, 0.15)', color: '#fca5a5', fontSize: '11px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        <AlertTriangle size={12} /> {logged.deviationWarning}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          );
+                        })()}
+                      </AppCard>
+
+                      {/* Record Recipe Stage Progress Form */}
                       {(() => {
                         const stages = activeInProdJob.recipeSnapshot?.stages || [
                           { sequence: 1, stageName: 'Preheat Ramp', targetTemperatureC: 650, soakTimeMinutes: 45, temperatureToleranceMinusC: 10, temperatureTolerancePlusC: 10 },
                           { sequence: 2, stageName: 'Austenitizing Soak', targetTemperatureC: 845, soakTimeMinutes: 90, temperatureToleranceMinusC: 10, temperatureTolerancePlusC: 10 },
                           { sequence: 3, stageName: 'High Pressure N2 Quench', targetTemperatureC: 45, soakTimeMinutes: 20, temperatureToleranceMinusC: 10, temperatureTolerancePlusC: 10 }
                         ];
-                        const executedList = activeInProdJob.execution?.stageProgress || [];
-                        const executedSeqs = new Set(executedList.map((s: any) => s.stageSequence));
+                        const executedSeqs = new Set((activeInProdJob.execution?.stageProgress || []).map((s: any) => s.stageSequence));
+                        const selectedStg = stages.find((s: any) => (s.sequence || s.stageSequence) === selectedStageSeq) || stages[0];
+                        const targetT = selectedStg?.targetTemperatureC ?? 650;
+                        const tolMinus = selectedStg?.temperatureToleranceMinusC ?? 10;
+                        const tolPlus = selectedStg?.temperatureTolerancePlusC ?? 10;
+                        const minAllowed = targetT - tolMinus;
+                        const maxAllowed = targetT + tolPlus;
+                        const tempDelta = stageActualTemp - targetT;
+                        const isOutOfTol = stageActualTemp < minAllowed || stageActualTemp > maxAllowed;
+                        const isSequenceLocked = selectedStageSeq > 1 && !executedSeqs.has(selectedStageSeq - 1);
 
                         return (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                            {stages.map((stg: any, idx: number) => {
-                              const seq = stg.sequence || stg.stageSequence || idx + 1;
-                              const logged = executedList.find((s: any) => s.stageSequence === seq);
-                              const isCompleted = !!logged;
-                              const isCompliant = logged ? logged.isCompliant !== false : true;
-                              const isActionable = seq === 1 || executedSeqs.has(seq - 1);
-                              const targetT = stg.targetTemperatureC;
-                              const tolMinus = stg.temperatureToleranceMinusC ?? 10;
-                              const tolPlus = stg.temperatureTolerancePlusC ?? 10;
-                              const minT = targetT - tolMinus;
-                              const maxT = targetT + tolPlus;
+                          <AppCard style={{ padding: '18px', border: '1px solid var(--color-border-subtle)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                              <h3 style={{ margin: 0, fontSize: '14px', fontWeight: 800, color: '#ffffff' }}>
+                                RECORD STAGE EXECUTION ACTUALS
+                              </h3>
+                              <span style={{ fontSize: '11px', color: '#38bdf8', fontWeight: 700 }}>
+                                Stage {selectedStageSeq}: {selectedStg?.stageName}
+                              </span>
+                            </div>
 
-                              return (
-                                <div
-                                  key={seq}
-                                  style={{
-                                    padding: '12px 14px',
-                                    borderRadius: '8px',
-                                    background: isCompleted
-                                      ? isCompliant
-                                        ? 'rgba(52, 211, 153, 0.08)'
-                                        : 'rgba(239, 68, 68, 0.08)'
-                                      : isActionable
-                                      ? 'rgba(56, 189, 248, 0.05)'
-                                      : 'rgba(255, 255, 255, 0.02)',
-                                    border: isCompleted
-                                      ? isCompliant
-                                        ? '1px solid rgba(52, 211, 153, 0.35)'
-                                        : '1px solid rgba(239, 68, 68, 0.4)'
-                                      : isActionable
-                                      ? '1px solid rgba(56, 189, 248, 0.35)'
-                                      : '1px solid var(--color-border-subtle)',
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    gap: '6px',
-                                    fontSize: '12px'
+                            {/* Authoritative Requirement Window Banner with Real-Time Delta */}
+                            <div
+                              style={{
+                                padding: '10px 14px',
+                                borderRadius: '6px',
+                                background: isOutOfTol ? 'rgba(239, 68, 68, 0.08)' : 'rgba(56, 189, 248, 0.05)',
+                                border: isOutOfTol ? '1px solid rgba(239, 68, 68, 0.35)' : '1px solid rgba(56, 189, 248, 0.25)',
+                                marginBottom: '14px',
+                                fontSize: '11px',
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                flexWrap: 'wrap',
+                                gap: '6px'
+                              }}
+                            >
+                              <div>
+                                Target: <strong style={{ color: '#ffffff' }}>{targetT}°C</strong> (Window: <span style={{ color: '#38bdf8' }}>{minAllowed}°C – {maxAllowed}°C</span>)
+                              </div>
+                              <div style={{ fontSize: '12px', fontWeight: 800, color: isOutOfTol ? '#f87171' : '#34d399' }}>
+                                Real-Time Deviation: Δ = {tempDelta > 0 ? `+${tempDelta}` : `${tempDelta}`}°C {isOutOfTol ? '(OUT OF TOLERANCE)' : '(COMPLIANT)'}
+                              </div>
+                            </div>
+
+                            {/* Real-time Out-of-Tolerance Deviation Warning */}
+                            {isOutOfTol && (
+                              <div style={{ marginBottom: '12px' }}>
+                                <AppAlert variant="warning" title="Out-of-Tolerance Process Deviation Detected">
+                                  Actual temperature {stageActualTemp}°C deviates by {tempDelta > 0 ? `+${tempDelta}` : `${tempDelta}`}°C from target ({targetT}°C), outside the allowable window [{minAllowed}°C – {maxAllowed}°C]. This excursion will be logged and flagged for Metallurgical Concession.
+                                </AppAlert>
+                              </div>
+                            )}
+
+                            {/* Process Sequence Blocking Alert */}
+                            {isSequenceLocked && (
+                              <div style={{ marginBottom: '12px' }}>
+                                <AppAlert variant="error" title="Process Sequence Restriction Active">
+                                  Stage {selectedStageSeq} cannot be recorded until Stage {selectedStageSeq - 1} has been executed. Manufacturing stages must strictly follow Recipe sequence.
+                                </AppAlert>
+                              </div>
+                            )}
+
+                            <form onSubmit={handleRecordStageProgress} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                                <AppSelect
+                                  label="Select Recipe Stage *"
+                                  value={String(selectedStageSeq)}
+                                  onChange={(e) => {
+                                    const seq = Number(e.target.value);
+                                    setSelectedStageSeq(seq);
+                                    const stg = stages.find((s: any) => (s.sequence || s.stageSequence) === seq);
+                                    if (stg) {
+                                      setStageActualTemp(stg.targetTemperatureC);
+                                      setStageActualDuration(stg.soakTimeMinutes || stg.targetDurationMinutes || 60);
+                                    }
                                   }}
+                                  options={stages.map((s: any, idx: number) => ({
+                                    value: String(s.sequence || s.stageSequence || idx + 1),
+                                    label: `Stage ${s.sequence || s.stageSequence || idx + 1}: ${s.stageName}`
+                                  }))}
+                                />
+
+                                <AppInput
+                                  label="Actual Furnace Temp (°C) *"
+                                  type="number"
+                                  value={stageActualTemp}
+                                  onChange={(e) => setStageActualTemp(Number(e.target.value))}
+                                  required
+                                />
+                              </div>
+
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                                <AppInput
+                                  label="Actual Soak / Duration (mins) *"
+                                  type="number"
+                                  min={1}
+                                  value={stageActualDuration}
+                                  onChange={(e) => setStageActualDuration(Number(e.target.value))}
+                                  required
+                                />
+
+                                <AppInput
+                                  label="Atmosphere Level (e.g. 0.85% C)"
+                                  value={stageAtmosphere}
+                                  onChange={(e) => setStageAtmosphere(e.target.value)}
+                                />
+                              </div>
+
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                                <AppInput
+                                  label="Quench Medium Temp (°C)"
+                                  type="number"
+                                  value={stageQuenchTemp}
+                                  onChange={(e) => setStageQuenchTemp(Number(e.target.value))}
+                                />
+
+                                <AppInput
+                                  label="Operator Execution Notes"
+                                  placeholder="Atmosphere steady, thermocouple verified..."
+                                  value={stageOperatorNotes}
+                                  onChange={(e) => setStageOperatorNotes(e.target.value)}
+                                />
+                              </div>
+
+                              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                                <AppButton
+                                  type="submit"
+                                  variant="primary"
+                                  size="md"
+                                  isLoading={isSubmitting}
+                                  disabled={!canOperateProduction || isSequenceLocked}
+                                  leftIcon={<PlayCircle size={16} />}
                                 >
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                      <span
-                                        style={{
-                                          width: '20px',
-                                          height: '20px',
-                                          borderRadius: '50%',
-                                          display: 'flex',
-                                          alignItems: 'center',
-                                          justifyContent: 'center',
-                                          fontSize: '11px',
-                                          fontWeight: 800,
-                                          background: isCompleted
-                                            ? isCompliant ? '#059669' : '#dc2626'
-                                            : isActionable ? '#0284c7' : 'rgba(255, 255, 255, 0.1)',
-                                          color: '#ffffff'
-                                        }}
-                                      >
-                                        {seq}
-                                      </span>
-                                      <span style={{ fontWeight: 800, fontSize: '13px', color: isCompleted ? (isCompliant ? '#34d399' : '#f87171') : isActionable ? '#38bdf8' : '#ffffff' }}>
-                                        {stg.stageName}
-                                      </span>
-                                    </div>
-                                    <div style={{ textAlign: 'right' }}>
-                                      {isCompleted ? (
-                                        isCompliant ? (
-                                          <span style={{ fontSize: '11px', fontWeight: 700, color: '#34d399', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                                            <CheckCircle2 size={13} /> {logged.actualTemperatureC}°C • {logged.actualDurationMinutes}m (PASS)
-                                          </span>
-                                        ) : (
-                                          <span style={{ fontSize: '11px', fontWeight: 700, color: '#f87171', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                                            <AlertTriangle size={13} /> {logged.actualTemperatureC}°C • {logged.actualDurationMinutes}m (OUT OF TOLERANCE)
-                                          </span>
-                                        )
-                                      ) : isActionable ? (
-                                        <span style={{ fontSize: '11px', fontWeight: 700, color: '#38bdf8', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                                          <Clock size={13} /> NEXT IN SEQUENCE
-                                        </span>
-                                      ) : (
-                                        <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text-muted)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                                          <Lock size={12} /> WAITING FOR STAGE {seq - 1}
-                                        </span>
-                                      )}
-                                    </div>
-                                  </div>
+                                  Log Stage Execution Actuals
+                                </AppButton>
+                                <AppButton
+                                  type="button"
+                                  variant="secondary"
+                                  size="md"
+                                  isLoading={isSubmitting}
+                                  disabled={!canOperateProduction}
+                                  onClick={handleSavePartialWork}
+                                >
+                                  Save Partial Work
+                                </AppButton>
+                              </div>
+                            </form>
 
-                                  {/* Requirements Row */}
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', color: 'var(--color-text-secondary)', fontSize: '11px' }}>
-                                    <span>
-                                      Target: <strong style={{ color: '#ffffff' }}>{targetT}°C</strong> (Window: {minT}°C – {maxT}°C)
-                                    </span>
-                                    <span>
-                                      Soak: <strong style={{ color: '#ffffff' }}>{stg.soakTimeMinutes || stg.targetDurationMinutes || 60}m</strong> ({stg.soakCriteria || 'LOAD_THERMOCOUPLE_REACHED'})
-                                    </span>
-                                    {stg.quenchParameters && (
-                                      <span>
-                                        Quench: {stg.quenchParameters.medium} @ {stg.quenchParameters.targetTemperatureC}°C
-                                      </span>
-                                    )}
-                                  </div>
-
-                                  {/* Deviation Warning Pill if Out of Spec */}
-                                  {logged && !isCompliant && logged.deviationWarning && (
-                                    <div style={{ padding: '4px 8px', borderRadius: '4px', background: 'rgba(239, 68, 68, 0.15)', color: '#fca5a5', fontSize: '11px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                      <AlertTriangle size={12} /> {logged.deviationWarning}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
+                            {/* Phase Boundary Notice */}
+                            <div style={{ marginTop: '12px', fontSize: '11px', color: 'var(--color-text-muted)', textAlign: 'center' }}>
+                              🔒 Phase Boundary: Laboratory hardness, case depth, and microstructure measurements are recorded strictly during Quality Inspection.
+                            </div>
+                          </AppCard>
                         );
                       })()}
-                    </AppCard>
-
-                    {/* Record Recipe Stage Progress Form */}
-                    {(() => {
-                      const stages = activeInProdJob.recipeSnapshot?.stages || [
-                        { sequence: 1, stageName: 'Preheat Ramp', targetTemperatureC: 650, soakTimeMinutes: 45, temperatureToleranceMinusC: 10, temperatureTolerancePlusC: 10 },
-                        { sequence: 2, stageName: 'Austenitizing Soak', targetTemperatureC: 845, soakTimeMinutes: 90, temperatureToleranceMinusC: 10, temperatureTolerancePlusC: 10 },
-                        { sequence: 3, stageName: 'High Pressure N2 Quench', targetTemperatureC: 45, soakTimeMinutes: 20, temperatureToleranceMinusC: 10, temperatureTolerancePlusC: 10 }
-                      ];
-                      const executedSeqs = new Set((activeInProdJob.execution?.stageProgress || []).map((s: any) => s.stageSequence));
-                      const selectedStg = stages.find((s: any) => (s.sequence || s.stageSequence) === selectedStageSeq) || stages[0];
-                      const targetT = selectedStg?.targetTemperatureC ?? 650;
-                      const tolMinus = selectedStg?.temperatureToleranceMinusC ?? 10;
-                      const tolPlus = selectedStg?.temperatureTolerancePlusC ?? 10;
-                      const minAllowed = targetT - tolMinus;
-                      const maxAllowed = targetT + tolPlus;
-                      const isOutOfTol = stageActualTemp < minAllowed || stageActualTemp > maxAllowed;
-                      const isSequenceLocked = selectedStageSeq > 1 && !executedSeqs.has(selectedStageSeq - 1);
-
-                      return (
-                        <AppCard style={{ padding: '18px', border: '1px solid var(--color-border-subtle)' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                            <h3 style={{ margin: 0, fontSize: '14px', fontWeight: 800, color: '#ffffff' }}>
-                              RECORD STAGE EXECUTION ACTUALS
-                            </h3>
-                            <span style={{ fontSize: '11px', color: '#38bdf8', fontWeight: 700 }}>
-                              Stage {selectedStageSeq}: {selectedStg?.stageName}
-                            </span>
-                          </div>
-
-                          {/* Authoritative Requirement Window Banner */}
-                          <div
-                            style={{
-                              padding: '10px 14px',
-                              borderRadius: '6px',
-                              background: 'rgba(56, 189, 248, 0.05)',
-                              border: '1px solid rgba(56, 189, 248, 0.25)',
-                              marginBottom: '14px',
-                              fontSize: '11px',
-                              display: 'flex',
-                              justifyContent: 'space-between',
-                              flexWrap: 'wrap',
-                              gap: '6px'
-                            }}
-                          >
-                            <div>
-                              Target Temp: <strong style={{ color: '#ffffff' }}>{targetT}°C</strong> (Window: <span style={{ color: '#38bdf8' }}>{minAllowed}°C – {maxAllowed}°C</span>)
-                            </div>
-                            <div>
-                              Planned Soak: <strong style={{ color: '#ffffff' }}>{selectedStg?.soakTimeMinutes || selectedStg?.targetDurationMinutes || 60}m</strong>
-                            </div>
-                            <div>
-                              Tolerance: <strong>-{tolMinus}°C / +{tolPlus}°C</strong>
-                            </div>
-                          </div>
-
-                          {/* Real-time Out-of-Tolerance Deviation Warning */}
-                          {isOutOfTol && (
-                            <div style={{ marginBottom: '12px' }}>
-                              <AppAlert variant="warning" title="Out-of-Tolerance Process Deviation Detected">
-                                Actual temperature {stageActualTemp}°C is outside the allowable Recipe process window [{minAllowed}°C – {maxAllowed}°C]. This excursion will be logged and flagged for Quality Inspection.
-                              </AppAlert>
-                            </div>
-                          )}
-
-                          {/* Process Sequence Blocking Alert */}
-                          {isSequenceLocked && (
-                            <div style={{ marginBottom: '12px' }}>
-                              <AppAlert variant="error" title="Process Sequence Restriction Active">
-                                Stage {selectedStageSeq} cannot be recorded until Stage {selectedStageSeq - 1} has been executed. Manufacturing stages must strictly follow Recipe sequence.
-                              </AppAlert>
-                            </div>
-                          )}
-
-                          <form onSubmit={handleRecordStageProgress} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                              <AppSelect
-                                label="Select Recipe Stage *"
-                                value={String(selectedStageSeq)}
-                                onChange={(e) => {
-                                  const seq = Number(e.target.value);
-                                  setSelectedStageSeq(seq);
-                                  const stg = stages.find((s: any) => (s.sequence || s.stageSequence) === seq);
-                                  if (stg) {
-                                    setStageActualTemp(stg.targetTemperatureC);
-                                    setStageActualDuration(stg.soakTimeMinutes || stg.targetDurationMinutes || 60);
-                                  }
-                                }}
-                                options={stages.map((s: any, idx: number) => ({
-                                  value: String(s.sequence || s.stageSequence || idx + 1),
-                                  label: `Stage ${s.sequence || s.stageSequence || idx + 1}: ${s.stageName}`
-                                }))}
-                              />
-
-                              <AppInput
-                                label="Actual Furnace Temp (°C) *"
-                                type="number"
-                                value={stageActualTemp}
-                                onChange={(e) => setStageActualTemp(Number(e.target.value))}
-                                required
-                              />
-                            </div>
-
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                              <AppInput
-                                label="Actual Soak / Duration (mins) *"
-                                type="number"
-                                min={1}
-                                value={stageActualDuration}
-                                onChange={(e) => setStageActualDuration(Number(e.target.value))}
-                                required
-                              />
-
-                              <AppInput
-                                label="Atmosphere Level (e.g. 0.85% C)"
-                                value={stageAtmosphere}
-                                onChange={(e) => setStageAtmosphere(e.target.value)}
-                              />
-                            </div>
-
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                              <AppInput
-                                label="Quench Medium Temp (°C)"
-                                type="number"
-                                value={stageQuenchTemp}
-                                onChange={(e) => setStageQuenchTemp(Number(e.target.value))}
-                              />
-
-                              <AppInput
-                                label="Operator Execution Notes"
-                                placeholder="Atmosphere steady, thermocouple verified..."
-                                value={stageOperatorNotes}
-                                onChange={(e) => setStageOperatorNotes(e.target.value)}
-                              />
-                            </div>
-
-                            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                              <AppButton
-                                type="submit"
-                                variant="primary"
-                                size="md"
-                                isLoading={isSubmitting}
-                                disabled={!canOperateProduction || isSequenceLocked}
-                                leftIcon={<PlayCircle size={16} />}
-                              >
-                                Log Stage Execution Actuals
-                              </AppButton>
-                              <AppButton
-                                type="button"
-                                variant="secondary"
-                                size="md"
-                                isLoading={isSubmitting}
-                                disabled={!canOperateProduction}
-                                onClick={handleSavePartialWork}
-                              >
-                                Save Partial Work
-                              </AppButton>
-                            </div>
-                          </form>
-
-                          {/* Phase Boundary Notice */}
-                          <div style={{ marginTop: '12px', fontSize: '11px', color: 'var(--color-text-muted)', textAlign: 'center' }}>
-                            🔒 Phase Boundary: Laboratory hardness, case depth, and microstructure measurements are recorded strictly during Quality Inspection.
-                          </div>
-                        </AppCard>
-                      );
-                    })()}
+                    </div>
                   </div>
                 </div>
               )}

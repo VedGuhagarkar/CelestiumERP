@@ -3482,6 +3482,8 @@ export class ProductionJobService {
       initialFurnaceTempC: dto.initialFurnaceTempC,
       initialAtmosphereLevel: dto.initialAtmosphereLevel ?? null,
       thermocoupleLocations: dto.thermocoupleLocations || ['TC_TOP', 'TC_CENTER', 'TC_BOTTOM'],
+      shift: dto.shift || job.execution.furnaceCharge?.shift || 'SHIFT_A',
+      notes: dto.notes || job.execution.furnaceCharge?.notes || null,
       startedAt: job.execution.furnaceCharge?.startedAt || new Date(),
       startedBy: job.execution.furnaceCharge?.startedBy || {
         userId: actor.userId,
@@ -4336,6 +4338,275 @@ export class ProductionJobService {
         recipeCode: job.recipeSnapshot?.recipeCode,
         recipeName: job.recipeSnapshot?.name,
         isCorresponded: true
+      }
+    };
+  }
+
+  public async getOperatorWorkspace(
+    tenantId: string,
+    id: string
+  ): Promise<any> {
+    const job = await this.repo.findById(tenantId, id);
+    if (!job || job.isDeleted) {
+      throw new NotFoundError(`Batch Order / Production Job with ID '${id}' not found`);
+    }
+
+    const isInProd = Boolean(
+      job.workflowState?.inProduction || job.status === 'IN_PRODUCTION' || job.status === 'IN_PROGRESS'
+    );
+    const isWaitingProd = Boolean(
+      job.workflowState?.waitingForProduction || job.status === 'WAITING_FOR_PRODUCTION'
+    );
+    const isWaitingInsp = Boolean(
+      job.workflowState?.waitingForInspection || job.status === 'WAITING_FOR_INSPECTION'
+    );
+    const isQualityCheck = Boolean(job.status === 'QUALITY_CHECK');
+    const isCompleted = Boolean(job.workflowState?.completed || job.status === 'COMPLETED');
+    const isCancelled = Boolean(job.status === 'CANCELLED');
+
+    const isActionable = isInProd;
+    let lockReason: string | null = null;
+    if (isWaitingProd) {
+      lockReason =
+        'Batch Order is awaiting take-for-production action. Production execution telemetry cannot be recorded until claimed.';
+    } else if (isWaitingInsp || isQualityCheck || isCompleted) {
+      lockReason =
+        'Batch Order has concluded production and is locked against modifications to protect historical integrity.';
+    } else if (isCancelled) {
+      lockReason = 'Batch Order is cancelled. No production operations may proceed.';
+    }
+
+    // 1. Header Context
+    const headerContext = {
+      id: job.id || (job as any)._id?.toString(),
+      boNumber: job.boNumber || job.jobNumber,
+      jobNumber: job.jobNumber,
+      poId: job.poId || 'N/A',
+      poNumber: job.poNumber || 'N/A',
+      grnId: job.grnId || 'N/A',
+      grnNumber: job.grnNumber || 'N/A',
+      customer: {
+        customerId: job.customer?.customerId,
+        customerCode: job.customer?.customerCode || 'N/A',
+        customerName: job.customer?.customerName || 'N/A'
+      },
+      part: {
+        itemId: job.item?.itemId || 'N/A',
+        itemCode: job.item?.itemCode || 'N/A',
+        itemName: job.item?.itemName || 'N/A',
+        materialGrade: job.item?.materialGrade || 'N/A',
+        uom: job.item?.uom || 'PCS'
+      },
+      quantity: {
+        targetQuantity: job.quantity?.targetQuantity || 0,
+        loadedQuantity:
+          job.quantity?.loadedQuantity ||
+          job.execution?.furnaceCharge?.loadedPieces ||
+          job.quantity?.targetQuantity ||
+          0,
+        completedQuantity: job.quantity?.completedQuantity || 0,
+        scrappedQuantity: job.quantity?.scrappedQuantity || 0
+      },
+      weightKg:
+        job.execution?.furnaceCharge?.loadedWeightKg || job.weightKg || job.weight || 0,
+      recipe: {
+        recipeId: job.recipeSnapshot?.recipeId || 'N/A',
+        recipeCode: job.recipeSnapshot?.recipeCode || 'N/A',
+        name: job.recipeSnapshot?.name || 'N/A',
+        revisionNumber: job.recipeSnapshot?.revisionNumber || 1,
+        processFamily: job.recipeSnapshot?.processFamily || 'N/A'
+      },
+      dueDate: job.timeline?.dueDate || (job as any).dueDate || null,
+      currentProductionState: job.status,
+      workflowState: job.workflowState || {},
+      isActionable,
+      isLocked: !isActionable,
+      lockReason,
+      hierarchy: {
+        poNumber: job.poNumber || 'N/A',
+        grnNumber: job.grnNumber || 'N/A',
+        boNumber: job.boNumber || job.jobNumber,
+        displayHierarchy: `${job.poNumber || 'PO'} / ${job.grnNumber || 'GRN'} / ${job.boNumber || job.jobNumber}`
+      }
+    };
+
+    // 2. Recipe Panel (Requirements strictly distinguished from actuals, marked non-editable master data)
+    const recipeStages = job.recipeSnapshot?.stages || [];
+    const recipePanel = {
+      recipeId: job.recipeSnapshot?.recipeId,
+      recipeCode: job.recipeSnapshot?.recipeCode,
+      name: job.recipeSnapshot?.name,
+      revisionNumber: job.recipeSnapshot?.revisionNumber ?? 1,
+      processFamily: job.recipeSnapshot?.processFamily,
+      isMasterDataProtected: true,
+      notice:
+        'Authoritative Recipe master specification is locked and read-only. Production actuals are logged separately.',
+      stages: recipeStages.map((stg: any, idx: number) => {
+        const seq = stg.sequence || stg.stageSequence || idx + 1;
+        const targetTemp = stg.targetTemperatureC ?? 0;
+        const tolMinus = stg.temperatureToleranceMinusC ?? 10;
+        const tolPlus = stg.temperatureTolerancePlusC ?? 10;
+        return {
+          sequence: seq,
+          stageName: stg.stageName || `Stage ${seq}`,
+          targetTemperatureC: targetTemp,
+          temperatureToleranceMinusC: tolMinus,
+          temperatureTolerancePlusC: tolPlus,
+          minAllowedTemperatureC: targetTemp - tolMinus,
+          maxAllowedTemperatureC: targetTemp + tolPlus,
+          targetDurationMinutes: stg.soakTimeMinutes || stg.targetDurationMinutes || 0,
+          soakCriteria: stg.soakCriteria || 'LOAD_THERMOCOUPLE_REACHED',
+          quenchParameters: stg.quenchParameters || null,
+          atmosphereSpecification: stg.atmosphereLevel || stg.atmosphereDetails || null,
+          isReadOnly: true
+        };
+      })
+    };
+
+    // 3. Process Progress & Execution Actuals
+    const executedStages = job.execution?.stageProgress || [];
+    const executedSeqs = new Set(executedStages.map((s: any) => s.stageSequence));
+    const totalStages = recipeStages.length || 3;
+    const completedStages = executedStages.length;
+    const progressPercentage =
+      totalStages > 0 ? Math.round((completedStages / totalStages) * 100) : 0;
+
+    let nextActionableSequence: number | null = null;
+    for (let i = 1; i <= totalStages; i++) {
+      if (!executedSeqs.has(i)) {
+        nextActionableSequence = i;
+        break;
+      }
+    }
+
+    const stageDetails = recipeStages.map((stg: any, idx: number) => {
+      const seq = stg.sequence || stg.stageSequence || idx + 1;
+      const logged = executedStages.find((s: any) => s.stageSequence === seq);
+      const isExecuted = Boolean(logged);
+      const targetTemp = stg.targetTemperatureC ?? 0;
+      const tolMinus = stg.temperatureToleranceMinusC ?? 10;
+      const tolPlus = stg.temperatureTolerancePlusC ?? 10;
+      const minAllowed = targetTemp - tolMinus;
+      const maxAllowed = targetTemp + tolPlus;
+
+      let status:
+        | 'COMPLETED_COMPLIANT'
+        | 'COMPLETED_DEVIATION'
+        | 'NEXT_IN_SEQUENCE'
+        | 'LOCKED';
+      if (isExecuted) {
+        status =
+          logged.isCompliant !== false && !logged.deviationWarning
+            ? 'COMPLETED_COMPLIANT'
+            : 'COMPLETED_DEVIATION';
+      } else if (seq === 1 || executedSeqs.has(seq - 1)) {
+        status = 'NEXT_IN_SEQUENCE';
+      } else {
+        status = 'LOCKED';
+      }
+
+      return {
+        sequence: seq,
+        stageName: stg.stageName || `Stage ${seq}`,
+        requirement: {
+          targetTemperatureC: targetTemp,
+          temperatureToleranceMinusC: tolMinus,
+          temperatureTolerancePlusC: tolPlus,
+          minAllowedTemperatureC: minAllowed,
+          maxAllowedTemperatureC: maxAllowed,
+          targetDurationMinutes: stg.soakTimeMinutes || stg.targetDurationMinutes || 0,
+          soakCriteria: stg.soakCriteria || 'LOAD_THERMOCOUPLE_REACHED',
+          quenchParameters: stg.quenchParameters || null,
+          atmosphereSpecification: stg.atmosphereLevel || null
+        },
+        actualExecution: logged
+          ? {
+              actualTemperatureC: logged.actualTemperatureC,
+              actualDurationMinutes: logged.actualDurationMinutes,
+              atmosphereLevel: logged.atmosphereLevel,
+              quenchTemperatureC:
+                logged.quenchParameters?.mediumTemperatureC ||
+                logged.quenchParameters?.mediaInitialTempC,
+              operatorNotes: logged.operatorNotes,
+              isCompliant: logged.isCompliant !== false,
+              deviationWarning: logged.deviationWarning || null,
+              temperatureDeviationC: logged.temperatureDeviationC ?? 0,
+              durationDeviationMinutes: logged.durationDeviationMinutes ?? 0,
+              loggedAt: logged.loggedAt,
+              loggedBy: logged.loggedBy
+            }
+          : null,
+        status
+      };
+    });
+
+    // 4. Furnace Charge State
+    const charge = job.execution?.furnaceCharge;
+    const furnaceCharge = {
+      furnaceId:
+        job.assignedFurnaceId || charge?.furnaceId || job.equipmentAssignment?.furnaceId,
+      furnaceCode:
+        job.assignedFurnaceCode ||
+        charge?.furnaceCode ||
+        job.equipmentAssignment?.furnaceCode ||
+        'FURNACE-VAC-01',
+      shift: charge?.shift || 'SHIFT_A',
+      chargeNumber: charge?.chargeNumber || 'N/A',
+      loadedPieces:
+        charge?.loadedPieces ||
+        job.quantity?.loadedQuantity ||
+        job.quantity?.targetQuantity ||
+        0,
+      loadedWeightKg: charge?.loadedWeightKg || job.weightKg || job.weight || 0,
+      initialFurnaceTempC: charge?.initialFurnaceTempC ?? 25,
+      atmosphereType: charge?.atmosphereType || 'VACUUM',
+      notes: charge?.notes || null,
+      isRecorded: Boolean(charge)
+    };
+
+    // 5. Execution Readiness Audit
+    let executionReadiness: any = null;
+    try {
+      executionReadiness = await this.evaluateProductionExecutionReadiness(tenantId, id);
+    } catch {
+      executionReadiness = {
+        isReadyForInspection: false,
+        reasons: ['Execution readiness audit pending.'],
+        checks: {
+          allStagesCompleted: completedStages >= totalStages,
+          pieceCountBalanced: false,
+          furnaceAssigned: Boolean(furnaceCharge.furnaceId || furnaceCharge.furnaceCode),
+          operatorAssigned: Boolean(job.assignedOperatorId)
+        },
+        hasDeviations: stageDetails.some((s: any) => s.status === 'COMPLETED_DEVIATION'),
+        concessionRequired: stageDetails.some((s: any) => s.status === 'COMPLETED_DEVIATION')
+      };
+    }
+
+    return {
+      headerContext,
+      recipePanel,
+      processProgress: {
+        totalStages,
+        completedStages,
+        progressPercentage,
+        currentStageSequence: nextActionableSequence,
+        isAllStagesCompleted: completedStages >= totalStages && totalStages > 0,
+        stages: stageDetails
+      },
+      furnaceCharge,
+      executionReadiness,
+      stateAwareness: {
+        isInProduction: isInProd,
+        isWaitingForProduction: isWaitingProd,
+        isWaitingForInspection: isWaitingInsp,
+        isQualityCheck,
+        isCompleted,
+        isCancelled,
+        status: job.status,
+        workflowState: job.workflowState || {},
+        isActionable,
+        lockReason
       }
     };
   }

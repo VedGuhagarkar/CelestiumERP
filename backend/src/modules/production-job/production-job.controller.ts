@@ -545,6 +545,20 @@ export class ProductionJobController extends BaseController {
     }
   };
 
+  public getOperatorWorkspace = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const workspace = await this.service.getOperatorWorkspace(tenantId, req.params.id as string);
+      this.sendSuccess(res, workspace, 'Production operator workspace retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
   public getJobsByPlan = async (
     req: Request,
     res: Response,

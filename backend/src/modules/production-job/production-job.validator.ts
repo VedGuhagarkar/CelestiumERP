@@ -875,8 +875,11 @@ export const saveProductionDataSchema: ValidationSchema = {
           operatorNotes: z.string().trim().max(1000).nullable().optional(),
           notes: z.string().trim().max(1000).nullable().optional(),
           surfaceHardness: z.any().optional(),
+          surfaceHardnessHRC: z.any().optional(),
           coreHardness: z.any().optional(),
+          coreHardnessHRC: z.any().optional(),
           caseDepth: z.any().optional(),
+          caseDepthMm: z.any().optional(),
           microstructure: z.any().optional(),
           mechanical: z.any().optional(),
           pyrometryCertification: z.any().optional()
@@ -885,8 +888,11 @@ export const saveProductionDataSchema: ValidationSchema = {
       operatorNotes: z.string().trim().max(1000).nullable().optional(),
       notes: z.string().trim().max(1000).nullable().optional(),
       surfaceHardness: z.any().optional(),
+      surfaceHardnessHRC: z.any().optional(),
       coreHardness: z.any().optional(),
+      coreHardnessHRC: z.any().optional(),
       caseDepth: z.any().optional(),
+      caseDepthMm: z.any().optional(),
       microstructure: z.any().optional(),
       mechanical: z.any().optional(),
       pyrometryCertification: z.any().optional()
@@ -894,8 +900,11 @@ export const saveProductionDataSchema: ValidationSchema = {
     .superRefine((data, ctx) => {
       const inspectionFields = [
         'surfaceHardness',
+        'surfaceHardnessHRC',
         'coreHardness',
+        'coreHardnessHRC',
         'caseDepth',
+        'caseDepthMm',
         'microstructure',
         'mechanical',
         'pyrometryCertification'

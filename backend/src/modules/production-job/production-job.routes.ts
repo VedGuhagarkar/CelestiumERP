@@ -162,6 +162,18 @@ productionJobRouter.get(
   asyncHandler(productionJobController.evaluateProductionExecutionReadiness)
 );
 
+// 0n-1. Get Authoritative Production Operator Workspace Payload
+productionJobRouter.get(
+  ['/:id/operator-workspace', '/batch-orders/:id/operator-workspace'],
+  authenticateJwt,
+  requireAnyPermission(
+    PERMISSIONS.PRODUCTION_JOB_VIEW,
+    PERMISSIONS.BATCH_ORDER_VIEW,
+    PERMISSIONS.MACHINES_FURNACE_OPERATE
+  ),
+  asyncHandler(productionJobController.getOperatorWorkspace)
+);
+
 // 0o. Approve Batch Order for Inspection (in production -> waiting for inspection atomic handoff)
 productionJobRouter.post(
   [
