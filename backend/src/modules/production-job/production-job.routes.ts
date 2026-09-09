@@ -12,7 +12,9 @@ import {
   getBatchOrderGenealogySchema,
   getBatchOrderProductionReadinessSchema,
   takeForProductionSchema,
+  recordFurnaceChargeSchema,
   recordRecipeStageProgressSchema,
+  saveProductionDataSchema,
   approveForInspectionSchema,
   updateJobSchema,
   assignOperatorSchema,
@@ -101,6 +103,55 @@ productionJobRouter.post(
   ),
   validateRequest(recordRecipeStageProgressSchema),
   asyncHandler(productionJobController.recordRecipeStageProgress)
+);
+
+// 0m-1. Record / Update Furnace Charge for In-Production Batch Order
+productionJobRouter.post(
+  [
+    '/:id/charge',
+    '/:id/furnace-charge',
+    '/batch-orders/:id/charge',
+    '/batch-orders/:id/furnace-charge'
+  ],
+  authenticateJwt,
+  requireAnyPermission(
+    PERMISSIONS.PRODUCTION_JOB_UPDATE,
+    PERMISSIONS.MACHINES_FURNACE_OPERATE,
+    PERMISSIONS.PRODUCTION_JOB_START,
+    PERMISSIONS.PRODUCTION_JOB_TRANSITION
+  ),
+  validateRequest(recordFurnaceChargeSchema),
+  asyncHandler(productionJobController.recordFurnaceCharge)
+);
+
+// 0m-2. Save Partial Production Work (Furnace Charge, Stage Progress, Operator Notes)
+productionJobRouter.post(
+  [
+    '/:id/save-production-data',
+    '/batch-orders/:id/save-production-data',
+    '/:id/production-data'
+  ],
+  authenticateJwt,
+  requireAnyPermission(
+    PERMISSIONS.PRODUCTION_JOB_UPDATE,
+    PERMISSIONS.MACHINES_FURNACE_OPERATE,
+    PERMISSIONS.PRODUCTION_JOB_START,
+    PERMISSIONS.PRODUCTION_JOB_TRANSITION
+  ),
+  validateRequest(saveProductionDataSchema),
+  asyncHandler(productionJobController.saveProductionData)
+);
+productionJobRouter.put(
+  ['/:id/production-data', '/batch-orders/:id/production-data'],
+  authenticateJwt,
+  requireAnyPermission(
+    PERMISSIONS.PRODUCTION_JOB_UPDATE,
+    PERMISSIONS.MACHINES_FURNACE_OPERATE,
+    PERMISSIONS.PRODUCTION_JOB_START,
+    PERMISSIONS.PRODUCTION_JOB_TRANSITION
+  ),
+  validateRequest(saveProductionDataSchema),
+  asyncHandler(productionJobController.saveProductionData)
 );
 
 // 0n. Evaluate Production Execution Readiness for Inspection Handoff

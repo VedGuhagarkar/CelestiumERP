@@ -990,6 +990,50 @@ export const JobsPage: React.FC = () => {
     }
   };
 
+  const handleSavePartialWork = async () => {
+    if (!selectedInProdJob) return;
+    setIsSubmitting(true);
+    setFeedback(null);
+    const jobId = selectedInProdJob._id || selectedInProdJob.id || selectedInProdJob.jobNumber;
+    try {
+      const res = await authenticatedFetch(`${env.API_BASE_URL}/production-jobs/${jobId}/save-production-data`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          stageProgress: {
+            stageSequence: Number(selectedStageSeq),
+            actualTemperatureC: Number(stageActualTemp),
+            actualDurationMinutes: Number(stageActualDuration),
+            atmosphereLevel: stageAtmosphere || undefined,
+            quenchParameters: stageQuenchTemp ? { mediumTemperatureC: Number(stageQuenchTemp) } : undefined,
+            operatorNotes: stageOperatorNotes || undefined
+          },
+          operatorNotes: stageOperatorNotes || 'Partial production work saved'
+        })
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || 'Failed to save partial production work');
+      }
+
+      const json = await res.json();
+      setFeedback({
+        type: 'success',
+        message: `Partial production work saved for ${selectedInProdJob.boNumber || selectedInProdJob.jobNumber}. Batch Order remains actively in production.`
+      });
+      if (json.data) {
+        setSelectedInProdJob(json.data);
+      }
+      await fetchJobs();
+      await fetchQueues();
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Failed to save partial production work' });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleOpenApproveModal = (job: ProductionJob) => {
     setTargetApproveJob(job);
     const loaded = job.quantity?.loadedQuantity || job.quantity?.targetQuantity || 100;
@@ -1891,16 +1935,28 @@ export const JobsPage: React.FC = () => {
                               />
                             </div>
 
-                            <AppButton
-                              type="submit"
-                              variant="primary"
-                              size="md"
-                              isLoading={isSubmitting}
-                              disabled={!canOperateProduction || isSequenceLocked}
-                              leftIcon={<PlayCircle size={16} />}
-                            >
-                              Log Stage Execution Actuals
-                            </AppButton>
+                            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                              <AppButton
+                                type="submit"
+                                variant="primary"
+                                size="md"
+                                isLoading={isSubmitting}
+                                disabled={!canOperateProduction || isSequenceLocked}
+                                leftIcon={<PlayCircle size={16} />}
+                              >
+                                Log Stage Execution Actuals
+                              </AppButton>
+                              <AppButton
+                                type="button"
+                                variant="secondary"
+                                size="md"
+                                isLoading={isSubmitting}
+                                disabled={!canOperateProduction}
+                                onClick={handleSavePartialWork}
+                              >
+                                Save Partial Work
+                              </AppButton>
+                            </div>
                           </form>
 
                           {/* Phase Boundary Notice */}

@@ -23,6 +23,8 @@ import {
   AddProductionLogDto,
   CompleteJobExecutionDto,
   TakeForProductionDto,
+  RecordFurnaceChargeDto,
+  SaveProductionDataDto,
   RecordRecipeStageProgressDto,
   ApproveForInspectionDto,
   IProductionExecutionReadiness,
@@ -2935,19 +2937,30 @@ export class ProductionJobService {
       );
     }
 
-    // Furnace capability & operational status check
+    // Furnace capability & operational status check against equipment master records
     const furnaceId = dto.furnaceId || dto.assignedFurnaceId || job.equipmentAssignment?.furnaceId;
     let furnaceDoc: any = null;
     if (furnaceId) {
       furnaceDoc = await furnaceCapacityRepository.findFurnaceById(tenantId, furnaceId);
-      if (furnaceDoc && (furnaceDoc.isDeleted || furnaceDoc.status !== 'OPERATIONAL')) {
+      if (!furnaceDoc || furnaceDoc.isDeleted) {
         throw new BadRequestError(
-          `Assigned furnace is not in OPERATIONAL state (Current status: '${furnaceDoc?.status || 'NOT_FOUND'}')`
+          `Assigned furnace with ID '${furnaceId}' does not exist in equipment master records. Arbitrary equipment records are prohibited.`
         );
       }
-      if (furnaceDoc && dto.initialFurnaceTempC && dto.initialFurnaceTempC > furnaceDoc.thermalCapabilities?.maxOperatingTempC) {
+      if (furnaceDoc.status !== 'OPERATIONAL') {
         throw new BadRequestError(
-          `Initial furnace temperature (${dto.initialFurnaceTempC}°C) exceeds furnace maximum rating (${furnaceDoc.thermalCapabilities.maxOperatingTempC}°C)`
+          `Assigned furnace '${furnaceDoc.furnaceCode}' is not in OPERATIONAL state (Current status: '${furnaceDoc.status}').`
+        );
+      }
+      if (dto.initialFurnaceTempC && dto.initialFurnaceTempC > furnaceDoc.thermalCapabilities?.maxOperatingTempC) {
+        throw new BadRequestError(
+          `Initial furnace temperature (${dto.initialFurnaceTempC}°C) exceeds furnace maximum rating (${furnaceDoc.thermalCapabilities.maxOperatingTempC}°C).`
+        );
+      }
+      const maxCap = furnaceDoc.capacityKg || furnaceDoc.thermalCapabilities?.maxChargeWeightKg || 50000;
+      if (dto.loadedWeightKg && dto.loadedWeightKg > maxCap) {
+        throw new BadRequestError(
+          `Loaded charge weight (${dto.loadedWeightKg} kg) exceeds furnace maximum capacity (${maxCap} kg).`
         );
       }
     }
@@ -3246,6 +3259,160 @@ export class ProductionJobService {
     return job;
   }
 
+  public async recordFurnaceCharge(
+    tenantId: string,
+    actor: IActorContext,
+    jobId: string,
+    dto: RecordFurnaceChargeDto
+  ): Promise<ProductionJobDocument> {
+    const job = await this.repo.findById(tenantId, jobId);
+    if (!job || job.isDeleted) {
+      throw new NotFoundError(`Batch Order with ID '${jobId}' not found`);
+    }
+
+    if (!job.inProduction && job.status !== 'IN_PRODUCTION' && job.status !== 'IN_PROGRESS') {
+      throw new BadRequestError(
+        `Cannot record furnace charge for '${job.boNumber || job.jobNumber}'. Batch Order is not in production (Current status: '${job.status}').`
+      );
+    }
+
+    // Furnace validation against equipment master records
+    const furnaceId = dto.furnaceId || job.equipmentAssignment?.furnaceId;
+    let furnaceDoc: any = null;
+    if (furnaceId) {
+      furnaceDoc = await furnaceCapacityRepository.findFurnaceById(tenantId, furnaceId);
+      if (!furnaceDoc || furnaceDoc.isDeleted) {
+        throw new BadRequestError(
+          `Assigned furnace with ID '${furnaceId}' does not exist in equipment master records. Arbitrary equipment records are prohibited.`
+        );
+      }
+      if (furnaceDoc.status !== 'OPERATIONAL') {
+        throw new BadRequestError(
+          `Assigned furnace '${furnaceDoc.furnaceCode}' is not in OPERATIONAL state (Current status: '${furnaceDoc.status}').`
+        );
+      }
+      if (dto.initialFurnaceTempC && dto.initialFurnaceTempC > furnaceDoc.thermalCapabilities?.maxOperatingTempC) {
+        throw new BadRequestError(
+          `Initial furnace temperature (${dto.initialFurnaceTempC}°C) exceeds furnace maximum rating (${furnaceDoc.thermalCapabilities.maxOperatingTempC}°C).`
+        );
+      }
+      const maxCap = furnaceDoc.capacityKg || furnaceDoc.thermalCapabilities?.maxChargeWeightKg || 50000;
+      if (dto.loadedWeightKg && dto.loadedWeightKg > maxCap) {
+        throw new BadRequestError(
+          `Loaded charge weight (${dto.loadedWeightKg} kg) exceeds furnace maximum capacity (${maxCap} kg).`
+        );
+      }
+    }
+
+    if (!job.execution) {
+      job.execution = { stageProgress: [], downtimeLog: [], productionLogs: [] };
+    }
+
+    job.execution.furnaceCharge = {
+      chargeNumber: dto.chargeNumber.trim().toUpperCase(),
+      loadedWeightKg: dto.loadedWeightKg,
+      loadedPieceCount: dto.loadedPieceCount,
+      fixtureId: dto.fixtureId || null,
+      initialFurnaceTempC: dto.initialFurnaceTempC,
+      initialAtmosphereLevel: dto.initialAtmosphereLevel ?? null,
+      thermocoupleLocations: dto.thermocoupleLocations || ['TC_TOP', 'TC_CENTER', 'TC_BOTTOM'],
+      startedAt: job.execution.furnaceCharge?.startedAt || new Date(),
+      startedBy: job.execution.furnaceCharge?.startedBy || {
+        userId: actor.userId,
+        email: actor.email,
+        role: actor.role
+      }
+    };
+
+    job.quantity.loadedQuantity = dto.loadedPieceCount;
+
+    if (furnaceDoc) {
+      job.equipmentAssignment = {
+        furnaceId: furnaceDoc.id,
+        furnaceCode: furnaceDoc.furnaceCode,
+        locationBay: furnaceDoc.locationBay,
+        pyrometryClass: furnaceDoc.thermalCapabilities?.pyrometryClass || 'CLASS_2'
+      };
+    }
+
+    // Partial save: workflowState remains inProduction, NOT transitioned
+    await job.save();
+
+    await auditService.record(tenantId, {
+      actorId: actor.userId,
+      actorEmail: actor.email,
+      actorRole: actor.role,
+      action: 'PRODUCTION_FURNACE_CHARGE_RECORDED',
+      entityType: 'PRODUCTION_JOB',
+      entityId: job.id,
+      metadata: {
+        jobNumber: job.jobNumber,
+        boNumber: job.boNumber,
+        chargeNumber: dto.chargeNumber,
+        loadedPieceCount: dto.loadedPieceCount,
+        loadedWeightKg: dto.loadedWeightKg,
+        initialFurnaceTempC: dto.initialFurnaceTempC,
+        furnaceId: furnaceDoc?.id || null,
+        furnaceCode: furnaceDoc?.furnaceCode || null
+      }
+    });
+
+    return job;
+  }
+
+  public async saveProductionData(
+    tenantId: string,
+    actor: IActorContext,
+    jobId: string,
+    dto: SaveProductionDataDto
+  ): Promise<ProductionJobDocument> {
+    const job = await this.repo.findById(tenantId, jobId);
+    if (!job || job.isDeleted) {
+      throw new NotFoundError(`Batch Order with ID '${jobId}' not found`);
+    }
+
+    if (!job.inProduction && job.status !== 'IN_PRODUCTION' && job.status !== 'IN_PROGRESS') {
+      throw new BadRequestError(
+        `Cannot save production data for '${job.boNumber || job.jobNumber}'. Batch Order is not in production (Current status: '${job.status}').`
+      );
+    }
+
+    // Incremental partial save
+    if (dto.furnaceCharge) {
+      await this.recordFurnaceCharge(tenantId, actor, jobId, dto.furnaceCharge);
+    }
+
+    if (dto.stageProgress) {
+      await this.recordRecipeStageProgress(tenantId, actor, jobId, dto.stageProgress);
+    }
+
+    const reloaded = await this.repo.findById(tenantId, jobId);
+    if (!reloaded) {
+      throw new NotFoundError(`Batch Order with ID '${jobId}' not found`);
+    }
+
+    if (dto.operatorNotes || dto.notes) {
+      if (!reloaded.execution) {
+        reloaded.execution = { stageProgress: [], downtimeLog: [], productionLogs: [] };
+      }
+      if (!reloaded.execution.productionLogs) {
+        reloaded.execution.productionLogs = [];
+      }
+      reloaded.execution.productionLogs.push({
+        logId: `LOG-${Date.now()}`,
+        type: 'OPERATOR_NOTE',
+        shift: null,
+        message: dto.operatorNotes || dto.notes || 'Operator note logged during partial save',
+        recordedBy: { userId: actor.userId, email: actor.email, role: actor.role },
+        timestamp: new Date()
+      });
+      await reloaded.save();
+    }
+
+    // Invariant: inProduction is preserved, never advanced to waitingForInspection
+    return reloaded;
+  }
+
   public async evaluateProductionExecutionReadiness(
     tenantId: string,
     jobId: string
@@ -3267,22 +3434,46 @@ export class ProductionJobService {
     for (const rs of recipeStages) {
       if (!executedSequences.has(rs.sequence)) {
         missingRequirements.push(`Recipe stage ${rs.sequence} (${rs.stageName}) has not been executed.`);
+      } else {
+        const stageActual = executedStages.find((s: any) => s.stageSequence === rs.sequence);
+        if (stageActual && stageActual.actualTemperatureC !== undefined && stageActual.actualTemperatureC <= 0) {
+          missingRequirements.push(`Stage ${rs.sequence} (${rs.stageName}) actual temperature must be recorded (> 0°C).`);
+        }
+        if (stageActual && stageActual.actualDurationMinutes !== undefined && stageActual.actualDurationMinutes <= 0) {
+          missingRequirements.push(`Stage ${rs.sequence} (${rs.stageName}) actual soak duration must be recorded (> 0 min).`);
+        }
       }
     }
 
-    const chargeRecorded = !!job.execution?.furnaceCharge?.chargeNumber;
-    if (!chargeRecorded) {
-      missingRequirements.push('Furnace charge setup has not been recorded.');
+    const furnaceCharge = job.execution?.furnaceCharge;
+    const chargeRecorded = !!(
+      furnaceCharge?.chargeNumber ||
+      job.execution?.stageProgress?.length > 0
+    );
+    if (furnaceCharge && (furnaceCharge.loadedWeightKg <= 0 || furnaceCharge.loadedPieceCount <= 0)) {
+      missingRequirements.push('Furnace charge must have positive loaded weight and piece count.');
     }
 
+    const equipmentAssigned = !!(
+      job.equipmentAssignment?.furnaceId ||
+      job.equipmentAssignment?.furnaceCode ||
+      (job as any).assignedFurnaceId
+    );
+
+    const operatorAssigned = !!(
+      job.operatorAssignment?.operatorId ||
+      job.operatorAssignment?.operatorName ||
+      furnaceCharge?.startedBy?.userId
+    );
+
     const loadedPieceCount =
-      job.quantity?.loadedQuantity || job.execution?.furnaceCharge?.loadedPieceCount || job.quantity?.targetQuantity || 0;
+      job.quantity?.loadedQuantity || furnaceCharge?.loadedPieceCount || job.quantity?.targetQuantity || 0;
     const completedQuantity = job.quantity?.completedQuantity || 0;
     const scrappedQuantity = job.quantity?.scrappedQuantity || 0;
     const pieceCountBalanced = completedQuantity + scrappedQuantity === loadedPieceCount && loadedPieceCount > 0;
 
-    const allRecipeStagesCompleted = missingRequirements.length === 0;
-    const isReadyForInspection = allRecipeStagesCompleted && chargeRecorded;
+    const allRecipeStagesCompleted = executedStages.length >= totalRecipeStages && missingRequirements.filter(m => m.includes('Recipe stage')).length === 0;
+    const isReadyForInspection = missingRequirements.length === 0;
 
     return {
       isReadyForInspection,
@@ -3294,6 +3485,8 @@ export class ProductionJobService {
       totalRecipeStages,
       completedStagesCount,
       chargeRecorded,
+      equipmentAssigned,
+      operatorAssigned,
       cycleTimerRecorded: !!job.execution?.cycleTimer?.cycleStartTime,
       pieceCountBalanced,
       loadedPieceCount,
@@ -3321,7 +3514,19 @@ export class ProductionJobService {
       );
     }
 
-    // Verify recipe stage completion
+    // 1. Piece count balance verification
+    const loadedPieceCount =
+      job.quantity?.loadedQuantity || job.execution?.furnaceCharge?.loadedPieceCount || job.quantity?.targetQuantity || 1;
+    const completedQty = dto.completedQuantity ?? (loadedPieceCount - (dto.scrappedQuantity || 0));
+    const scrappedQty = dto.scrappedQuantity ?? 0;
+
+    if (completedQty + scrappedQty !== loadedPieceCount) {
+      throw new BadRequestError(
+        `Piece count balance discrepancy: Completed pieces (${completedQty}) + Scrapped pieces (${scrappedQty}) does not equal Loaded piece count (${loadedPieceCount}).`
+      );
+    }
+
+    // 2. Recipe Stage Completion verification
     const recipeStages = job.recipeSnapshot?.stages || [];
     if (recipeStages.length > 0) {
       const executedSequences = new Set((job.execution?.stageProgress || []).map((s) => s.stageSequence));
@@ -3339,15 +3544,18 @@ export class ProductionJobService {
       }
     }
 
-    const loadedPieceCount =
-      job.quantity?.loadedQuantity || job.execution?.furnaceCharge?.loadedPieceCount || job.quantity?.targetQuantity || 1;
-    const completedQty = dto.completedQuantity ?? (loadedPieceCount - (dto.scrappedQuantity || 0));
-    const scrappedQty = dto.scrappedQuantity ?? 0;
-
-    if (completedQty + scrappedQty !== loadedPieceCount) {
-      throw new BadRequestError(
-        `Piece count balance discrepancy: Completed pieces (${completedQty}) + Scrapped pieces (${scrappedQty}) does not equal Loaded piece count (${loadedPieceCount}).`
-      );
+    // 3. Mandatory Telemetry Validation
+    for (const stage of job.execution?.stageProgress || []) {
+      if (stage.actualTemperatureC !== undefined && stage.actualTemperatureC <= 0) {
+        throw new BadRequestError(
+          `Cannot approve for inspection: Invalid actual temperature (${stage.actualTemperatureC}°C) for Stage ${stage.stageSequence} (${stage.stageName}). Must be > 0°C.`
+        );
+      }
+      if (stage.actualDurationMinutes !== undefined && stage.actualDurationMinutes <= 0) {
+        throw new BadRequestError(
+          `Cannot approve for inspection: Invalid actual soak duration (${stage.actualDurationMinutes} min) for Stage ${stage.stageSequence} (${stage.stageName}). Must be > 0 min.`
+        );
+      }
     }
 
     const now = new Date();
@@ -3404,11 +3612,15 @@ export class ProductionJobService {
     });
 
     if (!updated) {
-      throw new BadRequestError(`Failed to transition Batch Order '${job.jobNumber}' to WAITING_FOR_INSPECTION.`);
+      throw new ConflictError(
+        `Batch Order '${job.boNumber || job.jobNumber}' could not be transitioned to waiting for inspection.`
+      );
     }
 
     await auditService.record(tenantId, {
       actorId: actor.userId,
+      actorEmail: actor.email,
+      actorRole: actor.role,
       action: 'PRODUCTION_JOB_APPROVED_FOR_INSPECTION',
       entityType: 'PRODUCTION_JOB',
       entityId: updated.id,

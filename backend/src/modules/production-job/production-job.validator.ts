@@ -702,37 +702,83 @@ export const takeForProductionSchema: ValidationSchema = {
     .optional()
 };
 
-export const recordRecipeStageProgressSchema: ValidationSchema = {
+export const recordFurnaceChargeSchema: ValidationSchema = {
   params: z.object({
     id: z.string().trim().min(1, 'Job ID is required')
   }),
   body: z.object({
-    stageSequence: z.number().min(1, 'Stage sequence is required'),
-    stageName: z.string().trim().optional(),
-    actualTemperatureC: z.number().min(0, 'Actual temperature must be non-negative'),
-    actualDurationMinutes: z.number().min(0, 'Actual duration must be non-negative'),
-    quenchMedium: z.string().trim().optional(),
-    quenchAgitationSpeedRpm: z.number().min(0).optional(),
-    quenchMediaInitialTempC: z.number().optional(),
-    quenchMediaFinalTempC: z.number().optional(),
-    quenchParameters: z
-      .object({
-        mediumTemperatureC: z.number().optional(),
-        quenchDurationSeconds: z.number().optional(),
-        agitationSpeedPercent: z.number().optional()
-      })
-      .optional(),
-    atmosphereLevel: z.string().trim().max(100).optional(),
-    atmosphereDetails: z
-      .object({
-        carbonPotential: z.number().optional(),
-        nitrogenFlow: z.number().optional(),
-        vacuumPressureMbar: z.number().optional()
-      })
-      .optional(),
-    operatorNotes: z.string().trim().max(500).optional(),
-    notes: z.string().trim().max(500).optional()
+    furnaceId: z.string().trim().min(1, 'Furnace ID is required').optional(),
+    chargeNumber: z.string().trim().min(1, 'Charge number is required').max(50).toUpperCase(),
+    loadedWeightKg: z.number().positive('Loaded weight must be greater than zero').max(100000),
+    loadedPieceCount: z.number().int('Loaded piece count must be an integer').positive('Loaded piece count must be at least 1'),
+    initialFurnaceTempC: z.number().min(0, 'Initial furnace temperature cannot be negative').max(2000),
+    initialAtmosphereLevel: z.number().min(0, 'Initial atmosphere level cannot be negative').nullable().optional(),
+    fixtureId: z.string().trim().max(50).nullable().optional(),
+    thermocoupleLocations: z.array(z.string().trim().min(1)).optional(),
+    shift: z.string().trim().max(30).nullable().optional(),
+    notes: z.string().trim().max(1000).nullable().optional()
   })
+};
+
+export const recordRecipeStageProgressSchema: ValidationSchema = {
+  params: z.object({
+    id: z.string().trim().min(1, 'Job ID is required')
+  }),
+  body: z
+    .object({
+      stageSequence: z.number().int('Stage sequence must be an integer').min(1, 'Stage sequence must be at least 1'),
+      stageName: z.string().trim().max(100).optional(),
+      actualTemperatureC: z.number().positive('Actual temperature must be greater than zero').max(2000),
+      actualDurationMinutes: z.number().positive('Actual duration must be greater than zero').max(50000),
+      quenchMedium: z.string().trim().max(50).nullable().optional(),
+      quenchAgitationSpeedRpm: z.number().min(0, 'Agitation speed cannot be negative').max(10000).nullable().optional(),
+      quenchMediaInitialTempC: z.number().min(-50).max(500).nullable().optional(),
+      quenchMediaFinalTempC: z.number().min(-50).max(500).nullable().optional(),
+      quenchParameters: z
+        .object({
+          mediumTemperatureC: z.number().optional(),
+          quenchDurationSeconds: z.number().min(0).optional(),
+          agitationSpeedPercent: z.number().min(0).max(100).optional()
+        })
+        .nullable()
+        .optional(),
+      atmosphereLevel: z.string().trim().max(50).nullable().optional(),
+      atmosphereDetails: z
+        .object({
+          carbonPotential: z.number().min(0).max(3.0).optional(),
+          nitrogenFlow: z.number().min(0).optional(),
+          vacuumPressureMbar: z.number().min(0).optional()
+        })
+        .nullable()
+        .optional(),
+      operatorNotes: z.string().trim().max(1000).nullable().optional(),
+      notes: z.string().trim().max(1000).nullable().optional(),
+      // Laboratory inspection fields that must NOT be submitted in production
+      surfaceHardness: z.any().optional(),
+      coreHardness: z.any().optional(),
+      caseDepth: z.any().optional(),
+      microstructure: z.any().optional(),
+      mechanical: z.any().optional(),
+      pyrometryCertification: z.any().optional()
+    })
+    .superRefine((data, ctx) => {
+      const inspectionFields = [
+        'surfaceHardness',
+        'coreHardness',
+        'caseDepth',
+        'microstructure',
+        'mechanical',
+        'pyrometryCertification'
+      ].filter((f) => (data as any)[f] !== undefined);
+
+      if (inspectionFields.length > 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Inspection Boundary Violation: Laboratory metallurgical inspection fields (${inspectionFields.join(', ')}) belong strictly to Quality Inspection and cannot be recorded during Production execution.`,
+          path: [inspectionFields[0]]
+        });
+      }
+    })
 };
 
 export const approveForInspectionSchema: ValidationSchema = {
@@ -747,4 +793,90 @@ export const approveForInspectionSchema: ValidationSchema = {
       operatorNotes: z.string().trim().max(500).optional()
     })
     .optional()
+};
+
+export const saveProductionDataSchema: ValidationSchema = {
+  params: z.object({
+    id: z.string().trim().min(1, 'Job ID is required')
+  }),
+  body: z
+    .object({
+      furnaceCharge: z
+        .object({
+          furnaceId: z.string().trim().min(1, 'Furnace ID is required').optional(),
+          chargeNumber: z.string().trim().min(1, 'Charge number is required').max(50).toUpperCase(),
+          loadedWeightKg: z.number().positive('Loaded weight must be greater than zero').max(100000),
+          loadedPieceCount: z.number().int('Loaded piece count must be an integer').positive('Loaded piece count must be at least 1'),
+          initialFurnaceTempC: z.number().min(0, 'Initial furnace temperature cannot be negative').max(2000),
+          initialAtmosphereLevel: z.number().min(0, 'Initial atmosphere level cannot be negative').nullable().optional(),
+          fixtureId: z.string().trim().max(50).nullable().optional(),
+          thermocoupleLocations: z.array(z.string().trim().min(1)).optional(),
+          shift: z.string().trim().max(30).nullable().optional(),
+          notes: z.string().trim().max(1000).nullable().optional()
+        })
+        .optional(),
+      stageProgress: z
+        .object({
+          stageSequence: z.number().int('Stage sequence must be an integer').min(1, 'Stage sequence must be at least 1'),
+          stageName: z.string().trim().max(100).optional(),
+          actualTemperatureC: z.number().positive('Actual temperature must be greater than zero').max(2000),
+          actualDurationMinutes: z.number().positive('Actual duration must be greater than zero').max(50000),
+          quenchMedium: z.string().trim().max(50).nullable().optional(),
+          quenchAgitationSpeedRpm: z.number().min(0, 'Agitation speed cannot be negative').max(10000).nullable().optional(),
+          quenchMediaInitialTempC: z.number().min(-50).max(500).nullable().optional(),
+          quenchMediaFinalTempC: z.number().min(-50).max(500).nullable().optional(),
+          quenchParameters: z
+            .object({
+              mediumTemperatureC: z.number().optional(),
+              quenchDurationSeconds: z.number().min(0).optional(),
+              agitationSpeedPercent: z.number().min(0).max(100).optional()
+            })
+            .nullable()
+            .optional(),
+          atmosphereLevel: z.string().trim().max(50).nullable().optional(),
+          atmosphereDetails: z
+            .object({
+              carbonPotential: z.number().min(0).max(3.0).optional(),
+              nitrogenFlow: z.number().min(0).optional(),
+              vacuumPressureMbar: z.number().min(0).optional()
+            })
+            .nullable()
+            .optional(),
+          operatorNotes: z.string().trim().max(1000).nullable().optional(),
+          notes: z.string().trim().max(1000).nullable().optional(),
+          surfaceHardness: z.any().optional(),
+          coreHardness: z.any().optional(),
+          caseDepth: z.any().optional(),
+          microstructure: z.any().optional(),
+          mechanical: z.any().optional(),
+          pyrometryCertification: z.any().optional()
+        })
+        .optional(),
+      operatorNotes: z.string().trim().max(1000).nullable().optional(),
+      notes: z.string().trim().max(1000).nullable().optional(),
+      surfaceHardness: z.any().optional(),
+      coreHardness: z.any().optional(),
+      caseDepth: z.any().optional(),
+      microstructure: z.any().optional(),
+      mechanical: z.any().optional(),
+      pyrometryCertification: z.any().optional()
+    })
+    .superRefine((data, ctx) => {
+      const inspectionFields = [
+        'surfaceHardness',
+        'coreHardness',
+        'caseDepth',
+        'microstructure',
+        'mechanical',
+        'pyrometryCertification'
+      ].filter((f) => (data as any)[f] !== undefined || ((data as any).stageProgress && (data as any).stageProgress[f] !== undefined));
+
+      if (inspectionFields.length > 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Inspection Boundary Violation: Laboratory metallurgical inspection fields (${inspectionFields.join(', ')}) belong strictly to Quality Inspection and cannot be recorded during Production execution.`,
+          path: [inspectionFields[0]]
+        });
+      }
+    })
 };

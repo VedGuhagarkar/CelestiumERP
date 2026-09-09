@@ -632,6 +632,26 @@ export interface RecordRecipeStageProgressDto {
   notes?: string;
 }
 
+export interface RecordFurnaceChargeDto {
+  furnaceId?: string;
+  chargeNumber: string;
+  loadedWeightKg: number;
+  loadedPieceCount: number;
+  fixtureId?: string | null;
+  initialFurnaceTempC: number;
+  initialAtmosphereLevel?: number | null;
+  thermocoupleLocations?: string[];
+  shift?: string | null;
+  notes?: string | null;
+}
+
+export interface SaveProductionDataDto {
+  furnaceCharge?: RecordFurnaceChargeDto;
+  stageProgress?: RecordRecipeStageProgressDto;
+  operatorNotes?: string | null;
+  notes?: string | null;
+}
+
 export interface ApproveForInspectionDto {
   completedQuantity?: number;
   scrappedQuantity?: number;
@@ -649,6 +669,8 @@ export interface IProductionExecutionReadiness {
   totalRecipeStages: number;
   completedStagesCount: number;
   chargeRecorded: boolean;
+  equipmentAssigned: boolean;
+  operatorAssigned: boolean;
   cycleTimerRecorded: boolean;
   pieceCountBalanced: boolean;
   loadedPieceCount: number;
@@ -706,10 +728,6 @@ export const PRODUCTION_ONLY_FIELDS = [
   'cycleTimer',
   'stageProgress',
   'actualSoakMinutes',
-  'inspectionResults',
-  'actualHardnessValues',
-  'cOfCNumber',
-  'dispatchDetails',
   'productionLogs',
   'downtimeLog',
   'loadedQuantity',

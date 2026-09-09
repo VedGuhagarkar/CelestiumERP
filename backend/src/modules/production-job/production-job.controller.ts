@@ -644,6 +644,46 @@ export class ProductionJobController extends BaseController {
     }
   };
 
+  public recordFurnaceCharge = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const user = this.getUser(req);
+      const job = await this.service.recordFurnaceCharge(
+        tenantId,
+        { userId: user.userId, email: user.email, role: user.roles?.[0] },
+        req.params.id as string,
+        req.body
+      );
+      this.sendSuccess(res, job, 'Furnace charge recorded successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public saveProductionData = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const user = this.getUser(req);
+      const job = await this.service.saveProductionData(
+        tenantId,
+        { userId: user.userId, email: user.email, role: user.roles?.[0] },
+        req.params.id as string,
+        req.body
+      );
+      this.sendSuccess(res, job, 'Production data saved successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
   public evaluateProductionExecutionReadiness = async (
     req: Request,
     res: Response,
