@@ -221,15 +221,22 @@ const stageProgressSchema = new Schema(
     actualTemperatureC: { type: Number, required: true },
     targetDurationMinutes: { type: Number, required: true },
     actualDurationMinutes: { type: Number, required: true },
+    temperatureDeviationC: { type: Number, default: 0 },
+    durationDeviationMinutes: { type: Number, default: 0 },
+    isCompliant: { type: Boolean, default: true },
+    deviationWarning: { type: String, default: null },
     quenchMedium: { type: String, default: null },
     quenchAgitationSpeedRpm: { type: Number, default: null },
     quenchMediaInitialTempC: { type: Number, default: null },
     quenchMediaFinalTempC: { type: Number, default: null },
+    quenchParameters: { type: Schema.Types.Mixed, default: null },
+    atmosphereLevel: { type: String, default: null },
     atmosphereDetails: {
       carbonPotential: { type: Number, default: null },
       nitrogenFlow: { type: Number, default: null },
       vacuumPressureMbar: { type: Number, default: null }
     },
+    operatorNotes: { type: String, default: null },
     recordedBy: {
       userId: { type: String, required: true },
       email: { type: String, default: null },

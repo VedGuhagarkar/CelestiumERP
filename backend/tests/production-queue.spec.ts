@@ -413,15 +413,18 @@ describe('Production Phase Prompt 2: Production Queue & Atomic Take Verification
           .send({ furnaceCode: 'FURNACE-VAC-02' })
       ]);
 
-      // Alice succeeded
-      expect(resAlice.status).toBe(200);
-      expect(resAlice.body.success).toBe(true);
-      expect(resAlice.body.data.inProduction).toBe(true);
+      const statuses = [resAlice.status, resBob.status].sort();
+      expect(statuses).toEqual([200, 409]);
 
-      // Bob received clear 409 Conflict
-      expect(resBob.status).toBe(409);
-      expect(resBob.body.success).toBe(false);
-      expect(resBob.body.message).toMatch(
+      const winner = resAlice.status === 200 ? resAlice : resBob;
+      const loser = resAlice.status === 409 ? resAlice : resBob;
+
+      expect(winner.body.success).toBe(true);
+      expect(winner.body.data.inProduction).toBe(true);
+
+      expect(loser.status).toBe(409);
+      expect(loser.body.success).toBe(false);
+      expect(loser.body.message).toMatch(
         /could not be taken into production|taken by another user|already taken into production|conflict|no longer waiting for production/i
       );
     });

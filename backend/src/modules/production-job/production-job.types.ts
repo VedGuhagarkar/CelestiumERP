@@ -204,15 +204,26 @@ export interface IJobStageProgress {
   actualTemperatureC: number;
   targetDurationMinutes: number;
   actualDurationMinutes: number;
+  temperatureDeviationC?: number;
+  durationDeviationMinutes?: number;
+  isCompliant?: boolean;
+  deviationWarning?: string | null;
   quenchMedium?: string | null;
   quenchAgitationSpeedRpm?: number | null;
   quenchMediaInitialTempC?: number | null;
   quenchMediaFinalTempC?: number | null;
+  quenchParameters?: {
+    mediumTemperatureC?: number;
+    quenchDurationSeconds?: number;
+    agitationSpeedPercent?: number;
+  } | null;
+  atmosphereLevel?: string | null;
   atmosphereDetails?: {
     carbonPotential?: number;
     nitrogenFlow?: number;
     vacuumPressureMbar?: number;
-  };
+  } | null;
+  operatorNotes?: string | null;
   recordedBy: {
     userId: string;
     email?: string;
@@ -606,11 +617,18 @@ export interface RecordRecipeStageProgressDto {
   quenchAgitationSpeedRpm?: number;
   quenchMediaInitialTempC?: number;
   quenchMediaFinalTempC?: number;
+  quenchParameters?: {
+    mediumTemperatureC?: number;
+    quenchDurationSeconds?: number;
+    agitationSpeedPercent?: number;
+  };
+  atmosphereLevel?: string;
   atmosphereDetails?: {
     carbonPotential?: number;
     nitrogenFlow?: number;
     vacuumPressureMbar?: number;
   };
+  operatorNotes?: string;
   notes?: string;
 }
 

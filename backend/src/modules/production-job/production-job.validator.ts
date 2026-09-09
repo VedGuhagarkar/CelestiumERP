@@ -715,6 +715,14 @@ export const recordRecipeStageProgressSchema: ValidationSchema = {
     quenchAgitationSpeedRpm: z.number().min(0).optional(),
     quenchMediaInitialTempC: z.number().optional(),
     quenchMediaFinalTempC: z.number().optional(),
+    quenchParameters: z
+      .object({
+        mediumTemperatureC: z.number().optional(),
+        quenchDurationSeconds: z.number().optional(),
+        agitationSpeedPercent: z.number().optional()
+      })
+      .optional(),
+    atmosphereLevel: z.string().trim().max(100).optional(),
     atmosphereDetails: z
       .object({
         carbonPotential: z.number().optional(),
@@ -722,6 +730,7 @@ export const recordRecipeStageProgressSchema: ValidationSchema = {
         vacuumPressureMbar: z.number().optional()
       })
       .optional(),
+    operatorNotes: z.string().trim().max(500).optional(),
     notes: z.string().trim().max(500).optional()
   })
 };

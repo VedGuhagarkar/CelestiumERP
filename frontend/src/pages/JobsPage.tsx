@@ -14,7 +14,8 @@ import {
   FileText,
   CheckCircle2,
   ArrowRight,
-  XCircle
+  XCircle,
+  AlertTriangle
 } from 'lucide-react';
 import { PageContainer } from '../layouts/PageContainer.js';
 import { PageHeader } from '../design-system/navigation/PageHeader.js';
@@ -1611,148 +1612,304 @@ export const JobsPage: React.FC = () => {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                     {/* Bound Recipe Stages */}
                     <AppCard style={{ padding: '18px', border: '1px solid rgba(163, 230, 53, 0.3)' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
                         <div>
-                          <span style={{ fontSize: '11px', fontWeight: 700, color: '#a3e635', textTransform: 'uppercase' }}>
-                            Bound Recipe Execution Stages
-                          </span>
-                          <div style={{ fontWeight: 700, color: '#ffffff', fontSize: '14px' }}>
-                            {activeInProdJob.recipeSnapshot?.recipeCode || 'REC-STANDARD'} ({activeInProdJob.recipeSnapshot?.name || 'Standard Metallurgical Heat Treat Cycle'})
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ fontSize: '11px', fontWeight: 800, color: '#a3e635', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                              AUTHORITATIVE RECIPE PROCESS SPECIFICATION
+                            </span>
+                            <span style={{ fontSize: '10px', padding: '1px 6px', borderRadius: '4px', background: 'rgba(163, 230, 53, 0.2)', color: '#a3e635', fontWeight: 800 }}>
+                              REV {activeInProdJob.recipeSnapshot?.revisionNumber ?? 1}
+                            </span>
+                          </div>
+                          <div style={{ fontWeight: 700, color: '#ffffff', fontSize: '15px', marginTop: '2px' }}>
+                            {activeInProdJob.recipeSnapshot?.recipeCode || 'REC-STANDARD'} — {activeInProdJob.recipeSnapshot?.name || 'Standard Heat Treat Cycle'}
                           </div>
                         </div>
+                        <span style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
+                          Process: <strong>{activeInProdJob.recipeSnapshot?.processFamily || 'THERMAL'}</strong>
+                        </span>
                       </div>
 
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        {(activeInProdJob.recipeSnapshot?.stages || [
-                          { sequence: 1, stageName: 'Preheat Ramp', targetTemperatureC: 650, soakTimeMinutes: 45 },
-                          { sequence: 2, stageName: 'Austenitizing Soak', targetTemperatureC: 845, soakTimeMinutes: 90 },
-                          { sequence: 3, stageName: 'High Pressure N2 Quench', targetTemperatureC: 45, soakTimeMinutes: 20 }
-                        ]).map((stg: any, idx: number) => {
-                          const seq = stg.sequence || stg.stageSequence || idx + 1;
-                          const loggedStage = (activeInProdJob.execution?.stageProgress || []).find((s: any) => s.stageSequence === seq);
-                          const isCompleted = !!loggedStage;
+                      {/* Sequential Stages List */}
+                      {(() => {
+                        const stages = activeInProdJob.recipeSnapshot?.stages || [
+                          { sequence: 1, stageName: 'Preheat Ramp', targetTemperatureC: 650, soakTimeMinutes: 45, temperatureToleranceMinusC: 10, temperatureTolerancePlusC: 10 },
+                          { sequence: 2, stageName: 'Austenitizing Soak', targetTemperatureC: 845, soakTimeMinutes: 90, temperatureToleranceMinusC: 10, temperatureTolerancePlusC: 10 },
+                          { sequence: 3, stageName: 'High Pressure N2 Quench', targetTemperatureC: 45, soakTimeMinutes: 20, temperatureToleranceMinusC: 10, temperatureTolerancePlusC: 10 }
+                        ];
+                        const executedList = activeInProdJob.execution?.stageProgress || [];
+                        const executedSeqs = new Set(executedList.map((s: any) => s.stageSequence));
 
-                          return (
-                            <div
-                              key={seq}
-                              style={{
-                                padding: '10px 14px',
-                                borderRadius: '6px',
-                                background: isCompleted ? 'rgba(52, 211, 153, 0.08)' : 'rgba(255, 255, 255, 0.02)',
-                                border: isCompleted ? '1px solid rgba(52, 211, 153, 0.3)' : '1px solid var(--color-border-subtle)',
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                alignItems: 'center',
-                                fontSize: '12px'
-                              }}
-                            >
-                              <div>
-                                <div style={{ fontWeight: 700, color: isCompleted ? '#34d399' : '#ffffff' }}>
-                                  {seq}. {stg.stageName}
+                        return (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                            {stages.map((stg: any, idx: number) => {
+                              const seq = stg.sequence || stg.stageSequence || idx + 1;
+                              const logged = executedList.find((s: any) => s.stageSequence === seq);
+                              const isCompleted = !!logged;
+                              const isCompliant = logged ? logged.isCompliant !== false : true;
+                              const isActionable = seq === 1 || executedSeqs.has(seq - 1);
+                              const targetT = stg.targetTemperatureC;
+                              const tolMinus = stg.temperatureToleranceMinusC ?? 10;
+                              const tolPlus = stg.temperatureTolerancePlusC ?? 10;
+                              const minT = targetT - tolMinus;
+                              const maxT = targetT + tolPlus;
+
+                              return (
+                                <div
+                                  key={seq}
+                                  style={{
+                                    padding: '12px 14px',
+                                    borderRadius: '8px',
+                                    background: isCompleted
+                                      ? isCompliant
+                                        ? 'rgba(52, 211, 153, 0.08)'
+                                        : 'rgba(239, 68, 68, 0.08)'
+                                      : isActionable
+                                      ? 'rgba(56, 189, 248, 0.05)'
+                                      : 'rgba(255, 255, 255, 0.02)',
+                                    border: isCompleted
+                                      ? isCompliant
+                                        ? '1px solid rgba(52, 211, 153, 0.35)'
+                                        : '1px solid rgba(239, 68, 68, 0.4)'
+                                      : isActionable
+                                      ? '1px solid rgba(56, 189, 248, 0.35)'
+                                      : '1px solid var(--color-border-subtle)',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: '6px',
+                                    fontSize: '12px'
+                                  }}
+                                >
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                      <span
+                                        style={{
+                                          width: '20px',
+                                          height: '20px',
+                                          borderRadius: '50%',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          justifyContent: 'center',
+                                          fontSize: '11px',
+                                          fontWeight: 800,
+                                          background: isCompleted
+                                            ? isCompliant ? '#059669' : '#dc2626'
+                                            : isActionable ? '#0284c7' : 'rgba(255, 255, 255, 0.1)',
+                                          color: '#ffffff'
+                                        }}
+                                      >
+                                        {seq}
+                                      </span>
+                                      <span style={{ fontWeight: 800, fontSize: '13px', color: isCompleted ? (isCompliant ? '#34d399' : '#f87171') : isActionable ? '#38bdf8' : '#ffffff' }}>
+                                        {stg.stageName}
+                                      </span>
+                                    </div>
+                                    <div style={{ textAlign: 'right' }}>
+                                      {isCompleted ? (
+                                        isCompliant ? (
+                                          <span style={{ fontSize: '11px', fontWeight: 700, color: '#34d399', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                            <CheckCircle2 size={13} /> {logged.actualTemperatureC}°C • {logged.actualDurationMinutes}m (PASS)
+                                          </span>
+                                        ) : (
+                                          <span style={{ fontSize: '11px', fontWeight: 700, color: '#f87171', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                            <AlertTriangle size={13} /> {logged.actualTemperatureC}°C • {logged.actualDurationMinutes}m (OUT OF TOLERANCE)
+                                          </span>
+                                        )
+                                      ) : isActionable ? (
+                                        <span style={{ fontSize: '11px', fontWeight: 700, color: '#38bdf8', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                          <Clock size={13} /> NEXT IN SEQUENCE
+                                        </span>
+                                      ) : (
+                                        <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text-muted)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                          <Lock size={12} /> WAITING FOR STAGE {seq - 1}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* Requirements Row */}
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', color: 'var(--color-text-secondary)', fontSize: '11px' }}>
+                                    <span>
+                                      Target: <strong style={{ color: '#ffffff' }}>{targetT}°C</strong> (Window: {minT}°C – {maxT}°C)
+                                    </span>
+                                    <span>
+                                      Soak: <strong style={{ color: '#ffffff' }}>{stg.soakTimeMinutes || stg.targetDurationMinutes || 60}m</strong> ({stg.soakCriteria || 'LOAD_THERMOCOUPLE_REACHED'})
+                                    </span>
+                                    {stg.quenchParameters && (
+                                      <span>
+                                        Quench: {stg.quenchParameters.medium} @ {stg.quenchParameters.targetTemperatureC}°C
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {/* Deviation Warning Pill if Out of Spec */}
+                                  {logged && !isCompliant && logged.deviationWarning && (
+                                    <div style={{ padding: '4px 8px', borderRadius: '4px', background: 'rgba(239, 68, 68, 0.15)', color: '#fca5a5', fontSize: '11px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                      <AlertTriangle size={12} /> {logged.deviationWarning}
+                                    </div>
+                                  )}
                                 </div>
-                                <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
-                                  Target: {stg.targetTemperatureC}°C • Soak: {stg.soakTimeMinutes || stg.targetDurationMinutes || 60} mins
-                                </div>
-                              </div>
-                              <div style={{ textAlign: 'right' }}>
-                                {isCompleted ? (
-                                  <span style={{ fontSize: '11px', fontWeight: 700, color: '#34d399', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                                    <CheckCircle2 size={13} /> {loggedStage.actualTemperatureC}°C ({loggedStage.actualDurationMinutes}m)
-                                  </span>
-                                ) : (
-                                  <span style={{ fontSize: '11px', fontWeight: 600, color: '#f59e0b', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                                    <Clock size={13} /> Pending Execution
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })()}
                     </AppCard>
 
                     {/* Record Recipe Stage Progress Form */}
-                    <AppCard style={{ padding: '18px', border: '1px solid var(--color-border-subtle)' }}>
-                      <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', fontWeight: 800, color: '#ffffff' }}>
-                        RECORD RECIPE STAGE PROGRESS
-                      </h3>
-                      <form onSubmit={handleRecordStageProgress} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                          <AppSelect
-                            label="Select Recipe Stage *"
-                            value={String(selectedStageSeq)}
-                            onChange={(e) => {
-                              const seq = Number(e.target.value);
-                              setSelectedStageSeq(seq);
-                              const stg = (activeInProdJob.recipeSnapshot?.stages || []).find((s: any) => (s.sequence || s.stageSequence) === seq);
-                              if (stg) {
-                                setStageActualTemp(stg.targetTemperatureC);
-                                setStageActualDuration(stg.soakTimeMinutes || stg.targetDurationMinutes || 60);
-                              }
+                    {(() => {
+                      const stages = activeInProdJob.recipeSnapshot?.stages || [
+                        { sequence: 1, stageName: 'Preheat Ramp', targetTemperatureC: 650, soakTimeMinutes: 45, temperatureToleranceMinusC: 10, temperatureTolerancePlusC: 10 },
+                        { sequence: 2, stageName: 'Austenitizing Soak', targetTemperatureC: 845, soakTimeMinutes: 90, temperatureToleranceMinusC: 10, temperatureTolerancePlusC: 10 },
+                        { sequence: 3, stageName: 'High Pressure N2 Quench', targetTemperatureC: 45, soakTimeMinutes: 20, temperatureToleranceMinusC: 10, temperatureTolerancePlusC: 10 }
+                      ];
+                      const executedSeqs = new Set((activeInProdJob.execution?.stageProgress || []).map((s: any) => s.stageSequence));
+                      const selectedStg = stages.find((s: any) => (s.sequence || s.stageSequence) === selectedStageSeq) || stages[0];
+                      const targetT = selectedStg?.targetTemperatureC ?? 650;
+                      const tolMinus = selectedStg?.temperatureToleranceMinusC ?? 10;
+                      const tolPlus = selectedStg?.temperatureTolerancePlusC ?? 10;
+                      const minAllowed = targetT - tolMinus;
+                      const maxAllowed = targetT + tolPlus;
+                      const isOutOfTol = stageActualTemp < minAllowed || stageActualTemp > maxAllowed;
+                      const isSequenceLocked = selectedStageSeq > 1 && !executedSeqs.has(selectedStageSeq - 1);
+
+                      return (
+                        <AppCard style={{ padding: '18px', border: '1px solid var(--color-border-subtle)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                            <h3 style={{ margin: 0, fontSize: '14px', fontWeight: 800, color: '#ffffff' }}>
+                              RECORD STAGE EXECUTION ACTUALS
+                            </h3>
+                            <span style={{ fontSize: '11px', color: '#38bdf8', fontWeight: 700 }}>
+                              Stage {selectedStageSeq}: {selectedStg?.stageName}
+                            </span>
+                          </div>
+
+                          {/* Authoritative Requirement Window Banner */}
+                          <div
+                            style={{
+                              padding: '10px 14px',
+                              borderRadius: '6px',
+                              background: 'rgba(56, 189, 248, 0.05)',
+                              border: '1px solid rgba(56, 189, 248, 0.25)',
+                              marginBottom: '14px',
+                              fontSize: '11px',
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              flexWrap: 'wrap',
+                              gap: '6px'
                             }}
-                            options={(activeInProdJob.recipeSnapshot?.stages || [
-                              { sequence: 1, stageName: 'Preheat Ramp' },
-                              { sequence: 2, stageName: 'Austenitizing Soak' },
-                              { sequence: 3, stageName: 'High Pressure N2 Quench' }
-                            ]).map((s: any, idx: number) => ({
-                              value: String(s.sequence || s.stageSequence || idx + 1),
-                              label: `Stage ${s.sequence || s.stageSequence || idx + 1}: ${s.stageName}`
-                            }))}
-                          />
+                          >
+                            <div>
+                              Target Temp: <strong style={{ color: '#ffffff' }}>{targetT}°C</strong> (Window: <span style={{ color: '#38bdf8' }}>{minAllowed}°C – {maxAllowed}°C</span>)
+                            </div>
+                            <div>
+                              Planned Soak: <strong style={{ color: '#ffffff' }}>{selectedStg?.soakTimeMinutes || selectedStg?.targetDurationMinutes || 60}m</strong>
+                            </div>
+                            <div>
+                              Tolerance: <strong>-{tolMinus}°C / +{tolPlus}°C</strong>
+                            </div>
+                          </div>
 
-                          <AppInput
-                            label="Actual Furnace Temp (°C) *"
-                            type="number"
-                            value={stageActualTemp}
-                            onChange={(e) => setStageActualTemp(Number(e.target.value))}
-                            required
-                          />
-                        </div>
+                          {/* Real-time Out-of-Tolerance Deviation Warning */}
+                          {isOutOfTol && (
+                            <div style={{ marginBottom: '12px' }}>
+                              <AppAlert variant="warning" title="Out-of-Tolerance Process Deviation Detected">
+                                Actual temperature {stageActualTemp}°C is outside the allowable Recipe process window [{minAllowed}°C – {maxAllowed}°C]. This excursion will be logged and flagged for Quality Inspection.
+                              </AppAlert>
+                            </div>
+                          )}
 
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                          <AppInput
-                            label="Actual Soak / Duration (mins) *"
-                            type="number"
-                            min={1}
-                            value={stageActualDuration}
-                            onChange={(e) => setStageActualDuration(Number(e.target.value))}
-                            required
-                          />
+                          {/* Process Sequence Blocking Alert */}
+                          {isSequenceLocked && (
+                            <div style={{ marginBottom: '12px' }}>
+                              <AppAlert variant="error" title="Process Sequence Restriction Active">
+                                Stage {selectedStageSeq} cannot be recorded until Stage {selectedStageSeq - 1} has been executed. Manufacturing stages must strictly follow Recipe sequence.
+                              </AppAlert>
+                            </div>
+                          )}
 
-                          <AppInput
-                            label="Atmosphere Level (e.g. 0.85% C)"
-                            value={stageAtmosphere}
-                            onChange={(e) => setStageAtmosphere(e.target.value)}
-                          />
-                        </div>
+                          <form onSubmit={handleRecordStageProgress} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                              <AppSelect
+                                label="Select Recipe Stage *"
+                                value={String(selectedStageSeq)}
+                                onChange={(e) => {
+                                  const seq = Number(e.target.value);
+                                  setSelectedStageSeq(seq);
+                                  const stg = stages.find((s: any) => (s.sequence || s.stageSequence) === seq);
+                                  if (stg) {
+                                    setStageActualTemp(stg.targetTemperatureC);
+                                    setStageActualDuration(stg.soakTimeMinutes || stg.targetDurationMinutes || 60);
+                                  }
+                                }}
+                                options={stages.map((s: any, idx: number) => ({
+                                  value: String(s.sequence || s.stageSequence || idx + 1),
+                                  label: `Stage ${s.sequence || s.stageSequence || idx + 1}: ${s.stageName}`
+                                }))}
+                              />
 
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                          <AppInput
-                            label="Quench Medium Temp (°C)"
-                            type="number"
-                            value={stageQuenchTemp}
-                            onChange={(e) => setStageQuenchTemp(Number(e.target.value))}
-                          />
+                              <AppInput
+                                label="Actual Furnace Temp (°C) *"
+                                type="number"
+                                value={stageActualTemp}
+                                onChange={(e) => setStageActualTemp(Number(e.target.value))}
+                                required
+                              />
+                            </div>
 
-                          <AppInput
-                            label="Operator Notes"
-                            placeholder="Atmosphere steady, thermocouple verify..."
-                            value={stageOperatorNotes}
-                            onChange={(e) => setStageOperatorNotes(e.target.value)}
-                          />
-                        </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                              <AppInput
+                                label="Actual Soak / Duration (mins) *"
+                                type="number"
+                                min={1}
+                                value={stageActualDuration}
+                                onChange={(e) => setStageActualDuration(Number(e.target.value))}
+                                required
+                              />
 
-                        <AppButton
-                          type="submit"
-                          variant="primary"
-                          size="md"
-                          isLoading={isSubmitting}
-                          disabled={!canOperateProduction}
-                        >
-                          Log Stage Execution
-                        </AppButton>
-                      </form>
-                    </AppCard>
+                              <AppInput
+                                label="Atmosphere Level (e.g. 0.85% C)"
+                                value={stageAtmosphere}
+                                onChange={(e) => setStageAtmosphere(e.target.value)}
+                              />
+                            </div>
+
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                              <AppInput
+                                label="Quench Medium Temp (°C)"
+                                type="number"
+                                value={stageQuenchTemp}
+                                onChange={(e) => setStageQuenchTemp(Number(e.target.value))}
+                              />
+
+                              <AppInput
+                                label="Operator Execution Notes"
+                                placeholder="Atmosphere steady, thermocouple verified..."
+                                value={stageOperatorNotes}
+                                onChange={(e) => setStageOperatorNotes(e.target.value)}
+                              />
+                            </div>
+
+                            <AppButton
+                              type="submit"
+                              variant="primary"
+                              size="md"
+                              isLoading={isSubmitting}
+                              disabled={!canOperateProduction || isSequenceLocked}
+                              leftIcon={<PlayCircle size={16} />}
+                            >
+                              Log Stage Execution Actuals
+                            </AppButton>
+                          </form>
+
+                          {/* Phase Boundary Notice */}
+                          <div style={{ marginTop: '12px', fontSize: '11px', color: 'var(--color-text-muted)', textAlign: 'center' }}>
+                            🔒 Phase Boundary: Laboratory hardness, case depth, and microstructure measurements are recorded strictly during Quality Inspection.
+                          </div>
+                        </AppCard>
+                      );
+                    })()}
                   </div>
                 </div>
               )}

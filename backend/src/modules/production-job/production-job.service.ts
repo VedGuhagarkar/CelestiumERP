@@ -3107,18 +3107,31 @@ export class ProductionJobService {
     }
 
     const recipeStages = job.recipeSnapshot?.stages || [];
-    let matchedRecipeStage = recipeStages.find((s: any) => s.sequence === dto.stageSequence);
-
-    if (recipeStages.length > 0 && !matchedRecipeStage) {
+    if (recipeStages.length === 0) {
       throw new BadRequestError(
-        `Recipe Stage sequence ${dto.stageSequence} does not exist in referenced Recipe '${job.recipeSnapshot.recipeCode}'. Production must follow the referenced Recipe.`
+        `Batch Order '${job.boNumber || job.jobNumber}' has no bound Recipe stages. Execution must follow an authoritative Recipe.`
       );
     }
 
-    const stageName = dto.stageName || matchedRecipeStage?.stageName || `Stage ${dto.stageSequence}`;
-    const stageType = (matchedRecipeStage as any)?.stageType || 'SOAK';
-    const targetTemp = matchedRecipeStage?.targetTemperatureC || dto.actualTemperatureC;
-    const targetDuration = matchedRecipeStage?.soakTimeMinutes || dto.actualDurationMinutes;
+    const matchedRecipeStage = recipeStages.find(
+      (s: any) => (s.sequence || s.stageSequence) === dto.stageSequence
+    );
+
+    if (!matchedRecipeStage) {
+      throw new BadRequestError(
+        `Recipe Stage sequence ${dto.stageSequence} does not exist in referenced Recipe '${job.recipeSnapshot?.recipeCode || 'UNKNOWN'}'. Production must strictly follow the referenced Recipe.`
+      );
+    }
+
+    // Recipe Stage Name Validation: Disallow arbitrary stage naming
+    if (
+      dto.stageName &&
+      dto.stageName.trim().toLowerCase() !== matchedRecipeStage.stageName.trim().toLowerCase()
+    ) {
+      throw new BadRequestError(
+        `Stage name '${dto.stageName}' does not match authoritative Recipe stage name '${matchedRecipeStage.stageName}' for sequence ${dto.stageSequence}.`
+      );
+    }
 
     if (!job.execution) {
       job.execution = { stageProgress: [], downtimeLog: [], productionLogs: [] };
@@ -3127,45 +3140,106 @@ export class ProductionJobService {
       job.execution.stageProgress = [];
     }
 
-    const existingIdx = job.execution.stageProgress.findIndex((s) => s.stageSequence === dto.stageSequence);
+    // Strict Process Sequence Enforcement: Sequence N requires Sequence N-1 to be completed
+    const executedSequences = new Set(job.execution.stageProgress.map((s: any) => s.stageSequence));
+    if (dto.stageSequence > 1 && !executedSequences.has(dto.stageSequence - 1)) {
+      throw new BadRequestError(
+        `Process Sequence Violation: Stage ${dto.stageSequence} (${matchedRecipeStage.stageName}) cannot be executed before Stage ${dto.stageSequence - 1} is completed. Production stages must be executed in strict Recipe sequence.`
+      );
+    }
+
+    // Planned vs Actual & Tolerance Evaluation
+    const targetTemp = matchedRecipeStage.targetTemperatureC;
+    const targetDuration = matchedRecipeStage.soakTimeMinutes || (matchedRecipeStage as any).targetDurationMinutes || 0;
+    const tolMinus = typeof matchedRecipeStage.temperatureToleranceMinusC === 'number'
+      ? matchedRecipeStage.temperatureToleranceMinusC
+      : 10;
+    const tolPlus = typeof matchedRecipeStage.temperatureTolerancePlusC === 'number'
+      ? matchedRecipeStage.temperatureTolerancePlusC
+      : 10;
+    const minAllowedTemp = targetTemp - tolMinus;
+    const maxAllowedTemp = targetTemp + tolPlus;
+
+    const tempDeviation = dto.actualTemperatureC - targetTemp;
+    const durationDeviation = dto.actualDurationMinutes - targetDuration;
+
+    let isCompliant = true;
+    let deviationWarning: string | null = null;
+
+    if (dto.actualTemperatureC < minAllowedTemp) {
+      isCompliant = false;
+      deviationWarning = `Actual temperature ${dto.actualTemperatureC}°C is below minimum allowable limit ${minAllowedTemp}°C (Target: ${targetTemp}°C, Tolerance: -${tolMinus}°C).`;
+    } else if (dto.actualTemperatureC > maxAllowedTemp) {
+      isCompliant = false;
+      deviationWarning = `Actual temperature ${dto.actualTemperatureC}°C exceeds maximum allowable limit ${maxAllowedTemp}°C (Target: ${targetTemp}°C, Tolerance: +${tolPlus}°C).`;
+    }
+
+    const existingIdx = job.execution.stageProgress.findIndex((s: any) => s.stageSequence === dto.stageSequence);
     const stageRecord: any = {
       stageSequence: dto.stageSequence,
-      stageName,
-      stageType,
+      stageName: matchedRecipeStage.stageName,
+      stageType: (matchedRecipeStage as any).stageType || 'SOAK',
       targetTemperatureC: targetTemp,
       actualTemperatureC: dto.actualTemperatureC,
       targetDurationMinutes: targetDuration,
       actualDurationMinutes: dto.actualDurationMinutes,
-      quenchMedium: dto.quenchMedium || matchedRecipeStage?.quenchParameters?.medium || null,
-      quenchAgitationSpeedRpm: dto.quenchAgitationSpeedRpm || matchedRecipeStage?.quenchParameters?.agitationSpeedPercent || null,
+      temperatureDeviationC: tempDeviation,
+      durationDeviationMinutes: durationDeviation,
+      isCompliant,
+      deviationWarning,
+      quenchMedium: dto.quenchMedium || matchedRecipeStage.quenchParameters?.medium || null,
+      quenchAgitationSpeedRpm:
+        dto.quenchAgitationSpeedRpm || matchedRecipeStage.quenchParameters?.agitationSpeedPercent || null,
       quenchMediaInitialTempC: dto.quenchMediaInitialTempC || null,
       quenchMediaFinalTempC: dto.quenchMediaFinalTempC || null,
-      atmosphereDetails: dto.atmosphereDetails || null,
+      quenchParameters: dto.quenchParameters || (matchedRecipeStage.quenchParameters
+        ? {
+            mediumTemperatureC: matchedRecipeStage.quenchParameters.targetTemperatureC,
+            quenchDurationSeconds: matchedRecipeStage.quenchParameters.quenchDurationSeconds,
+            agitationSpeedPercent: matchedRecipeStage.quenchParameters.agitationSpeedPercent
+          }
+        : null),
+      atmosphereLevel: dto.atmosphereLevel || null,
+      atmosphereDetails: dto.atmosphereDetails || (matchedRecipeStage.atmosphereControl
+        ? {
+            carbonPotential: matchedRecipeStage.atmosphereControl.setpoint
+          }
+        : null),
+      operatorNotes: dto.operatorNotes || dto.notes || null,
       recordedBy: { userId: actor.userId, email: actor.email, role: actor.role },
       timestamp: new Date(),
-      notes: dto.notes || null
+      notes: dto.notes || dto.operatorNotes || null
     };
 
     if (existingIdx >= 0) {
       job.execution.stageProgress[existingIdx] = stageRecord;
     } else {
       job.execution.stageProgress.push(stageRecord);
-      job.execution.stageProgress.sort((a, b) => a.stageSequence - b.stageSequence);
+      job.execution.stageProgress.sort((a: any, b: any) => a.stageSequence - b.stageSequence);
     }
 
     await job.save();
 
     await auditService.record(tenantId, {
       actorId: actor.userId,
-      action: 'PRODUCTION_RECIPE_STAGE_RECORDED',
+      action: isCompliant ? 'PRODUCTION_RECIPE_STAGE_RECORDED' : 'PRODUCTION_STAGE_DEVIATION_FLAGGED',
       entityType: 'PRODUCTION_JOB',
       entityId: job.id,
       metadata: {
         jobNumber: job.jobNumber,
+        boNumber: job.boNumber,
+        recipeCode: job.recipeSnapshot?.recipeCode,
+        recipeRevision: job.recipeSnapshot?.revisionNumber,
         stageSequence: dto.stageSequence,
-        stageName,
+        stageName: matchedRecipeStage.stageName,
+        targetTemperatureC: targetTemp,
         actualTemperatureC: dto.actualTemperatureC,
-        actualDurationMinutes: dto.actualDurationMinutes
+        temperatureDeviationC: tempDeviation,
+        targetDurationMinutes: targetDuration,
+        actualDurationMinutes: dto.actualDurationMinutes,
+        durationDeviationMinutes: durationDeviation,
+        isCompliant,
+        deviationWarning
       }
     });
 

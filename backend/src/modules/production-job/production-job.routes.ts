@@ -86,11 +86,18 @@ productionJobRouter.post(
 
 // 0m. Record Recipe Stage Progress for In-Production Batch Order
 productionJobRouter.post(
-  ['/:id/recipe-stage-progress', '/batch-orders/:id/recipe-stage-progress'],
+  [
+    '/:id/recipe-stage-progress',
+    '/batch-orders/:id/recipe-stage-progress',
+    '/:id/recipe-progress',
+    '/batch-orders/:id/recipe-progress'
+  ],
   authenticateJwt,
   requireAnyPermission(
     PERMISSIONS.PRODUCTION_JOB_UPDATE,
-    PERMISSIONS.MACHINES_FURNACE_OPERATE
+    PERMISSIONS.MACHINES_FURNACE_OPERATE,
+    PERMISSIONS.PRODUCTION_JOB_START,
+    PERMISSIONS.PRODUCTION_JOB_TRANSITION
   ),
   validateRequest(recordRecipeStageProgressSchema),
   asyncHandler(productionJobController.recordRecipeStageProgress)

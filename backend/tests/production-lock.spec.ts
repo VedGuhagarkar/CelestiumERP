@@ -239,9 +239,10 @@ describe('Production Phase Prompt 3: BO Production Lock & Exclusive Ownership Ve
           .send({ furnaceId: 'furnace_vac_01' })
       ]);
 
-      expect(res1.status).toBe(200);
-      expect(res2.status).toBe(409);
-      expect(res2.body.message).toMatch(/conflict|taken by another user/i);
+      const statuses = [res1.status, res2.status].sort();
+      expect(statuses).toEqual([200, 409]);
+      const conflictRes = res1.status === 409 ? res1 : res2;
+      expect(conflictRes.body.message).toMatch(/conflict|taken by another user/i);
     });
 
     it('rejects attempt to start an already in-production BO with 409 Conflict', async () => {
