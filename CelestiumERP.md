@@ -1956,11 +1956,22 @@ The frontend is built with React 19, Redux Toolkit, React Router 7, and a custom
 - **Role:** Authoritative ISO 17025 / AMS 2750G Heat-Treatment Inspection Suite and Quality Phase Workbench (`waiting for inspection` $\longrightarrow$ `in inspection` $\longrightarrow$ `waiting for dispatch` OR `inspection` [Quarantined]).
 - **State & Sub-Views:** `activeTab` ('WAITING_FOR_INSPECTION', 'IN_INSPECTION', 'WAITING_FOR_DISPATCH', 'INSPECTION_FAILED'), `waitingJobs`, `inInspectionJobs`, `waitingDispatchJobs`, `failedJobs`, `selectedJob`, `workbenchData`, and inspection dialog forms.
 - **Key Capabilities & Reconstructed Tabs (Prompt 1 Reconstruction):**
-  - **Tab 1: Waiting for Inspection Queue:**
-    - Directly queries `/api/v1/production-jobs/waiting-for-inspection` (or `/api/v1/quality-inspections/waiting-for-inspection`) to surface completed production batch orders.
-    - Renders detailed inspection cards showing Job Number, Part Number, Material Grade, Customer Name, Unbroken Lineage (`PO -> GRN -> BO`), Completed / Scrapped Pieces, and Bound Recipe revision.
-    - **"Take for Inspection" Modal Dialog (`AppDialog`):** Allows certified QC inspectors to assign themselves or select an inspector, input intake notes, and atomically transition the BO to `inInspection = true`.
-    - **Single-Winner Concurrency:** Gracefully handles `409 Conflict` if another inspector claims the BO simultaneously, refreshing queue data immediately.
+  - **Tab 1: Dedicated Waiting for Inspection Queue (Prompt 2 Implementation):**
+    - Directly queries `GET /api/v1/production-jobs/queue/waiting-for-inspection` guarded by strict server-side authorization (`QUALITY_INSPECTION_VIEW`, `QUALITY_INSPECTION_RECORD`, `QUALITY_INSPECTION_VERIFY`).
+    - **Authoritative 9-Dimension Display Card:** Each record in the queue presents comprehensive traceability without master data duplication:
+      1. *BO Identity:* `boNumber`, `jobNumber`, priority tag, and status badge (`WAITING FOR INSPECTION`).
+      2. *PO Lineage:* Customer name (`customerName`), customer code, and customer purchase order reference (`poNumber`).
+      3. *GRN Lineage:* Raw material goods receipt reference (`grnNumber`), raw material heat/lot number (`heatLotNumber`), and intake timestamp.
+      4. *Part Specifications:* Part code (`itemCode`), description (`itemName`), material grade (`materialGrade`), drawing number (`drawingNumber`), and unit of measurement (`uom`).
+      5. *Governing Recipe Specification:* Pinned recipe code (`recipeCode`), name (`recipeName`), revision badge (`REV ${recipeRevision}`), process family, and stage count. Guaranteed master recipe immutability.
+      6. *Quantities:* QA intake quantity (`completedQuantity`), loaded piece count (`loadedQuantity`), and production scrap count (`scrappedQuantity`).
+      7. *Weight:* Net charge weight in kilograms (`weightKg`).
+      8. *Timeline & Delivery:* Contractual due date (`dueDate`) with visual overdue warning indicators.
+      9. *Production Execution Telemetry (Locked):* Assigned furnace (`assignedFurnaceCode`), operator name (`assignedOperatorName`), shift ID (`shiftId`), charge/load number (`chargeNumber`), thermal stages verified, and production completion badge (`✓ Production Complete — Ready for QA`).
+    - **"View Recipe Specifications" Read-Only Modal (`AppDialog`):** Allows inspectors to inspect governing thermal stages, sequence numbers, target soak temperatures, hold durations, and atmospheres. Prominently displays the immutability banner: `🔒 Master Recipe Immutability: Recipe replacement, parameter override, or substitution is strictly prohibited during inspection.`
+    - **"Take for Inspection" Confirmation Modal (`AppDialog`):** Captures inspector claim notes, validates single-winner concurrency, and atomically transitions the BO from `waitingForInspection` $\rightarrow$ `inInspection`.
+    - **Real-Time Concurrency Collision & Queue Refresh:** If two inspectors attempt to claim the same BO simultaneously, exactly one succeeds; the second receives an explicit `409 Conflict` alert notification and the UI automatically re-fetches server queue state.
+    - **Server-Side Access Control Alert:** Displays access denied alert if unauthorized users (e.g. operators or coordinators lacking inspection permissions) attempt queue or take access.
   - **Tab 2: In-Inspection Active Workbench & 6 Mandatory Heat-Treatment Fields:**
     - Dedicated full-featured inspection workbench for batch orders actively undergoing evaluation:
       - **Authoritative Lineage Header Context:** BO identity (`boNumber`, `jobNumber`), PO lineage, GRN lineage, Part specs (`itemCode`, `itemName`, `materialGrade`), target and completed quantities, and bound Recipe code/revision badge (`REV ${revisionNumber}`).
@@ -2358,12 +2369,23 @@ stateDiagram-v2
 The Heat-Treatment Inspection Phase establishes the authoritative quality assurance and metallurgical release gate:
 $$\mathbf{Production\ Completion} \longrightarrow \mathbf{Waiting\ for\ Inspection} \longrightarrow \mathbf{In\ Inspection\ Workbench} \longrightarrow \mathbf{Waiting\ for\ Dispatch}\ (\text{or}\ \mathbf{Quarantine})$$
 
-1. **Phase Inception & Inspection Intake (`waiting for inspection`):**
+1. **Phase Inception & Dedicated Inspection Queue Intake (`waiting for inspection`):**
    - The Inspection Phase strictly begins when an in-production Batch Order completes all recipe stages, balances loaded piece counts ($Q_{\text{completed}} + Q_{\text{scrapped}} = Q_{\text{loaded}}$), and is approved for quality handoff (`workflowState.waitingForInspection: true`, $\sum \text{flags} = 1$).
-   - **Queue Isolation & Eligibility:**
-     - Surfaces in `GET /api/v1/production-jobs/waiting-for-inspection` and `GET /api/v1/quality-inspections/waiting-for-inspection`.
-     - Displays complete unbroken source genealogy (`PO -> GRN -> BO`), Part specifications, Material Grade, bound Recipe revision, and completed vs scrapped piece counts.
-   - **Access Control:** Requires explicit Quality Inspection permissions (`QC_INSPECT`, `QUALITY_INSPECTION_VIEW`, or `PRODUCTION_JOB_VIEW`). Unauthorized attempts return `403 Forbidden`.
+   - **Queue Isolation & Strict Server-Side State Filtering:**
+     - Querying `GET /api/v1/production-jobs/queue/waiting-for-inspection` strictly asserts `{ 'workflowState.waitingForInspection': true }` while explicitly filtering out `inProduction`, `inInspection`, `waitingForDispatch`, `dispatched`, `inspection` failure and terminal statuses.
+     - Does NOT depend on frontend filtering for authorization or workflow correctness.
+   - **Authoritative 9-Dimension Payload (Zero Master Data Duplication):**
+     - Surfaces complete authoritative information dynamically projected from master references:
+       1. *BO Identity:* `boNumber`, `jobNumber`, priority, status (`WAITING_FOR_INSPECTION`).
+       2. *PO Lineage:* `poNumber`, `customerName`, `customerCode`.
+       3. *GRN Lineage:* `grnNumber`, `heatLotNumber`, raw material received date.
+       4. *Part Specifications:* `itemCode`, `itemName`, `materialGrade`, `drawingNumber`, `uom`.
+       5. *Recipe Authority:* `recipeCode`, `recipeName`, pinned revision (`recipeRevision`), process family, stage count, and `isMasterRecipeProtected: true`. Recipe replacement is prohibited.
+       6. *Quantities:* `loadedQuantity`, `completedQuantity` (ready for QA), `scrappedQuantity`.
+       7. *Weight:* Charge net weight (`weightKg`).
+       8. *Due Date:* Contractual delivery deadline (`dueDate`) with overdue highlighting.
+       9. *Production Telemetry:* `assignedFurnaceCode`, `assignedOperatorName`, `shiftId`, `chargeNumber`, verified stages, and locked production flag.
+   - **Server-Side Authorization Enforcement:** Guarded strictly by `requireAnyPermission(PERMISSIONS.QUALITY_INSPECTION_VIEW, PERMISSIONS.QUALITY_INSPECTION_RECORD, PERMISSIONS.QUALITY_INSPECTION_VERIFY)`. Non-inspection roles (including general production operators) receive `403 Forbidden`. Frontend does not rely on hidden buttons alone.
 
 2. **Atomic Inspection Ingestion (`waiting for inspection` $\longrightarrow$ `in inspection`):**
    - A certified QC inspector claims the BO via `POST /api/v1/production-jobs/:id/take-for-inspection` (or `POST /api/v1/quality-inspections/:id/take-for-inspection`), providing `inspectorId` and optional intake notes.

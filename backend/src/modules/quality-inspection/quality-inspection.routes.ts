@@ -36,8 +36,8 @@ qualityInspectionRouter.get(
   ['/waiting-for-inspection', '/queue/waiting-for-inspection'],
   requireAnyPermission(
     PERMISSIONS.QUALITY_INSPECTION_VIEW,
-    PERMISSIONS.PRODUCTION_JOB_VIEW,
-    PERMISSIONS.BATCH_ORDER_VIEW
+    PERMISSIONS.QUALITY_INSPECTION_RECORD,
+    PERMISSIONS.QUALITY_INSPECTION_VERIFY
   ),
   asyncHandler(productionJobController.getWaitingForInspectionQueue)
 );
@@ -47,8 +47,8 @@ qualityInspectionRouter.get(
   ['/in-inspection', '/queue/in-inspection'],
   requireAnyPermission(
     PERMISSIONS.QUALITY_INSPECTION_VIEW,
-    PERMISSIONS.PRODUCTION_JOB_VIEW,
-    PERMISSIONS.BATCH_ORDER_VIEW
+    PERMISSIONS.QUALITY_INSPECTION_RECORD,
+    PERMISSIONS.QUALITY_INSPECTION_VERIFY
   ),
   asyncHandler(productionJobController.getInInspectionQueue)
 );

@@ -15,7 +15,11 @@ import {
   Trash2,
   Layers,
   FileCheck,
-  Award
+  Award,
+  Lock,
+  Scale,
+  Calendar,
+  Check
 } from 'lucide-react';
 import { PageContainer } from '../layouts/PageContainer.js';
 import { PageHeader } from '../design-system/navigation/PageHeader.js';
@@ -45,7 +49,55 @@ interface BatchOrderInspection {
   jobNumber: string;
   boNumber?: string;
   poNumber?: string;
+  poId?: string;
+  customerName?: string;
+  customerCode?: string;
+  supplierName?: string;
+  grnId?: string;
   grnNumber?: string;
+  heatLotNumber?: string;
+  rawMaterialReceivedDate?: string;
+  itemId?: string;
+  itemCode?: string;
+  itemName?: string;
+  materialGrade?: string;
+  drawingNumber?: string;
+  uom?: string;
+  recipeId?: string;
+  recipeCode?: string;
+  recipeName?: string;
+  recipeRevision?: number | string;
+  processFamily?: string;
+  recipeStagesCount?: number;
+  recipeStages?: Array<{
+    sequence: number;
+    stageName: string;
+    targetTemperatureC: number;
+    soakTimeMinutes: number;
+    rampRateCPerMin?: number;
+    atmosphere?: string;
+  }>;
+  isMasterRecipeProtected?: boolean;
+  targetQuantity?: number;
+  loadedQuantity?: number;
+  completedQuantity?: number;
+  scrappedQuantity?: number;
+  weightKg?: number;
+  loadedWeightKg?: number;
+  dueDate?: string;
+  actualCompletionDate?: string;
+  assignedFurnaceCode?: string;
+  assignedOperatorName?: string;
+  shiftId?: string;
+  chargeNumber?: string;
+  stagesCompletedCount?: number;
+  totalRecipeStages?: number;
+  hasDeviations?: boolean;
+  concessionApproved?: boolean;
+  concessionReason?: string;
+  productionCompleted?: boolean;
+  isProductionDataLocked?: boolean;
+  priority?: string;
   status: string;
   waitingForProduction?: boolean;
   inProduction?: boolean;
@@ -54,6 +106,15 @@ interface BatchOrderInspection {
   waitingForDispatch?: boolean;
   dispatched?: boolean;
   inspection?: boolean;
+  workflowState?: {
+    waitingForProduction?: boolean;
+    inProduction?: boolean;
+    waitingForInspection?: boolean;
+    inInspection?: boolean;
+    waitingForDispatch?: boolean;
+    dispatched?: boolean;
+    inspection?: boolean;
+  };
   customer?: {
     customerCode: string;
     customerName: string;
@@ -62,6 +123,7 @@ interface BatchOrderInspection {
     itemCode: string;
     itemName: string;
     materialGrade: string;
+    drawingNumber?: string;
     uom?: string;
   };
   quantity?: {
@@ -69,10 +131,12 @@ interface BatchOrderInspection {
     loadedQuantity: number;
     completedQuantity: number;
     scrappedQuantity: number;
+    weightKg?: number;
   };
   recipeSnapshot?: {
     recipeCode: string;
     name: string;
+    revision?: number;
     processFamily?: string;
     stages?: Array<{
       sequence: number;
@@ -87,10 +151,22 @@ interface BatchOrderInspection {
     locationBay?: string;
   };
   execution?: {
+    operatorAssignment?: {
+      operatorName?: string;
+      shiftId?: string;
+    };
+    recipeExecution?: {
+      stagesCompleted?: any[];
+      deviations?: any[];
+      concessionApproved?: boolean;
+      concessionReason?: string;
+    };
     furnaceCharge?: {
       furnaceId?: string;
       furnaceCode?: string;
       loadedWeightKg?: number;
+      chargeNumber?: string;
+      loadedAt?: string;
     };
     inspectionData?: {
       furnaceId?: string;
@@ -135,6 +211,7 @@ interface BatchOrderInspection {
   timeline?: {
     actualEndDate?: string;
     targetCompletionDate?: string;
+    dueDate?: string;
   };
 }
 
@@ -153,6 +230,11 @@ export const QualityPage: React.FC = () => {
 
   // Selected Active Job for Workbench
   const [activeJob, setActiveJob] = useState<BatchOrderInspection | null>(null);
+
+  // Inspection Modals State
+  const [recipeModalJob, setRecipeModalJob] = useState<BatchOrderInspection | null>(null);
+  const [takeModalJob, setTakeModalJob] = useState<BatchOrderInspection | null>(null);
+  const [takeNotes, setTakeNotes] = useState<string>('Claimed by inspector at QA station');
 
   // 6 Mandatory Heat-Treatment Inspection Fields Form State
   const [furnaceCode, setFurnaceCode] = useState<string>('');
@@ -187,6 +269,15 @@ export const QualityPage: React.FC = () => {
         authenticatedFetch(`${env.API_BASE_URL}/api/v1/production-jobs/queue/waiting-for-dispatch`),
         authenticatedFetch(`${env.API_BASE_URL}/api/v1/production-jobs/queue/inspection-failed`)
       ]);
+
+      if (waitRes.status === 403 || inInspRes.status === 403) {
+        setFeedback({
+          type: 'error',
+          message: 'Access Denied: Quality Inspection permissions (QUALITY_INSPECTION_VIEW) are required to access this workspace.'
+        });
+        setIsLoading(false);
+        return;
+      }
 
       if (waitRes.ok) {
         const data = await waitRes.json();
@@ -300,7 +391,7 @@ export const QualityPage: React.FC = () => {
   const quantityRejected = Math.max(0, quantityReceived - quantityDelivered);
 
   // Take for Inspection Handler
-  const handleTakeForInspection = async (job: BatchOrderInspection) => {
+  const handleTakeForInspection = async (job: BatchOrderInspection, notes?: string) => {
     setIsActionLoading(true);
     setFeedback(null);
     try {
@@ -311,12 +402,32 @@ export const QualityPage: React.FC = () => {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            notes: 'Claimed by inspector at QA station'
+            notes: notes || takeNotes || 'Claimed by inspector at QA station'
           })
         }
       );
 
       const json = await res.json();
+
+      if (res.status === 409) {
+        setFeedback({
+          type: 'warning',
+          message: `Concurrency Conflict: Batch Order ${job.boNumber || job.jobNumber} was just claimed by another inspector. The queue has been automatically refreshed.`
+        });
+        setTakeModalJob(null);
+        await fetchAllQueues();
+        return;
+      }
+
+      if (res.status === 403) {
+        setFeedback({
+          type: 'error',
+          message: `Access Denied: Quality Inspection permissions are required to claim Batch Orders for inspection.`
+        });
+        setTakeModalJob(null);
+        return;
+      }
+
       if (!res.ok) {
         throw new Error(json.message || 'Failed to claim Batch Order for inspection');
       }
@@ -326,6 +437,7 @@ export const QualityPage: React.FC = () => {
         message: `Batch Order ${job.boNumber || job.jobNumber} successfully taken for inspection! Active workbench opened.`
       });
 
+      setTakeModalJob(null);
       await fetchAllQueues();
       setActiveJob(json.data || job);
       setActiveTab('IN_INSPECTION');
@@ -791,73 +903,303 @@ export const QualityPage: React.FC = () => {
               icon={<ShieldCheck size={48} color="var(--color-text-secondary)" />}
             />
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               {filterJobs(waitingJobs).map((job) => {
-                const loadedQty =
+                const poNum = job.poNumber || (job as any).genealogy?.poNumber || 'N/A';
+                const grnNum = job.grnNumber || (job as any).genealogy?.grnNumber || 'N/A';
+                const heatLot = job.heatLotNumber || (job as any).genealogy?.heatLotNumber || 'N/A';
+                const custName = job.customerName || job.customer?.customerName || 'N/A';
+                const custCode = job.customerCode || job.customer?.customerCode;
+
+                const itmCode = job.itemCode || job.item?.itemCode || 'N/A';
+                const itmName = job.itemName || job.item?.itemName || 'Heat Treated Part';
+                const matGrade = job.materialGrade || job.item?.materialGrade || 'Alloy';
+                const drwNum = job.drawingNumber || job.item?.drawingNumber || 'N/A';
+                const uomVal = job.uom || job.item?.uom || 'PCS';
+
+                const rcpCode = job.recipeCode || job.recipeSnapshot?.recipeCode || 'N/A';
+                const rcpName = job.recipeName || job.recipeSnapshot?.name || 'Heat Treatment Recipe';
+                const rcpRev = job.recipeRevision || job.recipeSnapshot?.revision || 1;
+
+                const loadedQty = job.loadedQuantity || job.quantity?.loadedQuantity || 0;
+                const completedQty =
+                  job.completedQuantity ??
                   job.execution?.qualityHandoff?.completedQuantity ??
                   job.quantity?.completedQuantity ??
-                  job.quantity?.loadedQuantity ??
-                  job.quantity?.targetQuantity ??
+                  loadedQty;
+                const scrapQty =
+                  job.scrappedQuantity ??
+                  job.execution?.qualityHandoff?.scrappedQuantity ??
+                  job.quantity?.scrappedQuantity ??
                   0;
+                const weightVal =
+                  job.weightKg ??
+                  job.execution?.furnaceCharge?.loadedWeightKg ??
+                  job.quantity?.weightKg ??
+                  0;
+
+                const dueDt = job.dueDate || job.timeline?.dueDate || job.timeline?.targetCompletionDate;
+                const isOverdue = dueDt ? new Date(dueDt).getTime() < Date.now() : false;
+
                 const furnace =
+                  job.assignedFurnaceCode ||
                   job.execution?.furnaceCharge?.furnaceCode ||
                   job.equipmentAssignment?.furnaceCode ||
                   'N/A';
+                const operator =
+                  job.assignedOperatorName ||
+                  job.execution?.operatorAssignment?.operatorName ||
+                  'Authorized Operator';
+                const shift = job.shiftId || job.execution?.operatorAssignment?.shiftId || 'SHIFT-A';
+                const charge =
+                  job.chargeNumber ||
+                  job.execution?.furnaceCharge?.chargeNumber ||
+                  'CHG-01';
+                const stagesComp =
+                  job.stagesCompletedCount ||
+                  job.execution?.recipeExecution?.stagesCompleted?.length ||
+                  0;
+                const totalStages =
+                  job.totalRecipeStages ||
+                  job.recipeStagesCount ||
+                  job.recipeSnapshot?.stages?.length ||
+                  stagesComp;
 
                 return (
                   <AppCard
                     key={job.id || job._id}
                     style={{
                       display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      padding: '16px 20px',
-                      borderLeft: '4px solid var(--color-warning, #f59e0b)'
+                      flexDirection: 'column',
+                      gap: '16px',
+                      padding: '20px 24px',
+                      borderLeft: '5px solid var(--color-warning, #f59e0b)',
+                      boxShadow: 'var(--shadow-sm)'
                     }}
                   >
-                    <div style={{ display: 'flex', gap: '24px', alignItems: 'center' }}>
-                      <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <span style={{ fontSize: '16px', fontWeight: 700, color: 'var(--color-primary)' }}>
-                            {job.boNumber || job.jobNumber}
+                    {/* Top Header Bar */}
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        flexWrap: 'wrap',
+                        gap: '12px',
+                        borderBottom: '1px solid var(--color-border-subtle)',
+                        paddingBottom: '12px'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <span style={{ fontSize: '18px', fontWeight: 700, color: 'var(--color-primary)' }}>
+                          {job.boNumber || job.jobNumber}
+                        </span>
+                        <StatusBadge status="WAITING FOR INSPECTION" variant="warning" size="sm" />
+                        {job.priority && (
+                          <span
+                            style={{
+                              fontSize: '11px',
+                              fontWeight: 700,
+                              padding: '2px 8px',
+                              borderRadius: '4px',
+                              backgroundColor:
+                                job.priority === 'URGENT'
+                                  ? 'var(--color-danger-subtle, rgba(239, 68, 68, 0.15))'
+                                  : 'var(--color-neutral-subtle, rgba(100, 116, 139, 0.15))',
+                              color:
+                                job.priority === 'URGENT'
+                                  ? 'var(--color-danger, #ef4444)'
+                                  : 'var(--color-text-secondary)'
+                            }}
+                          >
+                            {job.priority} PRIORITY
                           </span>
-                          <StatusBadge status="WAITING FOR INSPECTION" variant="warning" size="sm" />
-                        </div>
-                        <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
-                          Customer: <strong>{job.customer?.customerName || 'Standard Client'}</strong>
-                          {job.customer?.customerCode && ` (${job.customer.customerCode})`}
-                        </div>
+                        )}
+                        <span
+                          style={{
+                            fontSize: '11px',
+                            fontWeight: 600,
+                            padding: '2px 8px',
+                            borderRadius: '4px',
+                            backgroundColor: 'rgba(16, 185, 129, 0.12)',
+                            color: '#10b981',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}
+                        >
+                          <Check size={12} /> Production Complete — Ready for QA
+                        </span>
                       </div>
 
-                      <div style={{ borderLeft: '1px solid var(--color-border-subtle)', paddingLeft: '16px' }}>
-                        <div style={{ fontSize: '13px', fontWeight: 600 }}>
-                          {job.item?.itemName || 'Heat Treated Component'}
-                        </div>
-                        <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
-                          Grade: <strong>{job.item?.materialGrade || 'Alloy'}</strong> | Qty Received:{' '}
-                          <strong>{loadedQty} {job.item?.uom || 'PCS'}</strong>
-                        </div>
-                      </div>
-
-                      <div style={{ borderLeft: '1px solid var(--color-border-subtle)', paddingLeft: '16px' }}>
-                        <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
-                          Recipe: <strong>{job.recipeSnapshot?.recipeCode || 'Standard HT'}</strong>
-                        </div>
-                        <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
-                          Furnace: <strong>{furnace}</strong>
-                        </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span
+                          style={{
+                            fontSize: '11px',
+                            color: 'var(--color-text-secondary)',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}
+                        >
+                          <Lock size={12} /> Production Records Locked
+                        </span>
                       </div>
                     </div>
 
-                    <AppButton
-                      variant="primary"
-                      size="sm"
-                      leftIcon={<Microscope size={14} />}
-                      onClick={() => handleTakeForInspection(job)}
-                      disabled={isActionLoading}
+                    {/* Authoritative Information Grid */}
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                        gap: '16px'
+                      }}
                     >
-                      Take for Inspection
-                    </AppButton>
+                      {/* Column 1: Lineage (PO & GRN) */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--color-text-secondary)', fontWeight: 600 }}>
+                          Lineage & Traceability
+                        </div>
+                        <div style={{ fontSize: '13px' }}>
+                          Customer: <strong>{custName}</strong> {custCode && `(${custCode})`}
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                          PO: <strong>{poNum}</strong>
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                          GRN: <strong>{grnNum}</strong> | Heat: <strong>{heatLot}</strong>
+                        </div>
+                      </div>
+
+                      {/* Column 2: Part Specs */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--color-text-secondary)', fontWeight: 600 }}>
+                          Part & Metallurgy
+                        </div>
+                        <div style={{ fontSize: '13px', fontWeight: 600 }}>
+                          {itmCode} — {itmName}
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                          Material Grade: <strong>{matGrade}</strong>
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                          Drawing: <strong>{drwNum}</strong>
+                        </div>
+                      </div>
+
+                      {/* Column 3: Recipe Authority & Protection */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--color-text-secondary)', fontWeight: 600 }}>
+                          Governing Recipe (Protected)
+                        </div>
+                        <div style={{ fontSize: '13px', fontWeight: 600 }}>
+                          {rcpCode}
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                          {rcpName} <span style={{ fontWeight: 700, color: 'var(--color-primary)' }}>(REV {rcpRev})</span>
+                        </div>
+                        <div style={{ marginTop: '2px' }}>
+                          <AppButton
+                            variant="ghost"
+                            size="sm"
+                            leftIcon={<FileCheck size={13} />}
+                            onClick={() => setRecipeModalJob(job)}
+                            style={{ padding: '0 4px', height: '22px', fontSize: '11px' }}
+                          >
+                            View Recipe Specifications
+                          </AppButton>
+                        </div>
+                      </div>
+
+                      {/* Column 4: Quantities & Weight */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--color-text-secondary)', fontWeight: 600 }}>
+                          Quantities & Weight
+                        </div>
+                        <div style={{ fontSize: '13px' }}>
+                          QA Intake Qty: <strong style={{ color: 'var(--color-primary)' }}>{completedQty} {uomVal}</strong>
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                          Loaded: {loadedQty} {uomVal} | Scrap: {scrapQty} {uomVal}
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                          <Scale size={13} /> Weight: <strong>{weightVal} kg</strong>
+                        </div>
+                      </div>
+
+                      {/* Column 5: Production Execution Telemetry */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--color-text-secondary)', fontWeight: 600 }}>
+                          Production Execution
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                          Furnace: <strong>{furnace}</strong> | Chg: <strong>{charge}</strong>
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                          Op: <strong>{operator}</strong> ({shift})
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                          Stages: <strong>{stagesComp} of {totalStages}</strong> verified
+                        </div>
+                        {(job.hasDeviations || job.concessionApproved) && (
+                          <div style={{ fontSize: '11px', color: 'var(--color-warning, #f59e0b)', fontWeight: 600 }}>
+                            ⚠ Concession: {job.concessionReason || 'Approved deviation'}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Footer Actions Strip */}
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        flexWrap: 'wrap',
+                        gap: '12px',
+                        borderTop: '1px solid var(--color-border-subtle)',
+                        paddingTop: '12px'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                        <span
+                          style={{
+                            fontSize: '12px',
+                            color: isOverdue ? 'var(--color-danger, #ef4444)' : 'var(--color-text-secondary)',
+                            fontWeight: isOverdue ? 700 : 400,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}
+                        >
+                          <Calendar size={13} /> Due Date:{' '}
+                          {dueDt ? new Date(dueDt).toLocaleDateString() : 'N/A'}{' '}
+                          {isOverdue && '(OVERDUE)'}
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '10px' }}>
+                        <AppButton
+                          variant="secondary"
+                          size="sm"
+                          leftIcon={<FileCheck size={14} />}
+                          onClick={() => setRecipeModalJob(job)}
+                        >
+                          View Recipe
+                        </AppButton>
+                        <AppButton
+                          variant="primary"
+                          size="sm"
+                          leftIcon={<Microscope size={14} />}
+                          onClick={() => {
+                            setTakeModalJob(job);
+                            setTakeNotes('Claimed by inspector at QA station');
+                          }}
+                          disabled={isActionLoading}
+                        >
+                          Take for Inspection
+                        </AppButton>
+                      </div>
+                    </div>
                   </AppCard>
                 );
               })}
@@ -1487,6 +1829,198 @@ export const QualityPage: React.FC = () => {
               value={defectReason}
               onChange={(e) => setDefectReason(e.target.value)}
               placeholder="Detail the failure mode, traverse deviations, and metallurgical findings..."
+            />
+          </div>
+        </div>
+      </AppDialog>
+
+      {/* Recipe Specifications Read-Only Inspection Dialog */}
+      <AppDialog
+        isOpen={Boolean(recipeModalJob)}
+        onClose={() => setRecipeModalJob(null)}
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <FileCheck size={20} color="var(--color-primary)" />
+            <span>
+              Governing Recipe: {recipeModalJob?.recipeCode || recipeModalJob?.recipeSnapshot?.recipeCode}
+            </span>
+          </div>
+        }
+        size="lg"
+        footer={
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <AppButton variant="secondary" onClick={() => setRecipeModalJob(null)}>
+              Close Specifications
+            </AppButton>
+          </div>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {/* Master Recipe Immutability Banner */}
+          <AppAlert type="info" title="Governing Recipe Specification Locked">
+            <div style={{ fontSize: '13px' }}>
+              <strong>Master Recipe Immutability:</strong> This Recipe is bound to Batch Order{' '}
+              <code>{recipeModalJob?.boNumber || recipeModalJob?.jobNumber}</code> from production execution. In
+              accordance with Quality Assurance Directives, <strong>recipe replacement, parameter override, or substitution is strictly prohibited</strong> during inspection.
+            </div>
+          </AppAlert>
+
+          {/* Recipe Metadata Cards */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+              gap: '12px'
+            }}
+          >
+            <div style={{ padding: '10px 12px', background: 'var(--material-thin)', borderRadius: '6px', border: '1px solid var(--color-border-subtle)' }}>
+              <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>Recipe Name</div>
+              <div style={{ fontSize: '13px', fontWeight: 600 }}>{recipeModalJob?.recipeName || recipeModalJob?.recipeSnapshot?.name || 'Heat Treatment'}</div>
+            </div>
+            <div style={{ padding: '10px 12px', background: 'var(--material-thin)', borderRadius: '6px', border: '1px solid var(--color-border-subtle)' }}>
+              <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>Revision</div>
+              <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--color-primary)' }}>
+                REV {recipeModalJob?.recipeRevision || recipeModalJob?.recipeSnapshot?.revision || 1}
+              </div>
+            </div>
+            <div style={{ padding: '10px 12px', background: 'var(--material-thin)', borderRadius: '6px', border: '1px solid var(--color-border-subtle)' }}>
+              <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>Process Family</div>
+              <div style={{ fontSize: '13px', fontWeight: 600 }}>{recipeModalJob?.processFamily || recipeModalJob?.recipeSnapshot?.processFamily || 'CASE_HARDENING'}</div>
+            </div>
+            <div style={{ padding: '10px 12px', background: 'var(--material-thin)', borderRadius: '6px', border: '1px solid var(--color-border-subtle)' }}>
+              <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>Target Material</div>
+              <div style={{ fontSize: '13px', fontWeight: 600 }}>{recipeModalJob?.materialGrade || recipeModalJob?.item?.materialGrade || 'Standard Grade'}</div>
+            </div>
+          </div>
+
+          {/* Thermal Stages Table */}
+          <div>
+            <h4 style={{ margin: '0 0 8px 0', fontSize: '13px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Governing Thermal Profile Stages ({recipeModalJob?.recipeStages?.length || recipeModalJob?.recipeSnapshot?.stages?.length || 0})
+            </h4>
+            <div style={{ overflowX: 'auto', border: '1px solid var(--color-border-subtle)', borderRadius: '6px' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                <thead>
+                  <tr style={{ background: 'var(--color-bg-secondary)', borderBottom: '1px solid var(--color-border-subtle)', textAlign: 'left' }}>
+                    <th style={{ padding: '8px 12px' }}>Seq</th>
+                    <th style={{ padding: '8px 12px' }}>Stage Name</th>
+                    <th style={{ padding: '8px 12px' }}>Target Temp (°C)</th>
+                    <th style={{ padding: '8px 12px' }}>Soak Time (min)</th>
+                    <th style={{ padding: '8px 12px' }}>Atmosphere / Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(recipeModalJob?.recipeStages || recipeModalJob?.recipeSnapshot?.stages || []).map((stg, idx) => (
+                    <tr key={idx} style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
+                      <td style={{ padding: '8px 12px', fontWeight: 600 }}>{stg.sequence || idx + 1}</td>
+                      <td style={{ padding: '8px 12px', fontWeight: 600 }}>{stg.stageName}</td>
+                      <td style={{ padding: '8px 12px' }}>{stg.targetTemperatureC} °C</td>
+                      <td style={{ padding: '8px 12px' }}>{stg.soakTimeMinutes} min</td>
+                      <td style={{ padding: '8px 12px', color: 'var(--color-text-secondary)' }}>
+                        {(stg as any).atmosphere || (stg as any).rampRateCPerMin ? `${(stg as any).rampRateCPerMin} °C/min` : 'Endothermic / Controlled'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </AppDialog>
+
+      {/* Take for Inspection Confirmation Modal */}
+      <AppDialog
+        isOpen={Boolean(takeModalJob)}
+        onClose={() => setTakeModalJob(null)}
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Microscope size={20} color="var(--color-primary)" />
+            <span>Claim Batch Order for Quality Inspection</span>
+          </div>
+        }
+        size="md"
+        footer={
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+            <AppButton variant="secondary" onClick={() => setTakeModalJob(null)}>
+              Cancel
+            </AppButton>
+            <AppButton
+              variant="primary"
+              leftIcon={<Microscope size={14} />}
+              onClick={() => takeModalJob && handleTakeForInspection(takeModalJob, takeNotes)}
+              disabled={isActionLoading}
+            >
+              Confirm Claim & Open Workbench
+            </AppButton>
+          </div>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)' }}>
+            You are claiming Batch Order{' '}
+            <strong style={{ color: 'var(--color-primary)' }}>
+              {takeModalJob?.boNumber || takeModalJob?.jobNumber}
+            </strong>{' '}
+            for metallurgical quality testing.
+          </div>
+
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(2, 1fr)',
+              gap: '12px',
+              padding: '12px',
+              backgroundColor: 'var(--material-thin)',
+              borderRadius: '6px',
+              border: '1px solid var(--color-border-subtle)',
+              fontSize: '12px'
+            }}
+          >
+            <div>
+              <span style={{ color: 'var(--color-text-secondary)' }}>Part:</span>{' '}
+              <strong>{takeModalJob?.itemName || takeModalJob?.item?.itemName}</strong>
+            </div>
+            <div>
+              <span style={{ color: 'var(--color-text-secondary)' }}>Grade:</span>{' '}
+              <strong>{takeModalJob?.materialGrade || takeModalJob?.item?.materialGrade}</strong>
+            </div>
+            <div>
+              <span style={{ color: 'var(--color-text-secondary)' }}>Inspection Qty:</span>{' '}
+              <strong>
+                {takeModalJob?.completedQuantity ??
+                  takeModalJob?.execution?.qualityHandoff?.completedQuantity ??
+                  takeModalJob?.quantity?.completedQuantity ??
+                  takeModalJob?.loadedQuantity}{' '}
+                {takeModalJob?.uom || takeModalJob?.item?.uom || 'PCS'}
+              </strong>
+            </div>
+            <div>
+              <span style={{ color: 'var(--color-text-secondary)' }}>Weight:</span>{' '}
+              <strong>
+                {takeModalJob?.weightKg ??
+                  takeModalJob?.execution?.furnaceCharge?.loadedWeightKg ??
+                  takeModalJob?.quantity?.weightKg ??
+                  0}{' '}
+                kg
+              </strong>
+            </div>
+          </div>
+
+          <AppAlert type="info">
+            <span style={{ fontSize: '12px' }}>
+              <strong>Atomic State Transition:</strong> This operation transitions the BO from{' '}
+              <code>waitingForInspection</code> → <code>inInspection</code>. If another inspector claims this BO simultaneously, the system will prevent duplicate sessions and notify you with a conflict alert.
+            </span>
+          </AppAlert>
+
+          <div>
+            <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>
+              Inspector Claim Notes
+            </label>
+            <AppInput
+              value={takeNotes}
+              onChange={(e) => setTakeNotes(e.target.value)}
+              placeholder="e.g. Claimed at Station QA-01 for hardness and case depth inspection"
             />
           </div>
         </div>

@@ -2999,27 +2999,120 @@ export class ProductionJobService {
   ): Promise<any[]> {
     const jobs = await this.repo.findWaitingForInspectionQueue(tenantId, filters);
 
-    return jobs.map((job, idx) => ({
-      queuePosition: idx + 1,
-      jobId: job.id,
-      jobNumber: job.jobNumber,
-      boNumber: job.boNumber || job.jobNumber,
-      poNumber: job.poNumber || (job.genealogy as any)?.whichPo?.poNumber || null,
-      grnNumber: job.grnNumber || (job.genealogy as any)?.whichGrn?.grnNumber || null,
-      customerName: job.customer?.customerName,
-      itemCode: job.item?.itemCode,
-      itemName: job.item?.itemName,
-      materialGrade: job.item?.materialGrade,
-      recipeCode: job.recipeSnapshot?.recipeCode || null,
-      recipeName: job.recipeSnapshot?.name || null,
-      completedQuantity: job.quantity?.completedQuantity || 0,
-      scrappedQuantity: job.quantity?.scrappedQuantity || 0,
-      inspectionRequestId: job.execution?.qualityHandoff?.inspectionRequestId || null,
-      status: job.status,
-      waitingForInspection: true,
-      workflowState: job.workflowState || null,
-      actualCompletionDate: job.timeline?.actualCompletionDate || null
-    }));
+    return jobs.map((job, idx) => {
+      const genealogy = (job.genealogy as any) || {};
+      const whichPo = genealogy.whichPo || {};
+      const whichGrn = genealogy.whichGrn || {};
+      const whichItem = genealogy.whichItem || {};
+      const whichRecipe = genealogy.whichRecipe || {};
+      const recipeSnapshot = (job.recipeSnapshot as any) || {};
+      const furnaceCharge = (job.execution?.furnaceCharge as any) || {};
+      const qualityHandoff = (job.execution?.qualityHandoff as any) || {};
+      const stageProgress = (job.execution?.stageProgress as any) || [];
+      const execution = (job.execution as any) || {};
+
+      const loadedQty =
+        job.quantity?.loadedQuantity ||
+        furnaceCharge.loadedPieces ||
+        job.quantity?.targetQuantity ||
+        0;
+      const completedQty =
+        job.quantity?.completedQuantity ||
+        qualityHandoff.completedQuantity ||
+        0;
+      const scrappedQty =
+        job.quantity?.scrappedQuantity ||
+        qualityHandoff.scrappedQuantity ||
+        0;
+
+      const totalStages = recipeSnapshot.stages?.length || whichRecipe.stagesCount || 0;
+      const completedStages = stageProgress.length;
+      const hasDeviations = stageProgress.some((s: any) => s.isCompliant === false);
+
+      return {
+        queuePosition: idx + 1,
+        jobId: job.id,
+        id: job.id,
+        jobNumber: job.jobNumber,
+        boNumber: job.boNumber || job.jobNumber,
+        priority: job.priority || 'NORMAL',
+        status: job.status,
+        workflowState: job.workflowState || {
+          waitingForProduction: false,
+          inProduction: false,
+          waitingForInspection: true,
+          inInspection: false,
+          waitingForDispatch: false,
+          dispatched: false,
+          inspection: false
+        },
+        // 1. Authoritative PO Lineage
+        poId: job.poId || genealogy.poId || whichPo.poId || null,
+        poNumber: job.poNumber || genealogy.poNumber || whichPo.poNumber || null,
+        customerName: job.customer?.customerName || (job as any).customerName || genealogy.customerName || whichPo.supplierName || 'Standard Client',
+        customerCode: job.customer?.customerCode || genealogy.customerCode || null,
+        supplierName: whichPo.supplierName || genealogy.supplierName || null,
+        // 2. Authoritative GRN Lineage
+        grnId: job.grnId || genealogy.grnId || whichGrn.grnId || null,
+        grnNumber: job.grnNumber || genealogy.grnNumber || whichGrn.grnNumber || null,
+        heatLotNumber: (job as any).heatLotNumber || genealogy.heatLotNumber || whichGrn.heatLotNumber || null,
+        receivedDate: whichGrn.receivedDate || genealogy.rawMaterialReceivedDate || null,
+        // 3. Authoritative Part Master Information
+        itemId: job.item?.itemId || whichItem.itemId || null,
+        itemCode: job.item?.itemCode || whichItem.itemPartNumber || null,
+        partCode: job.item?.itemCode || whichItem.itemPartNumber || null,
+        itemName: job.item?.itemName || whichItem.materialName || 'Heat-Treated Component',
+        partName: job.item?.itemName || whichItem.materialName || 'Heat-Treated Component',
+        materialGrade: job.item?.materialGrade || whichItem.materialGrade || 'Standard Alloy',
+        drawingNumber: (job.item as any)?.drawingNumber || whichItem.drawingNumber || null,
+        uom: job.item?.uom || whichItem.uom || 'PCS',
+        // 4. Authoritative Bound Recipe (Read-only / Immutably Pinned)
+        recipeId: recipeSnapshot.recipeId || whichRecipe.recipeId || null,
+        recipeCode: recipeSnapshot.recipeCode || whichRecipe.recipeCode || 'HT-STD',
+        recipeName: (recipeSnapshot as any).recipeName || recipeSnapshot.name || whichRecipe.recipeName || 'Heat Treatment Recipe',
+        recipeRevision: recipeSnapshot.revisionNumber || (recipeSnapshot as any).revision || (recipeSnapshot as any).recipeRevision || whichRecipe.revisionNumber || 1,
+        processFamily: recipeSnapshot.processFamily || whichRecipe.processFamily || 'Thermal Processing',
+        recipeStagesCount: totalStages,
+        recipeStages: recipeSnapshot.stages || [],
+        isMasterRecipeProtected: true,
+        isRecipeSubstitutionProhibited: true,
+        // 5. Authoritative Quantities & Weight
+        targetQuantity: job.quantity?.targetQuantity || loadedQty,
+        loadedQuantity: loadedQty,
+        completedQuantity: completedQty,
+        scrappedQuantity: scrappedQty,
+        weightKg: job.weightKg || (job as any).weight || furnaceCharge.loadedWeightKg || null,
+        loadedWeightKg: furnaceCharge.loadedWeightKg || job.weightKg || null,
+        // 6. Authoritative Timeline & Due Dates
+        dueDate: job.timeline?.dueDate || (job as any).dueDate || null,
+        targetCompletionDate: job.timeline?.targetCompletionDate || null,
+        actualCompletionDate: (job.timeline as any)?.actualCompletionDate || (job.execution as any)?.completedAt || null,
+        // 7. Authoritative Production Information (Frozen / Read-Only)
+        productionCompleted: true,
+        productionStatus: 'Production Complete — Awaiting Inspection',
+        assignedFurnaceId: furnaceCharge.furnaceId || job.equipmentAssignment?.furnaceId || null,
+        assignedFurnaceCode: furnaceCharge.furnaceCode || job.equipmentAssignment?.furnaceCode || 'FURNACE-HT-01',
+        assignedOperatorName:
+          furnaceCharge.operatorName ||
+          (job as any).operatorAssignment?.operatorName ||
+          execution.operatorAssignment?.operatorName ||
+          'Shop-Floor Operator',
+        chargeNumber: furnaceCharge.chargeNumber || furnaceCharge.loadNumber || null,
+        shiftId: furnaceCharge.shiftId || execution.operatorAssignment?.shiftId || null,
+        stagesCompletedCount: completedStages || (recipeSnapshot.stages?.length || 0),
+        totalRecipeStages: totalStages || (recipeSnapshot.stages?.length || 0),
+        hasDeviations,
+        concessionApproved: Boolean(qualityHandoff.concession?.concessionApproved),
+        concessionReason: qualityHandoff.concession?.concessionReason || null,
+        isProductionDataLocked: true,
+        // Inspection State
+        waitingForInspection: true,
+        inInspection: false,
+        inspectionRequestId: qualityHandoff.inspectionRequestId || null,
+        notes: job.notes || null,
+        createdAt: (job as any).createdAt || null
+      };
+    });
   }
 
   public async takeForProduction(
@@ -4663,6 +4756,49 @@ export class ProductionJobService {
     const job = await this.repo.findById(tenantId, jobId);
     if (!job) {
       throw new NotFoundError(`Batch Order with identifier '${jobId}' not found.`);
+    }
+
+    // 1. Concurrency / Already in Inspection check
+    if (
+      job.inInspection ||
+      (job.workflowState as any)?.inInspection ||
+      job.status === 'IN_INSPECTION'
+    ) {
+      throw new ConflictError(
+        `Take Inspection Conflict: Batch Order '${job.boNumber || job.jobNumber}' is already in inspection and cannot be taken simultaneously by another user.`
+      );
+    }
+
+    // 2. Production state check
+    if (
+      job.inProduction ||
+      (job.workflowState as any)?.inProduction ||
+      job.status === 'IN_PRODUCTION' ||
+      job.waitingForProduction ||
+      (job.workflowState as any)?.waitingForProduction ||
+      job.status === 'WAITING_FOR_PRODUCTION'
+    ) {
+      throw new BadRequestError(
+        `Cannot take Batch Order '${job.boNumber || job.jobNumber}' for inspection: BO is not waiting for inspection (has not completed production execution, current status: '${job.status}').`
+      );
+    }
+
+    // 3. Post-inspection / Completed / Dispatched / Quarantined check
+    if (
+      job.waitingForDispatch ||
+      (job.workflowState as any)?.waitingForDispatch ||
+      job.dispatched ||
+      (job.workflowState as any)?.dispatched ||
+      job.inspection ||
+      (job.workflowState as any)?.inspection ||
+      job.status === 'WAITING_FOR_DISPATCH' ||
+      job.status === 'DISPATCHED' ||
+      job.status === 'COMPLETED' ||
+      job.status === 'INSPECTION'
+    ) {
+      throw new BadRequestError(
+        `Cannot take Batch Order '${job.boNumber || job.jobNumber}' for inspection: BO is in completed/dispatched/quarantined status '${job.status}'.`
+      );
     }
 
     const isWaitingForInspection = Boolean(

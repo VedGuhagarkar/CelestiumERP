@@ -491,18 +491,50 @@ export class ProductionJobRepository
   ): Promise<ProductionJobDocument[]> {
     const query: any = {
       tenantId,
-      $or: [
-        { waitingForInspection: true },
-        { status: 'WAITING_FOR_INSPECTION' },
-        { status: 'QUALITY_CHECK' }
+      $and: [
+        {
+          $or: [
+            { 'workflowState.waitingForInspection': true },
+            { waitingForInspection: true },
+            { 'workflow.waitingForInspection': true }
+          ]
+        }
       ],
+      // Strictly exclude any incompatible workflow states
+      'workflowState.inInspection': { $ne: true },
+      inInspection: { $ne: true },
+      'workflowState.waitingForDispatch': { $ne: true },
+      waitingForDispatch: { $ne: true },
+      'workflowState.dispatched': { $ne: true },
+      dispatched: { $ne: true },
+      'workflowState.inspection': { $ne: true },
+      'workflowState.inProduction': { $ne: true },
       inProduction: { $ne: true },
+      'workflowState.waitingForProduction': { $ne: true },
+      status: {
+        $nin: [
+          'IN_PRODUCTION',
+          'IN_INSPECTION',
+          'WAITING_FOR_DISPATCH',
+          'DISPATCHED',
+          'COMPLETED',
+          'CANCELLED',
+          'INSPECTION'
+        ]
+      },
       isDeleted: false
     };
 
+    if (filters.furnaceId) {
+      query['equipmentAssignment.furnaceId'] = filters.furnaceId;
+    }
+    if (filters.customerId) {
+      query.customerId = filters.customerId;
+    }
+
     return this.model
       .find(query)
-      .sort({ updatedAt: -1 })
+      .sort({ 'timeline.actualCompletionDate': -1, updatedAt: -1 })
       .exec();
   }
 
@@ -646,15 +678,23 @@ export class ProductionJobRepository
       $and: [
         {
           $or: [
-            { waitingForInspection: true },
             { 'workflowState.waitingForInspection': true },
+            { waitingForInspection: true },
+            { 'workflow.waitingForInspection': true },
             { status: 'WAITING_FOR_INSPECTION' },
             { status: 'QUALITY_CHECK' }
           ]
         }
       ],
       inInspection: { $ne: true },
-      'workflowState.inInspection': { $ne: true }
+      'workflowState.inInspection': { $ne: true },
+      inProduction: { $ne: true },
+      'workflowState.inProduction': { $ne: true },
+      waitingForDispatch: { $ne: true },
+      'workflowState.waitingForDispatch': { $ne: true },
+      dispatched: { $ne: true },
+      'workflowState.dispatched': { $ne: true },
+      'workflowState.inspection': { $ne: true }
     };
 
     return this.model.findOneAndUpdate(filter, updateData, { new: true }).exec();
