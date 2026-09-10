@@ -314,42 +314,74 @@ export interface IHardnessTestPoint {
   passed: boolean;
 }
 
-export interface IHeatTreatmentInspectionData {
+export interface IInspectionEquipment {
   furnaceId: string;
   furnaceCode: string;
   equipmentNotes?: string | null;
+}
+
+export interface IHardnessSpecification {
+  minHardness: number;
+  maxHardness: number;
+  scale: 'HRC' | 'HRB' | 'HV' | 'HBW' | string;
+}
+
+export interface IActualHardness {
+  measuredAverage: number;
+  scale: 'HRC' | 'HRB' | 'HV' | 'HBW' | string;
+  isCompliant: boolean;
+  testPoints?: IHardnessTestPoint[];
+}
+
+export interface IInspectionCaseDepth {
+  effectiveCaseDepthMm: number;
+  targetMinMm?: number | null;
+  targetMaxMm?: number | null;
+  isCompliant: boolean;
+  method?: string | null;
+}
+
+export interface IInspectionQuantities {
+  quantityReceived: number;
+  quantityDelivered: number;
+  quantityRejected: number;
+}
+
+export interface IHeatTreatmentInspectionData {
+  // 1. Furnace / Equipment
+  furnaceId: string;
+  furnaceCode: string;
+  equipmentNotes?: string | null;
+  equipment?: IInspectionEquipment;
+
+  // 2. Hardness Specification (Required Planned Limits)
   minHardness?: number;
   maxHardness?: number;
   scale?: string;
   specificationNotes?: string | null;
-  hardnessSpecification?: {
-    minHardness: number;
-    maxHardness: number;
-    scale: 'HRC' | 'HRB' | 'HV' | 'HBW' | string;
-  };
+  hardnessSpecification?: IHardnessSpecification;
+
+  // 3. Actual Hardness (Measured Results)
   measuredAverage?: number;
-  testPoints?: any[];
+  testPoints?: IHardnessTestPoint[];
   isHardnessCompliant?: boolean;
-  actualHardness?: {
-    measuredAverage: number;
-    testPoints?: IHardnessTestPoint[];
-    scale: 'HRC' | 'HRB' | 'HV' | 'HBW' | string;
-    isCompliant: boolean;
-  };
+  actualHardness?: IActualHardness;
+
+  // 4. Case Depth (Actual and Target Limits)
+  effectiveCaseDepthMm?: number;
   targetCaseDepthMinMm?: number | null;
   targetCaseDepthMaxMm?: number | null;
-  effectiveCaseDepthMm?: number;
   isCaseDepthCompliant?: boolean;
   caseDepthMethod?: string | null;
-  caseDepth?: {
-    effectiveCaseDepthMm: number;
-    targetMinMm?: number;
-    targetMaxMm?: number;
-    isCompliant: boolean;
-  };
+  caseDepth?: IInspectionCaseDepth;
+
+  // 5 & 6. Quantities (Received, Delivered, and Rejected)
   quantityReceived: number;
   quantityDelivered: number;
   quantityRejected?: number;
+  quantities?: IInspectionQuantities;
+
+  // Quality sign-off metadata
   visualInspection?: {
     surfaceOxidationAcceptable: boolean;
     quenchCracksPresent: boolean;
@@ -376,6 +408,7 @@ export interface IHeatTreatmentInspectionData {
   defectReason?: string | null;
   correctiveAction?: string | null;
   notes?: string | null;
+  remarks?: string | null;
 }
 
 export interface IJobExecution {

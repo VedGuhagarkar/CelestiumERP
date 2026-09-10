@@ -927,10 +927,37 @@ export const hardnessTestPointValidatorSchema = z.object({
   pointNumber: z.number().int().min(1).optional(),
   pointIdentifier: z.string().trim().optional(),
   location: z.string().trim().nullable().optional(),
-  value: z.number().min(0, 'Hardness value must be non-negative').optional(),
-  measuredValue: z.number().min(0, 'Hardness value must be non-negative').optional(),
+  value: z.number({ invalid_type_error: 'Hardness value must be a valid number' }).min(0, 'Hardness value must be non-negative').optional(),
+  measuredValue: z.number({ invalid_type_error: 'Hardness value must be a valid number' }).min(0, 'Hardness value must be non-negative').optional(),
   scale: z.string().trim().optional(),
   passed: z.boolean().optional()
+});
+
+export const inspectionEquipmentValidatorSchema = z.object({
+  furnaceId: z.string().trim().min(1).optional(),
+  furnaceCode: z.string().trim().min(1).toUpperCase().optional(),
+  equipmentNotes: z.string().trim().max(1000).nullable().optional()
+});
+
+export const hardnessSpecificationValidatorSchema = z.object({
+  minHardness: z.number({ invalid_type_error: 'Minimum hardness must be a valid number' }).min(0, 'Minimum hardness must be non-negative'),
+  maxHardness: z.number({ invalid_type_error: 'Maximum hardness must be a valid number' }).min(0, 'Maximum hardness must be non-negative'),
+  scale: z.string().trim().min(1).default('HRC').optional()
+});
+
+export const actualHardnessValidatorSchema = z.object({
+  measuredAverage: z.number({ invalid_type_error: 'Measured hardness must be a valid number' }).min(0, 'Measured hardness must be non-negative'),
+  scale: z.string().trim().min(1).default('HRC').optional(),
+  isCompliant: z.boolean().optional(),
+  testPoints: z.array(hardnessTestPointValidatorSchema).optional()
+});
+
+export const inspectionCaseDepthValidatorSchema = z.object({
+  effectiveCaseDepthMm: z.number({ invalid_type_error: 'Effective case depth must be a valid number' }).min(0, 'Effective case depth must be non-negative'),
+  targetMinMm: z.number().min(0).nullable().optional(),
+  targetMaxMm: z.number().min(0).nullable().optional(),
+  isCompliant: z.boolean().optional(),
+  method: z.string().trim().nullable().optional()
 });
 
 export const takeForInspectionSchema: ValidationSchema = {
@@ -950,24 +977,39 @@ export const recordHeatTreatmentInspectionSchema: ValidationSchema = {
   }),
   body: z
     .object({
+      // 1. Furnace / Equipment
       furnaceId: z.string().trim().min(1).optional(),
       furnaceCode: z.string().trim().min(1).toUpperCase().optional(),
       equipmentNotes: z.string().trim().max(1000).nullable().optional(),
-      minHardness: z.number().min(0).optional(),
-      maxHardness: z.number().min(0).optional(),
+      equipment: inspectionEquipmentValidatorSchema.optional(),
+
+      // 2. Hardness Specification
+      minHardness: z.number({ invalid_type_error: 'Hardness specification min must be a valid number' }).min(0, 'Hardness specification min must be non-negative').optional(),
+      maxHardness: z.number({ invalid_type_error: 'Hardness specification max must be a valid number' }).min(0, 'Hardness specification max must be non-negative').optional(),
       scale: z.string().trim().min(1).default('HRC').optional(),
       specificationNotes: z.string().trim().max(1000).nullable().optional(),
-      measuredAverage: z.number().min(0).optional(),
+      hardnessSpecification: hardnessSpecificationValidatorSchema.optional(),
+
+      // 3. Actual Hardness
+      measuredAverage: z.number({ invalid_type_error: 'Actual hardness must be a valid number' }).min(0, 'Actual hardness must be non-negative').optional(),
       testPoints: z.array(hardnessTestPointValidatorSchema).optional(),
       isHardnessCompliant: z.boolean().optional(),
+      actualHardness: actualHardnessValidatorSchema.optional(),
+
+      // 4. Case Depth
       targetCaseDepthMinMm: z.number().min(0).nullable().optional(),
       targetCaseDepthMaxMm: z.number().min(0).nullable().optional(),
-      effectiveCaseDepthMm: z.number().min(0).optional(),
+      effectiveCaseDepthMm: z.number({ invalid_type_error: 'Case depth must be a valid number' }).min(0, 'Case depth must be non-negative').optional(),
       isCaseDepthCompliant: z.boolean().optional(),
       caseDepthMethod: z.string().trim().nullable().optional(),
-      quantityReceived: z.number().optional(),
-      quantityDelivered: z.number().optional(),
-      quantityRejected: z.number().min(0).optional(),
+      caseDepth: inspectionCaseDepthValidatorSchema.optional(),
+
+      // 5 & 6. Quantities
+      quantityReceived: z.number({ invalid_type_error: 'Quantity received must be a valid number' }).min(0, 'Quantity received must be non-negative').optional(),
+      quantityDelivered: z.number({ invalid_type_error: 'Quantity delivered must be a valid number' }).min(0, 'Quantity delivered must be non-negative').optional(),
+      quantityRejected: z.number({ invalid_type_error: 'Quantity rejected must be a valid number' }).min(0, 'Quantity rejected must be non-negative').optional(),
+
+      // Quality Sign-off & Disposition
       disposition: z.enum(['APPROVED', 'REJECTED', 'PENDING']).optional(),
       defectCategory: z.string().trim().nullable().optional(),
       defectReason: z.string().trim().nullable().optional(),
@@ -986,24 +1028,39 @@ export const approveInspectionForDispatchSchema: ValidationSchema = {
   }),
   body: z
     .object({
+      // 1. Furnace / Equipment
       furnaceId: z.string().trim().min(1).optional(),
       furnaceCode: z.string().trim().min(1).toUpperCase().optional(),
       equipmentNotes: z.string().trim().max(1000).nullable().optional(),
-      minHardness: z.number().min(0).optional(),
-      maxHardness: z.number().min(0).optional(),
+      equipment: inspectionEquipmentValidatorSchema.optional(),
+
+      // 2. Hardness Specification
+      minHardness: z.number({ invalid_type_error: 'Hardness specification min must be a valid number' }).min(0, 'Hardness specification min must be non-negative').optional(),
+      maxHardness: z.number({ invalid_type_error: 'Hardness specification max must be a valid number' }).min(0, 'Hardness specification max must be non-negative').optional(),
       scale: z.string().trim().min(1).default('HRC').optional(),
       specificationNotes: z.string().trim().max(1000).nullable().optional(),
-      measuredAverage: z.number().min(0).optional(),
+      hardnessSpecification: hardnessSpecificationValidatorSchema.optional(),
+
+      // 3. Actual Hardness
+      measuredAverage: z.number({ invalid_type_error: 'Actual hardness must be a valid number' }).min(0, 'Actual hardness must be non-negative').optional(),
       testPoints: z.array(hardnessTestPointValidatorSchema).optional(),
       isHardnessCompliant: z.boolean().optional(),
-      effectiveCaseDepthMm: z.number().min(0).optional(),
+      actualHardness: actualHardnessValidatorSchema.optional(),
+
+      // 4. Case Depth
+      effectiveCaseDepthMm: z.number({ invalid_type_error: 'Case depth must be a valid number' }).min(0, 'Case depth must be non-negative').optional(),
       isCaseDepthCompliant: z.boolean().optional(),
       targetCaseDepthMinMm: z.number().min(0).nullable().optional(),
       targetCaseDepthMaxMm: z.number().min(0).nullable().optional(),
       caseDepthMethod: z.string().trim().nullable().optional(),
-      quantityReceived: z.number().optional(),
-      quantityDelivered: z.number().optional(),
-      quantityRejected: z.number().min(0).optional(),
+      caseDepth: inspectionCaseDepthValidatorSchema.optional(),
+
+      // 5 & 6. Quantities
+      quantityReceived: z.number({ invalid_type_error: 'Quantity received must be a valid number' }).min(0, 'Quantity received must be non-negative').optional(),
+      quantityDelivered: z.number({ invalid_type_error: 'Quantity delivered must be a valid number' }).min(0, 'Quantity delivered must be non-negative').optional(),
+      quantityRejected: z.number({ invalid_type_error: 'Quantity rejected must be a valid number' }).min(0, 'Quantity rejected must be non-negative').optional(),
+
+      // Metadata
       notes: z.string().trim().max(1000).nullable().optional(),
       remarks: z.string().trim().max(1000).nullable().optional(),
       microstructureNotes: z.string().trim().max(1000).nullable().optional()

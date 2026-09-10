@@ -95,12 +95,13 @@
    - 8.1 Database Seeding Engine (`backend/src/scripts/seed.ts`)
    - 8.2 Centralized Configuration Subsystem (`backend/src/config/`)
    - 8.3 Operational Runbooks & Technical Specifications (`docs/`)
-   - 8.4 Automated Test Suite Matrix (65 Backend Specs + Frontend Suites)
+   - 8.4 Automated Test Suite Matrix (66 Backend Specs + Frontend Suites)
      - *Prompt 8:* `production-operator-workspace.spec.ts`
      - *Prompt 9:* `production-security-concurrency.spec.ts`
      - *Prompt 10:* `production-e2e-integration.spec.ts`
      - *Inspection Prompt 2:* `inspection-queue.spec.ts`
      - *Inspection Prompt 3:* `inspection-lock.spec.ts`
+     - *Inspection Prompt 4:* `inspection-data.spec.ts`
 
 ---
 
@@ -1180,13 +1181,16 @@ _No direct HTTP routes mounted for this internal domain service._
 
 #### Models & Schemas
 - **`quality-inspection.model.ts`** — Mongoose model: `QualityInspection`. Encapsulates schema definitions, compound tenant indexes, and standalone inspection test data.
-- **`production-job.model.ts` (`IHeatTreatmentInspectionData`)** — Authoritative sub-document embedded on Batch Orders capturing:
-  1. Furnace identification (`furnaceId`, `furnaceCode`).
-  2. Hardness specification (`minHardness`, `maxHardness`, `scale`: HRC/HBW/HV/HRB).
-  3. Actual hardness test points (`testPoints: [{ pointIdentifier, measuredValue, location }]`, `measuredAverage`, `isHardnessCompliant`).
-  4. Case depth (`effectiveCaseDepthMm`, `isCaseDepthCompliant`, `caseDepthMethod`, `totalCaseDepthMm`).
-  5. Quantity received (`quantityReceived > 0`).
-  6. Quantity delivered (`0 < quantityDelivered <= quantityReceived`, `quantityRejected = quantityReceived - quantityDelivered`).
+- **`production-job.model.ts` (`IHeatTreatmentInspectionData`)** — Authoritative embedded data structure on Batch Orders encapsulating the Six Mandatory Heat-Treatment Inspection Fields, with canonical nested sub-documents and synchronized flat accessors:
+  1. **Furnace / Equipment** (`equipment: IInspectionEquipment`, plus flat `furnaceId`, `furnaceCode`): Validated server-side against `furnaceCapacityRepository`, `machineRepository`, or BO assigned equipment; arbitrary equipment identifiers are strictly rejected (`400 Bad Request`).
+  2. **Hardness Specification** (`hardnessSpecification: IHardnessSpecification`, plus flat `minHardness`, `maxHardness`, `scale`, `targetHardness`): Sourced authoritatively from `job.specificationSnapshot` or `job.recipeSnapshot.metallurgicalTargets`; non-negative, max $\ge$ min. Preserves strict Planned vs Actual separation; never silently derived or replaced with unrelated values.
+  3. **Actual Hardness** (`actualHardness: IActualHardness`, plus flat `measuredAverage`, `testPoints`, `isHardnessCompliant`): Required, numeric, non-negative, preserving decimal precision; discrete test points with locations and computed average.
+  4. **Case Depth** (`caseDepth: IInspectionCaseDepth`, plus flat `effectiveCaseDepthMm`, `totalCaseDepthMm`, `caseDepthMethod`, `isCaseDepthCompliant`): Required, numeric, non-negative, preserving decimal precision.
+  5. **Quantity Received** (`quantities.quantityReceived`, plus flat `quantityReceived`): Required, numeric, non-negative ($Q_{\text{rec}} > 0$).
+  6. **Quantity Delivered** (`quantities.quantityDelivered`, plus flat `quantityDelivered`): Required, numeric, non-negative ($0 < Q_{\text{del}} \le Q_{\text{rec}}$); strictly required for approval without silent derivation, auto-balancing $Q_{\text{rej}} = Q_{\text{rec}} - Q_{\text{del}}$.
+  - **Inspection State Restriction:** Enforced at both Mongoose model `pre('save')` hook (`Inspection State Restriction Violation`) and service layer (`isJobInInspection(this)`); inspection data can be entered or modified only while `workflow.inInspection = true`.
+  - **Completeness Gating:** BO cannot be approved for dispatch (`waitingForDispatch = true`) while any required field is missing or invalid.
+  - **Planned vs Actual Distinction:** Strict separation between required specification limits and measured results; recipe snapshots are protected and never overwritten with test actuals.
   - Microstructure evaluation, visual inspection, inspector ID, sign-off timestamp, `inspectedBy: { userId, email, role }`, `disposition: 'PENDING' | 'ACCEPTED' | 'REJECTED'`, and rejection reason.
   - Exclusive Session Metadata: `claimedBy`, `claimedAt`, `claimedByEmail`, `claimedByRole` on parent Batch Order document.
 
@@ -1202,8 +1206,8 @@ _No direct HTTP routes mounted for this internal domain service._
 - **`ProductionJobService`** (`production-job.service.ts`): Executes authoritative Batch Order Inspection Phase operations:
   - `getWaitingForInspectionQueue()`, `getInInspectionQueue()`, `getWaitingForDispatchQueue()`, `getInspectionFailedQueue()`, `getInspectionWorkbenchData()`.
   - `takeForInspection()`: Atomically claims BO, enforces single-winner concurrency (`409 Conflict`), records `claimedBy`, `claimedAt`, `inspectedBy`, emits `Job.InspectionStarted`, and logs `INSPECTION_STARTED`.
-  - `recordHeatTreatmentInspectionData()`: Validates `isJobInInspection`, enforces exclusive ownership (`403 Forbidden` if another inspector), enforces Recipe Protection (`400 Bad Request`), enforces Production Data Protection (`400 Bad Request`), and saves partial test data.
-  - `approveInspectionForDispatch()`: Validates `isJobInInspection`, enforces exclusive ownership (`403 Forbidden`), validates all Six Mandatory Fields, sets `waitingForDispatch = true` ($\sum=1$), and publishes `Job.InspectionApproved`.
+  - `recordHeatTreatmentInspectionData()`: Validates `isJobInInspection`, enforces exclusive ownership (`403 Forbidden` if another inspector), enforces Recipe Protection (`400 Bad Request`), enforces Production Data Protection (`400 Bad Request`), validates equipment against master records, verifies non-negative numeric constraints with precision preservation, protects Planned vs Actual separation, and saves inspection test data.
+  - `approveInspectionForDispatch()`: Validates `isJobInInspection`, enforces exclusive ownership (`403 Forbidden`), validates completeness across all Six Mandatory Fields (equipment, hardness spec, actual hardness, case depth, quantity received, quantity delivered), validates quantity delivered $\le$ quantity received, sets `waitingForDispatch = true` ($\sum=1$), and publishes `Job.InspectionApproved`.
   - `failInspection()`: Validates `isJobInInspection`, enforces exclusive ownership (`403 Forbidden`), sets `inspection = true` ($\sum=1$), and publishes `Job.InspectionFailed`.
   - Cross-Phase Lock Enforcement: Prohibits `takeForProduction`, `recordFurnaceCharge`, `recordRecipeStageProgress`, `saveProductionData`, `updateJob`, `updateProcessDetails`, operator/furnace changes, cancellation, or generic status transitions while in active inspection.
 
@@ -2434,14 +2438,17 @@ $$\mathbf{Production\ Completion} \longrightarrow \mathbf{Waiting\ for\ Inspecti
 
 4. **The Six Mandatory Heat-Treatment Inspection Fields:**
    Before any Batch Order can be approved for dispatch release, the inspection engine strictly verifies and enforces all six mandatory heat-treatment parameters:
-   1. **Furnace / Equipment Identification:** Validates `furnaceId` and `furnaceCode`. Must reference a valid operational furnace matching or linked to the production charge.
-   2. **Hardness Specification Limits:** Configures allowable drawing limits: `minHardness`, `maxHardness`, and measurement scale (`HRC`, `HBW`, `HV`, `HRB`).
-   3. **Actual Hardness Test Readings:** Records discrete multi-point hardness readings with point identifiers and locations (`testPoints: [{ pointIdentifier, measuredValue, location }]`), calculates verified average (`measuredAverage`), and confirms compliance flag (`isHardnessCompliant: true`).
-   4. **Case Depth Evaluation:** Records Effective Case Depth (`effectiveCaseDepthMm`), Total Case Depth (`totalCaseDepthMm`), test method (`MICROHARDNESS_TRAVERSE`, `MACRO_ETCH`), and compliance verification (`isCaseDepthCompliant: true`).
-   5. **Quantity Received:** Verified piece count received into the inspection bay ($Q_{\text{received}} > 0$).
-   6. **Quantity Delivered & Scrapped Balance:** Conforming piece count cleared for delivery ($0 < Q_{\text{delivered}} \le Q_{\text{received}}$). The system automatically computes rejected pieces:
+   1. **Furnace / Equipment Master Validation:** Must reference valid furnace or equipment master data (`equipmentId`, `equipmentCode`). Arbitrary equipment identifiers are strictly rejected server-side against `furnaceCapacityRepository` / `machineRepository` or BO assigned equipment (`400 Bad Request`).
+   2. **Hardness Specification Limits:** Sourced authoritatively from drawing/process requirements (`job.specificationSnapshot` or `job.recipeSnapshot.metallurgicalTargets`): `minHardness`, `maxHardness`, and scale (`HRC`, `HBW`, `HV`, `HRB`). Must be non-negative with $\text{max} \ge \text{min}$. The specification is strictly preserved and never overwritten or silently derived with unrelated values.
+   3. **Actual Hardness Test Readings:** Records discrete multi-point hardness readings with point identifiers and locations (`testPoints: [{ pointIdentifier, measuredValue, location }]`), calculates verified average (`measuredAverage`), and confirms compliance flag (`isHardnessCompliant`). Must be numeric, non-negative, and preserve decimal precision.
+   4. **Case Depth Evaluation:** Records Effective Case Depth (`effectiveCaseDepthMm`), Total Case Depth (`totalCaseDepthMm`), test method (`MICROHARDNESS_TRAVERSE`, `MACRO_ETCH`), and compliance verification (`isCaseDepthCompliant`). Must be numeric, non-negative, and preserve decimal precision.
+   5. **Quantity Received:** Verified piece count received into the inspection bay ($Q_{\text{received}} > 0$). Must be numeric and non-negative.
+   6. **Quantity Delivered & Scrapped Balance:** Conforming piece count cleared for delivery ($0 < Q_{\text{delivered}} \le Q_{\text{received}}$). Must be numeric and non-negative. Strictly required for dispatch approval without silent derivation. The system automatically computes rejected pieces:
       $$Q_{\text{rejected}} = Q_{\text{received}} - Q_{\text{delivered}}$$
       Submitting $Q_{\text{delivered}} > Q_{\text{received}}$ or $Q_{\text{delivered}} \le 0$ is rejected with `BadRequestError`.
+   - **Inspection State Restriction (`workflow.inInspection = true`):** The backend strictly enforces that all six fields may be entered or modified only while the BO is in active inspection (`workflow.inInspection = true`). Modifications attempted in any other state are rejected at both service layer and Mongoose `pre('save')` hooks (`Inspection State Restriction Violation`).
+   - **Completeness Gating:** The BO is strictly prohibited from approval for Dispatch while any of the six required inspection fields is missing or invalid.
+   - **Planned vs Actual Separation:** The system preserves the strict distinction between required specification (Recipe/process target range) and actual measured result. Requirements are never overwritten with actual inspection values.
 
 5. **Intermediate Progress Persistence (`POST /:id/inspection-data`):**
    - Inspectors can record partial laboratory test readings (e.g. initial surface hardness or partial traverse points) incrementally via `POST /api/v1/production-jobs/:id/inspection-data`.
@@ -2752,10 +2759,10 @@ The platform includes 8 authoritative engineering specifications and operational
 7. **`PHASE_1_CERTIFICATION_REPORT.md`:** Verification findings for core platform stability, data boundary enforcement, and error resilience.
 8. **`FACTORY_ACCEPTANCE_REPORT.md`:** End-to-end metallurgical workflow verification and compliance sign-off.
 
-### 8.4 Automated Test Suite Matrix (65 Backend Specs + Frontend Suites)
+### 8.4 Automated Test Suite Matrix (66 Backend Specs + Frontend Suites)
 
 The codebase features comprehensive test suites validating layer boundaries, data integrity, and business logic:
-- **Backend Test Summary:** **65 Test Suites, 785 Tests Passed (0 Failures, 100% Pass Rate)**
+- **Backend Test Summary:** **66 Test Suites, 809 Tests Passed (0 Failures, 100% Pass Rate)**
 - **Frontend Test Summary:** **3 Test Suites, 50 Tests Passed (0 Failures, 100% Pass Rate)**
 
 #### 1. Backend Architecture Governance
@@ -3026,6 +3033,31 @@ The codebase features comprehensive test suites validating layer boundaries, dat
   - Invariant 13 (Authorized Inspection Editing Permitted): Permits claimed inspector to record valid heat-treatment inspection actuals (`200 OK`).
   - Invariant 14 (Read-Only Viewing Fidelity): Asserts `GET /:id` returns 100% complete execution history and bound inspection session in read-only mode (`200 OK`).
   - Audit & Events: Emits `Job.InspectionStarted` (`DomainEvents.JOB_INSPECTION_STARTED`) and records audit action `INSPECTION_STARTED`.
+- `backend/tests/inspection-data.spec.ts` (24 tests — Prompt 4: Implement the Required Heat-Treatment Inspection Data Structure):
+  - Invariant 1 (All Six Required Fields Present): Successfully records all 6 mandatory heat-treatment fields while in inspection (`200 OK`).
+  - Invariant 2 (Dispatch Approval with Complete Fields): Successfully approves inspection for dispatch when all 6 fields are valid and complete (`200 OK`, `waitingForDispatch: true`).
+  - Invariant 3 (Missing Equipment Gating): Rejects approval when furnace/equipment is missing (`400 Bad Request`).
+  - Invariant 4 (Missing Hardness Spec Gating): Rejects approval when hardness specification is missing (`400 Bad Request`).
+  - Invariant 5 (Missing Actual Hardness Gating): Rejects approval when actual measured hardness is missing (`400 Bad Request`).
+  - Invariant 6 (Missing Case Depth Gating): Rejects approval when case depth is missing (`400 Bad Request`).
+  - Invariant 7 (Missing Quantity Received Gating): Rejects approval when quantity received is missing (`400 Bad Request`).
+  - Invariant 8 (Missing Quantity Delivered Gating): Rejects approval when quantity delivered is missing (`400 Bad Request`).
+  - Invariant 9 (Negative Numeric Hardness Rejection): Rejects negative measured hardness with non-negative validation error (`400`/`422`).
+  - Invariant 10 (Negative Case Depth Rejection): Rejects negative case depth (`400`/`422`).
+  - Invariant 11 (Negative Quantity Received Rejection): Rejects negative quantity received (`400`/`422`).
+  - Invariant 12 (Negative Quantity Delivered Rejection): Rejects negative quantity delivered (`400`/`422`).
+  - Invariant 13 (Negative Hardness Specification Rejection): Rejects negative minHardness in specification (`400`/`422`).
+  - Invariant 14 (Malformed Non-Numeric Hardness Rejection): Rejects non-numeric string values for actual hardness (`400`/`422`).
+  - Invariant 15 (Malformed Non-Numeric Case Depth Rejection): Rejects non-numeric string values for case depth (`400`/`422`).
+  - Invariant 16 (Decimal Precision Preservation): Preserves appropriate multi-decimal precision for actual hardness (e.g. 60.475 HRC) and case depth (e.g. 0.8625 mm).
+  - Invariant 17 (Arbitrary Equipment Rejection): Server-side validation against equipment master records (`furnaceCapacityRepository`, `machineRepository`) rejects arbitrary equipment identifiers (`400 Bad Request`).
+  - Invariant 18 (Valid Equipment Master Acceptance): Accepts valid furnace identifier present in master equipment registry (`200 OK`).
+  - Invariant 19 (State Restriction - WAITING_FOR_PRODUCTION): Rejects editing inspection data before production (`400 Bad Request`).
+  - Invariant 20 (State Restriction - IN_PRODUCTION): Rejects editing inspection data while in production (`400 Bad Request`).
+  - Invariant 21 (State Restriction - WAITING_FOR_INSPECTION): Rejects editing inspection data before taking for inspection (`400 Bad Request`).
+  - Invariant 22 (State Restriction - Already Approved): Rejects editing inspection data after dispatch approval (`400 Bad Request`).
+  - Invariant 23 (Planned vs Actual Preservation): Preserves required specification separate from actual measured hardness; strictly protects recipe specification from overwrite.
+  - Invariant 24 (Delivered Exceeding Received Rejection): Rejects quantity delivered exceeding quantity received ($Q_{\text{del}} > Q_{\text{rec}}$) with `400 Bad Request`.
 
 #### 4. Domain Integration Suites (48 Core Specs in `backend/tests/`)
 - Production Execution & Lifecycle: `production-job.spec.ts`, `production-execution-workflow.spec.ts`, `production-scheduling.spec.ts`, `plan-to-job-handoff.spec.ts`.

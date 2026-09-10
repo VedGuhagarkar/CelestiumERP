@@ -344,33 +344,101 @@ const storagePlacementSchema = new Schema(
 
 const hardnessTestPointSchema = new Schema(
   {
-    pointNumber: { type: Number, required: true },
+    pointIdentifier: { type: String, default: null },
+    pointNumber: { type: Number, default: null },
     location: { type: String, default: null },
-    value: { type: Number, required: true }
+    value: { type: Number, default: null },
+    measuredValue: { type: Number, default: null },
+    scale: { type: String, default: 'HRC' },
+    passed: { type: Boolean, default: true }
+  },
+  { _id: false }
+);
+
+const inspectionEquipmentSchema = new Schema(
+  {
+    furnaceId: { type: String, required: true },
+    furnaceCode: { type: String, uppercase: true, required: true },
+    equipmentNotes: { type: String, default: null }
+  },
+  { _id: false }
+);
+
+const hardnessSpecificationSchema = new Schema(
+  {
+    minHardness: { type: Number, required: true, min: 0 },
+    maxHardness: { type: Number, required: true, min: 0 },
+    scale: { type: String, default: 'HRC' }
+  },
+  { _id: false }
+);
+
+const actualHardnessSchema = new Schema(
+  {
+    measuredAverage: { type: Number, required: true, min: 0 },
+    scale: { type: String, default: 'HRC' },
+    isCompliant: { type: Boolean, default: false },
+    testPoints: { type: [hardnessTestPointSchema], default: [] }
+  },
+  { _id: false }
+);
+
+const caseDepthSchema = new Schema(
+  {
+    effectiveCaseDepthMm: { type: Number, required: true, min: 0 },
+    targetMinMm: { type: Number, default: null },
+    targetMaxMm: { type: Number, default: null },
+    isCompliant: { type: Boolean, default: false },
+    method: { type: String, default: null }
+  },
+  { _id: false }
+);
+
+const inspectionQuantitiesSchema = new Schema(
+  {
+    quantityReceived: { type: Number, required: true, min: 0 },
+    quantityDelivered: { type: Number, required: true, min: 0 },
+    quantityRejected: { type: Number, default: 0, min: 0 }
   },
   { _id: false }
 );
 
 const heatTreatmentInspectionDataSchema = new Schema(
   {
+    // 1. Furnace / Equipment
     furnaceId: { type: String, default: null },
     furnaceCode: { type: String, uppercase: true, default: null },
     equipmentNotes: { type: String, default: null },
-    minHardness: { type: Number, default: null },
-    maxHardness: { type: Number, default: null },
+    equipment: { type: inspectionEquipmentSchema, default: null },
+
+    // 2. Hardness Specification (Required Planned Limits)
+    minHardness: { type: Number, default: null, min: 0 },
+    maxHardness: { type: Number, default: null, min: 0 },
     scale: { type: String, default: 'HRC' },
     specificationNotes: { type: String, default: null },
-    measuredAverage: { type: Number, default: null },
+    hardnessSpecification: { type: hardnessSpecificationSchema, default: null },
+
+    // 3. Actual Hardness (Measured Results)
+    measuredAverage: { type: Number, default: null, min: 0 },
     testPoints: { type: [hardnessTestPointSchema], default: [] },
     isHardnessCompliant: { type: Boolean, default: false },
+    actualHardness: { type: actualHardnessSchema, default: null },
+
+    // 4. Case Depth (Actual and Target Limits)
     targetCaseDepthMinMm: { type: Number, default: null },
     targetCaseDepthMaxMm: { type: Number, default: null },
-    effectiveCaseDepthMm: { type: Number, default: null },
+    effectiveCaseDepthMm: { type: Number, default: null, min: 0 },
     isCaseDepthCompliant: { type: Boolean, default: false },
     caseDepthMethod: { type: String, default: null },
-    quantityReceived: { type: Number, default: null },
-    quantityDelivered: { type: Number, default: null },
+    caseDepth: { type: caseDepthSchema, default: null },
+
+    // 5 & 6. Quantities (Received, Delivered, and Rejected)
+    quantityReceived: { type: Number, default: null, min: 0 },
+    quantityDelivered: { type: Number, default: null, min: 0 },
     quantityRejected: { type: Number, default: 0, min: 0 },
+    quantities: { type: inspectionQuantitiesSchema, default: null },
+
+    // Quality Sign-off & Audit Metadata
     inspectorId: { type: String, default: null },
     inspectorName: { type: String, default: null },
     inspectedAt: { type: Date, default: Date.now },
@@ -387,7 +455,8 @@ const heatTreatmentInspectionDataSchema = new Schema(
     defectCategory: { type: String, default: null },
     defectReason: { type: String, default: null },
     correctiveAction: { type: String, default: null },
-    notes: { type: String, default: null }
+    notes: { type: String, default: null },
+    remarks: { type: String, default: null }
   },
   { _id: false }
 );
@@ -695,6 +764,25 @@ productionJobSchema.pre('save', function (next) {
         return next(
           new Error(
             'Inspection Lock Violation: Batch Order is locked against unrelated modifications while in Quality Inspection. Only authorized inspection workflows may modify inspection-owned data.'
+          )
+        );
+      }
+    }
+
+    if (!this.isNew && this.isModified('execution.inspectionData')) {
+      const isApproving =
+        (this.waitingForDispatch || (this.workflowState && this.workflowState.waitingForDispatch) || this.status === 'WAITING_FOR_DISPATCH') &&
+        this.execution?.inspectionData?.disposition === 'APPROVED';
+      const isFailing =
+        (this.inspection || (this.workflowState && this.workflowState.inspection) || this.status === 'INSPECTION') &&
+        this.execution?.inspectionData?.disposition === 'REJECTED';
+      const isEnteringOrInInspection =
+        this.inInspection || (this.workflowState && this.workflowState.inInspection) || this.status === 'IN_INSPECTION';
+
+      if (!isEnteringOrInInspection && !isApproving && !isFailing) {
+        return next(
+          new Error(
+            'Inspection State Restriction Violation: Heat-treatment inspection data can only be entered or modified while workflow.inInspection = true.'
           )
         );
       }

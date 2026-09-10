@@ -49,6 +49,7 @@ import { productionPlanRepository } from '../production-planning/production-plan
 import { purchaseOrderRepository } from '../purchase-order/purchase-order.repository.js';
 import { grnRepository } from '../grn/grn.repository.js';
 import { furnaceCapacityRepository } from '../furnace-capacity/furnace-capacity.repository.js';
+import { machineRepository } from '../machine/machine.repository.js';
 import { workforceCapacityRepository } from '../workforce-capacity/workforce-capacity.repository.js';
 import { userRepository } from '../auth/user.repository.js';
 import { constraintAnalysisService } from '../constraint-analysis/constraint-analysis.service.js';
@@ -4945,6 +4946,87 @@ export class ProductionJobService {
     return updated;
   }
 
+  private async validateInspectionEquipment(
+    tenantId: string,
+    furnaceId?: string | null,
+    furnaceCode?: string | null,
+    job?: any
+  ): Promise<{ furnaceId: string; furnaceCode: string }> {
+    const candidateId =
+      furnaceId ||
+      job?.execution?.inspectionData?.furnaceId ||
+      job?.equipmentAssignment?.furnaceId ||
+      job?.execution?.furnaceCharge?.furnaceId;
+
+    const candidateCode =
+      furnaceCode ||
+      job?.execution?.inspectionData?.furnaceCode ||
+      job?.equipmentAssignment?.furnaceCode ||
+      job?.execution?.furnaceCharge?.furnaceCode;
+
+    if (!candidateId && !candidateCode) {
+      throw new BadRequestError(
+        'Inspection record must reference valid furnace/equipment data. Missing equipment identification.'
+      );
+    }
+
+    // Check relationship with Batch Order's production execution / equipment assignment
+    const matchesJobAssignment =
+      (candidateId &&
+        (job?.equipmentAssignment?.furnaceId === candidateId ||
+          job?.execution?.furnaceCharge?.furnaceId === candidateId)) ||
+      (candidateCode &&
+        (job?.equipmentAssignment?.furnaceCode === candidateCode ||
+          job?.execution?.furnaceCharge?.furnaceCode === candidateCode));
+
+    // Server-side verification against equipment master records
+    let furnaceDoc: any = null;
+    if (candidateId) {
+      try {
+        furnaceDoc = await furnaceCapacityRepository.findFurnaceById(tenantId, candidateId);
+      } catch {
+        furnaceDoc = null;
+      }
+      if (!furnaceDoc) {
+        try {
+          furnaceDoc = await machineRepository.findById(tenantId, candidateId);
+        } catch {
+          furnaceDoc = null;
+        }
+      }
+    }
+
+    if (!furnaceDoc && candidateCode) {
+      try {
+        furnaceDoc = await furnaceCapacityRepository.findFurnaceByCode(tenantId, candidateCode);
+      } catch {
+        furnaceDoc = null;
+      }
+      if (!furnaceDoc) {
+        try {
+          furnaceDoc = await machineRepository.findByCode(tenantId, candidateCode);
+        } catch {
+          furnaceDoc = null;
+        }
+      }
+    }
+
+    // If candidate does NOT exist in master records AND does NOT match the job's assigned equipment
+    if (!furnaceDoc && !matchesJobAssignment) {
+      throw new BadRequestError(
+        `Invalid equipment: Furnace/equipment with identifier '${candidateId || candidateCode}' does not exist in equipment master records. Arbitrary equipment identifiers are prohibited.`
+      );
+    }
+
+    const resolvedId = candidateId || furnaceDoc?.id || (furnaceDoc as any)?._id?.toString() || 'FURNACE';
+    const resolvedCode = candidateCode || furnaceDoc?.furnaceCode || furnaceDoc?.code || resolvedId;
+
+    return {
+      furnaceId: resolvedId,
+      furnaceCode: resolvedCode
+    };
+  }
+
   public async recordHeatTreatmentInspectionData(
     tenantId: string,
     jobId: string,
@@ -4997,92 +5079,190 @@ export class ProductionJobService {
       );
     }
 
-    // Furnace / Equipment resolution
-    const furnaceId =
-      dto.furnaceId ||
-      job.execution?.inspectionData?.furnaceId ||
-      job.equipmentAssignment?.furnaceId ||
-      job.execution?.furnaceCharge?.furnaceId ||
-      'FURNACE-01';
+    // 1. Furnace / Equipment validation
+    let equipmentResult: { furnaceId: string; furnaceCode: string };
+    const rawFurnaceId = dto.furnaceId || dto.equipment?.furnaceId;
+    const rawFurnaceCode = dto.furnaceCode || dto.equipment?.furnaceCode;
 
-    const furnaceCode =
-      dto.furnaceCode ||
-      job.execution?.inspectionData?.furnaceCode ||
-      job.equipmentAssignment?.furnaceCode ||
-      job.execution?.furnaceCharge?.furnaceCode ||
-      'FURNACE-01';
+    if (rawFurnaceId || rawFurnaceCode) {
+      equipmentResult = await this.validateInspectionEquipment(tenantId, rawFurnaceId, rawFurnaceCode, job);
+    } else {
+      const fallbackId =
+        job.execution?.inspectionData?.furnaceId ||
+        job.equipmentAssignment?.furnaceId ||
+        job.execution?.furnaceCharge?.furnaceId;
+      const fallbackCode =
+        job.execution?.inspectionData?.furnaceCode ||
+        job.equipmentAssignment?.furnaceCode ||
+        job.execution?.furnaceCharge?.furnaceCode;
+      if (fallbackId || fallbackCode) {
+        equipmentResult = await this.validateInspectionEquipment(tenantId, fallbackId, fallbackCode, job);
+      } else {
+        equipmentResult = { furnaceId: '', furnaceCode: '' };
+      }
+    }
 
-    // Hardness Specification
-    const minHardness =
-      dto.minHardness ??
-      job.execution?.inspectionData?.minHardness ??
+    // 2. Hardness Specification (Authoritative Source vs Explicit Input)
+    const specMinAuthoritative =
       (job.specificationSnapshot?.surfaceHardness as any)?.min ??
       (job.recipeSnapshot?.metallurgicalTargets as any)?.minHardness ??
+      job.execution?.inspectionData?.minHardness ??
       null;
 
-    const maxHardness =
-      dto.maxHardness ??
-      job.execution?.inspectionData?.maxHardness ??
+    const specMaxAuthoritative =
       (job.specificationSnapshot?.surfaceHardness as any)?.max ??
       (job.recipeSnapshot?.metallurgicalTargets as any)?.maxHardness ??
+      job.execution?.inspectionData?.maxHardness ??
       null;
 
-    const scale =
-      dto.scale ||
-      job.execution?.inspectionData?.scale ||
-      (job.specificationSnapshot?.surfaceHardness as any)?.scale ||
+    const specScaleAuthoritative =
+      (job.specificationSnapshot?.surfaceHardness as any)?.scale ??
+      (job.recipeSnapshot?.metallurgicalTargets as any)?.surfaceHardnessScale ??
+      job.execution?.inspectionData?.scale ??
       'HRC';
 
-    // Actual Hardness
-    const measuredAverage =
-      dto.measuredAverage ??
-      job.execution?.inspectionData?.measuredAverage ??
-      null;
+    const inputMinHardness = dto.minHardness ?? dto.hardnessSpecification?.minHardness;
+    const inputMaxHardness = dto.maxHardness ?? dto.hardnessSpecification?.maxHardness;
+    const inputScale = dto.scale ?? dto.hardnessSpecification?.scale;
+
+    // Validate numeric constraints on input specification
+    if (inputMinHardness !== undefined && inputMinHardness !== null) {
+      if (typeof inputMinHardness !== 'number' || isNaN(inputMinHardness)) {
+        throw new BadRequestError('Hardness specification min must be a valid number.');
+      }
+      if (inputMinHardness < 0) {
+        throw new BadRequestError('Hardness specification minHardness must be a non-negative number.');
+      }
+    }
+
+    if (inputMaxHardness !== undefined && inputMaxHardness !== null) {
+      if (typeof inputMaxHardness !== 'number' || isNaN(inputMaxHardness)) {
+        throw new BadRequestError('Hardness specification max must be a valid number.');
+      }
+      if (inputMaxHardness < 0) {
+        throw new BadRequestError('Hardness specification maxHardness must be a non-negative number.');
+      }
+    }
+
+    if (
+      inputMinHardness !== undefined &&
+      inputMinHardness !== null &&
+      inputMaxHardness !== undefined &&
+      inputMaxHardness !== null &&
+      inputMaxHardness < inputMinHardness
+    ) {
+      throw new BadRequestError('Hardness specification maxHardness cannot be less than minHardness.');
+    }
+
+    // Preserve planned specification vs actual: do not overwrite specification with actual results
+    const minHardness = specMinAuthoritative !== null ? specMinAuthoritative : inputMinHardness ?? null;
+    const maxHardness = specMaxAuthoritative !== null ? specMaxAuthoritative : inputMaxHardness ?? null;
+    const scale = specScaleAuthoritative || inputScale || 'HRC';
+
+    // 3. Actual Hardness (Measured Results)
+    const rawMeasured = dto.measuredAverage ?? dto.actualHardness?.measuredAverage;
+    let measuredAverage: number | null = null;
+    if (rawMeasured !== undefined && rawMeasured !== null) {
+      if (typeof rawMeasured !== 'number' || isNaN(rawMeasured)) {
+        throw new BadRequestError('Actual hardness must be a valid number.');
+      }
+      if (rawMeasured < 0) {
+        throw new BadRequestError('Actual hardness must be a non-negative number.');
+      }
+      measuredAverage = rawMeasured;
+    } else {
+      measuredAverage = job.execution?.inspectionData?.measuredAverage ?? null;
+    }
+
+    const testPoints = dto.testPoints || dto.actualHardness?.testPoints || job.execution?.inspectionData?.testPoints || [];
+    for (const pt of testPoints) {
+      const val = pt.measuredValue ?? pt.value;
+      if (val !== undefined && val !== null && (typeof val !== 'number' || isNaN(val) || val < 0)) {
+        throw new BadRequestError('Hardness test point values must be non-negative numbers.');
+      }
+    }
 
     const isHardnessCompliant =
       dto.isHardnessCompliant !== undefined
-        ? dto.isHardnessCompliant
+        ? Boolean(dto.isHardnessCompliant)
+        : dto.actualHardness?.isCompliant !== undefined
+        ? Boolean(dto.actualHardness.isCompliant)
         : minHardness !== null && maxHardness !== null && measuredAverage !== null
         ? measuredAverage >= minHardness && measuredAverage <= maxHardness
         : true;
 
-    // Case Depth
-    const effectiveCaseDepthMm =
-      dto.effectiveCaseDepthMm ??
-      job.execution?.inspectionData?.effectiveCaseDepthMm ??
-      null;
+    // 4. Case Depth (Actual and Target Limits)
+    const rawCaseDepth = dto.effectiveCaseDepthMm ?? dto.caseDepth?.effectiveCaseDepthMm;
+    let effectiveCaseDepthMm: number | null = null;
+    if (rawCaseDepth !== undefined && rawCaseDepth !== null) {
+      if (typeof rawCaseDepth !== 'number' || isNaN(rawCaseDepth)) {
+        throw new BadRequestError('Case depth must be a valid number.');
+      }
+      if (rawCaseDepth < 0) {
+        throw new BadRequestError('Case depth must be a non-negative number.');
+      }
+      effectiveCaseDepthMm = rawCaseDepth;
+    } else {
+      effectiveCaseDepthMm = job.execution?.inspectionData?.effectiveCaseDepthMm ?? null;
+    }
 
     const targetCaseDepthMinMm =
       dto.targetCaseDepthMinMm ??
+      dto.caseDepth?.targetMinMm ??
       job.execution?.inspectionData?.targetCaseDepthMinMm ??
       (job.specificationSnapshot?.caseDepth as any)?.minMm ??
       null;
 
     const targetCaseDepthMaxMm =
       dto.targetCaseDepthMaxMm ??
+      dto.caseDepth?.targetMaxMm ??
       job.execution?.inspectionData?.targetCaseDepthMaxMm ??
       (job.specificationSnapshot?.caseDepth as any)?.maxMm ??
       null;
 
     const isCaseDepthCompliant =
       dto.isCaseDepthCompliant !== undefined
-        ? dto.isCaseDepthCompliant
+        ? Boolean(dto.isCaseDepthCompliant)
+        : dto.caseDepth?.isCompliant !== undefined
+        ? Boolean(dto.caseDepth.isCompliant)
         : targetCaseDepthMinMm !== null && targetCaseDepthMaxMm !== null && effectiveCaseDepthMm !== null
         ? effectiveCaseDepthMm >= targetCaseDepthMinMm && effectiveCaseDepthMm <= targetCaseDepthMaxMm
         : true;
 
-    // Quantities
-    const quantityReceived =
-      dto.quantityReceived ??
-      job.execution?.inspectionData?.quantityReceived ??
-      job.quantity?.loadedQuantity ??
-      job.quantity?.targetQuantity ??
-      null;
+    // 5 & 6. Quantities (Received, Delivered, and Rejected)
+    const rawQtyRec = dto.quantityReceived ?? dto.quantities?.quantityReceived;
+    let quantityReceived: number | null = null;
+    if (rawQtyRec !== undefined && rawQtyRec !== null) {
+      if (typeof rawQtyRec !== 'number' || isNaN(rawQtyRec)) {
+        throw new BadRequestError('Quantity received must be a valid number.');
+      }
+      if (rawQtyRec < 0) {
+        throw new BadRequestError('Quantity received must be a non-negative number.');
+      }
+      quantityReceived = rawQtyRec;
+    } else {
+      quantityReceived =
+        job.execution?.inspectionData?.quantityReceived ??
+        job.quantity?.loadedQuantity ??
+        job.quantity?.targetQuantity ??
+        null;
+    }
 
-    const quantityDelivered =
-      dto.quantityDelivered ??
-      job.execution?.inspectionData?.quantityDelivered ??
-      quantityReceived;
+    const rawQtyDel = dto.quantityDelivered ?? dto.quantities?.quantityDelivered;
+    let quantityDelivered: number | null = null;
+    if (rawQtyDel !== undefined && rawQtyDel !== null) {
+      if (typeof rawQtyDel !== 'number' || isNaN(rawQtyDel)) {
+        throw new BadRequestError('Quantity delivered must be a valid number.');
+      }
+      if (rawQtyDel < 0) {
+        throw new BadRequestError('Quantity delivered must be a non-negative number.');
+      }
+      quantityDelivered = rawQtyDel;
+    } else {
+      quantityDelivered =
+        job.execution?.inspectionData?.quantityDelivered ??
+        (quantityReceived !== null ? quantityReceived : null);
+    }
 
     if (quantityReceived !== null && quantityDelivered !== null && quantityDelivered > quantityReceived) {
       throw new BadRequestError(
@@ -5090,33 +5270,83 @@ export class ProductionJobService {
       );
     }
 
+    const quantityRejected =
+      dto.quantityRejected ??
+      dto.quantities?.quantityRejected ??
+      (quantityReceived !== null && quantityDelivered !== null ? quantityReceived - quantityDelivered : 0);
+
     const consolidatedData: any = {
-      furnaceId,
-      furnaceCode,
-      equipmentNotes: dto.equipmentNotes || job.execution?.inspectionData?.equipmentNotes || null,
+      // 1. Furnace / Equipment
+      furnaceId: equipmentResult.furnaceId,
+      furnaceCode: equipmentResult.furnaceCode,
+      equipmentNotes: dto.equipmentNotes || dto.equipment?.equipmentNotes || job.execution?.inspectionData?.equipmentNotes || null,
+      equipment: {
+        furnaceId: equipmentResult.furnaceId,
+        furnaceCode: equipmentResult.furnaceCode,
+        equipmentNotes: dto.equipmentNotes || dto.equipment?.equipmentNotes || job.execution?.inspectionData?.equipmentNotes || null
+      },
+
+      // 2. Hardness Specification (Planned)
       minHardness: minHardness ?? 0,
       maxHardness: maxHardness ?? 0,
       scale,
       specificationNotes: dto.specificationNotes || job.execution?.inspectionData?.specificationNotes || null,
+      hardnessSpecification: {
+        minHardness: minHardness ?? 0,
+        maxHardness: maxHardness ?? 0,
+        scale
+      },
+
+      // 3. Actual Hardness (Measured)
       measuredAverage: measuredAverage ?? 0,
-      testPoints: dto.testPoints || job.execution?.inspectionData?.testPoints || [],
+      testPoints,
       isHardnessCompliant: Boolean(isHardnessCompliant),
+      actualHardness: {
+        measuredAverage: measuredAverage ?? 0,
+        scale,
+        isCompliant: Boolean(isHardnessCompliant),
+        testPoints
+      },
+
+      // 4. Case Depth (Actual and Target Limits)
       targetCaseDepthMinMm,
       targetCaseDepthMaxMm,
       effectiveCaseDepthMm: effectiveCaseDepthMm ?? 0,
       isCaseDepthCompliant: Boolean(isCaseDepthCompliant),
-      caseDepthMethod: dto.caseDepthMethod || job.execution?.inspectionData?.caseDepthMethod || 'MICROHARDNESS_TRAVERSE',
+      caseDepthMethod: dto.caseDepthMethod || dto.caseDepth?.method || job.execution?.inspectionData?.caseDepthMethod || 'MICROHARDNESS_TRAVERSE',
+      caseDepth: {
+        effectiveCaseDepthMm: effectiveCaseDepthMm ?? 0,
+        targetMinMm: targetCaseDepthMinMm,
+        targetMaxMm: targetCaseDepthMaxMm,
+        isCompliant: Boolean(isCaseDepthCompliant),
+        method: dto.caseDepthMethod || dto.caseDepth?.method || job.execution?.inspectionData?.caseDepthMethod || 'MICROHARDNESS_TRAVERSE'
+      },
+
+      // 5 & 6. Quantities
       quantityReceived: quantityReceived ?? 0,
       quantityDelivered: quantityDelivered ?? 0,
-      quantityRejected: dto.quantityRejected ?? (quantityReceived && quantityDelivered ? quantityReceived - quantityDelivered : 0),
+      quantityRejected,
+      quantities: {
+        quantityReceived: quantityReceived ?? 0,
+        quantityDelivered: quantityDelivered ?? 0,
+        quantityRejected
+      },
+
+      // Quality Sign-off & Audit Metadata
       inspectorId: actor.userId,
       inspectorName: actor.name || actor.email || 'Inspector',
       inspectedAt: new Date(),
+      inspectedBy: {
+        userId: actor.userId,
+        email: actor.email || '',
+        role: actor.role || 'QC_INSPECTOR'
+      },
       disposition: dto.disposition || job.execution?.inspectionData?.disposition || 'PENDING',
       defectCategory: dto.defectCategory || job.execution?.inspectionData?.defectCategory || null,
       defectReason: dto.defectReason || job.execution?.inspectionData?.defectReason || null,
       correctiveAction: dto.correctiveAction || job.execution?.inspectionData?.correctiveAction || null,
-      notes: dto.notes || job.execution?.inspectionData?.notes || null
+      notes: dto.notes || job.execution?.inspectionData?.notes || null,
+      remarks: dto.remarks || job.execution?.inspectionData?.remarks || null
     };
 
     if (!job.execution) {
@@ -5160,35 +5390,35 @@ export class ProductionJobService {
       );
     }
 
-    // Resolve and validate all SIX mandatory heat-treatment fields:
-    // 1. Furnace / Equipment
-    const furnaceId =
-      dto?.furnaceId ||
-      job.execution?.inspectionData?.furnaceId ||
-      job.equipmentAssignment?.furnaceId ||
-      job.execution?.furnaceCharge?.furnaceId;
+    // 1. Resolve and Validate Equipment
+    let validatedEquipment: { furnaceId: string; furnaceCode: string } | null = null;
+    const rawFurnaceId = dto?.furnaceId || dto?.equipment?.furnaceId;
+    const rawFurnaceCode = dto?.furnaceCode || dto?.equipment?.furnaceCode;
 
-    const furnaceCode =
-      dto?.furnaceCode ||
-      job.execution?.inspectionData?.furnaceCode ||
-      job.equipmentAssignment?.furnaceCode ||
-      job.execution?.furnaceCharge?.furnaceCode;
+    try {
+      validatedEquipment = await this.validateInspectionEquipment(tenantId, rawFurnaceId, rawFurnaceCode, job);
+    } catch (err: any) {
+      validatedEquipment = null;
+    }
 
     // 2. Hardness Specification
     const minHardness =
       dto?.minHardness ??
+      dto?.hardnessSpecification?.minHardness ??
       job.execution?.inspectionData?.minHardness ??
       (job.specificationSnapshot?.surfaceHardness as any)?.min ??
       (job.recipeSnapshot?.metallurgicalTargets as any)?.minHardness;
 
     const maxHardness =
       dto?.maxHardness ??
+      dto?.hardnessSpecification?.maxHardness ??
       job.execution?.inspectionData?.maxHardness ??
       (job.specificationSnapshot?.surfaceHardness as any)?.max ??
       (job.recipeSnapshot?.metallurgicalTargets as any)?.maxHardness;
 
     const scale =
       dto?.scale ||
+      dto?.hardnessSpecification?.scale ||
       job.execution?.inspectionData?.scale ||
       (job.specificationSnapshot?.surfaceHardness as any)?.scale ||
       'HRC';
@@ -5196,55 +5426,82 @@ export class ProductionJobService {
     // 3. Actual Hardness
     const measuredAverage =
       dto?.measuredAverage ??
+      dto?.actualHardness?.measuredAverage ??
       job.execution?.inspectionData?.measuredAverage;
 
     // 4. Case Depth
     const effectiveCaseDepthMm =
       dto?.effectiveCaseDepthMm ??
+      dto?.caseDepth?.effectiveCaseDepthMm ??
       job.execution?.inspectionData?.effectiveCaseDepthMm;
 
     // 5. Quantity Received
     const quantityReceived =
       dto?.quantityReceived ??
-      job.execution?.inspectionData?.quantityReceived ??
-      job.quantity?.loadedQuantity ??
-      job.quantity?.targetQuantity;
+      dto?.quantities?.quantityReceived ??
+      job.execution?.inspectionData?.quantityReceived;
 
     // 6. Quantity Delivered
     const quantityDelivered =
       dto?.quantityDelivered ??
-      job.execution?.inspectionData?.quantityDelivered ??
-      (dto?.quantityReceived ? dto.quantityReceived - (dto.quantityRejected || 0) : null) ??
-      (quantityReceived ? quantityReceived - (job.execution?.inspectionData?.quantityRejected || 0) : null);
+      dto?.quantities?.quantityDelivered ??
+      job.execution?.inspectionData?.quantityDelivered;
 
     // Strict validation of the SIX fields
-    const missingFields: string[] = [];
-    if (!furnaceId && !furnaceCode) missingFields.push('1. Furnace/Equipment');
+    const missingOrInvalidFields: string[] = [];
+
+    // 1. Furnace / Equipment
+    if (!validatedEquipment || (!validatedEquipment.furnaceId && !validatedEquipment.furnaceCode)) {
+      missingOrInvalidFields.push('1. Furnace/Equipment (must reference valid equipment master records)');
+    }
+
+    // 2. Hardness Specification
     if (minHardness === undefined || minHardness === null || maxHardness === undefined || maxHardness === null) {
-      missingFields.push('2. Hardness Specification (minHardness, maxHardness)');
-    }
-    if (measuredAverage === undefined || measuredAverage === null || measuredAverage <= 0) {
-      missingFields.push('3. Actual Hardness (measuredAverage)');
-    }
-    if (effectiveCaseDepthMm === undefined || effectiveCaseDepthMm === null || effectiveCaseDepthMm <= 0) {
-      missingFields.push('4. Case Depth (effectiveCaseDepthMm)');
-    }
-    if (quantityReceived === undefined || quantityReceived === null || quantityReceived <= 0) {
-      missingFields.push('5. Quantity Received');
-    }
-    if (quantityDelivered === undefined || quantityDelivered === null || quantityDelivered <= 0) {
-      missingFields.push('6. Quantity Delivered');
+      missingOrInvalidFields.push('2. Hardness Specification (minHardness and maxHardness are required)');
+    } else if (
+      typeof minHardness !== 'number' ||
+      isNaN(minHardness) ||
+      minHardness < 0 ||
+      typeof maxHardness !== 'number' ||
+      isNaN(maxHardness) ||
+      maxHardness < minHardness
+    ) {
+      missingOrInvalidFields.push('2. Hardness Specification (must be non-negative numbers with maxHardness >= minHardness)');
     }
 
-    if (missingFields.length > 0) {
-      throw new BadRequestError(
-        `Inspection Approval Rejected: All six heat-treatment inspection fields are strictly required before Batch Order can leave Inspection:\n- ${missingFields.join('\n- ')}`
-      );
+    // 3. Actual Hardness
+    if (measuredAverage === undefined || measuredAverage === null) {
+      missingOrInvalidFields.push('3. Actual Hardness (measuredAverage is required)');
+    } else if (typeof measuredAverage !== 'number' || isNaN(measuredAverage) || measuredAverage < 0) {
+      missingOrInvalidFields.push('3. Actual Hardness (must be a non-negative number preserving precision)');
     }
 
-    if (quantityDelivered > quantityReceived) {
+    // 4. Case Depth
+    if (effectiveCaseDepthMm === undefined || effectiveCaseDepthMm === null) {
+      missingOrInvalidFields.push('4. Case Depth (effectiveCaseDepthMm is required)');
+    } else if (typeof effectiveCaseDepthMm !== 'number' || isNaN(effectiveCaseDepthMm) || effectiveCaseDepthMm < 0) {
+      missingOrInvalidFields.push('4. Case Depth (must be a non-negative number preserving precision)');
+    }
+
+    // 5. Quantity Received
+    if (quantityReceived === undefined || quantityReceived === null) {
+      missingOrInvalidFields.push('5. Quantity Received (quantityReceived is required)');
+    } else if (typeof quantityReceived !== 'number' || isNaN(quantityReceived) || quantityReceived <= 0) {
+      missingOrInvalidFields.push('5. Quantity Received (must be a positive number greater than zero)');
+    }
+
+    // 6. Quantity Delivered
+    if (quantityDelivered === undefined || quantityDelivered === null) {
+      missingOrInvalidFields.push('6. Quantity Delivered (quantityDelivered is required)');
+    } else if (typeof quantityDelivered !== 'number' || isNaN(quantityDelivered) || quantityDelivered < 0) {
+      missingOrInvalidFields.push('6. Quantity Delivered (must be a non-negative number)');
+    } else if (quantityReceived !== undefined && quantityReceived !== null && quantityDelivered > quantityReceived) {
+      missingOrInvalidFields.push(`6. Quantity Delivered (quantityDelivered ${quantityDelivered} cannot exceed quantityReceived ${quantityReceived})`);
+    }
+
+    if (missingOrInvalidFields.length > 0) {
       throw new BadRequestError(
-        `Inspection Approval Rejected: Quantity delivered (${quantityDelivered}) cannot exceed quantity received (${quantityReceived}).`
+        `Inspection Approval Rejected: All six heat-treatment inspection fields are strictly required before Batch Order can leave Inspection:\n- ${missingOrInvalidFields.join('\n- ')}`
       );
     }
 
@@ -5255,12 +5512,14 @@ export class ProductionJobService {
 
     const targetCaseDepthMinMm =
       dto?.targetCaseDepthMinMm ??
+      dto?.caseDepth?.targetMinMm ??
       job.execution?.inspectionData?.targetCaseDepthMinMm ??
       (job.specificationSnapshot?.caseDepth as any)?.minMm ??
       null;
 
     const targetCaseDepthMaxMm =
       dto?.targetCaseDepthMaxMm ??
+      dto?.caseDepth?.targetMaxMm ??
       job.execution?.inspectionData?.targetCaseDepthMaxMm ??
       (job.specificationSnapshot?.caseDepth as any)?.maxMm ??
       null;
@@ -5274,33 +5533,79 @@ export class ProductionJobService {
 
     const quantityRejected =
       dto?.quantityRejected ??
+      dto?.quantities?.quantityRejected ??
       job.execution?.inspectionData?.quantityRejected ??
       (quantityReceived - quantityDelivered);
 
     const consolidatedData: any = {
-      furnaceId: furnaceId || 'FURNACE-01',
-      furnaceCode: furnaceCode || 'FURNACE-01',
-      equipmentNotes: dto?.equipmentNotes || job.execution?.inspectionData?.equipmentNotes || null,
+      // 1. Furnace / Equipment
+      furnaceId: validatedEquipment!.furnaceId,
+      furnaceCode: validatedEquipment!.furnaceCode,
+      equipmentNotes: dto?.equipmentNotes || dto?.equipment?.equipmentNotes || job.execution?.inspectionData?.equipmentNotes || null,
+      equipment: {
+        furnaceId: validatedEquipment!.furnaceId,
+        furnaceCode: validatedEquipment!.furnaceCode,
+        equipmentNotes: dto?.equipmentNotes || dto?.equipment?.equipmentNotes || job.execution?.inspectionData?.equipmentNotes || null
+      },
+
+      // 2. Hardness Specification (Planned)
       minHardness,
       maxHardness,
       scale,
       specificationNotes: dto?.specificationNotes || job.execution?.inspectionData?.specificationNotes || null,
+      hardnessSpecification: {
+        minHardness,
+        maxHardness,
+        scale
+      },
+
+      // 3. Actual Hardness (Measured)
       measuredAverage,
-      testPoints: dto?.testPoints || job.execution?.inspectionData?.testPoints || [],
+      testPoints: dto?.testPoints || dto?.actualHardness?.testPoints || job.execution?.inspectionData?.testPoints || [],
       isHardnessCompliant,
+      actualHardness: {
+        measuredAverage,
+        scale,
+        isCompliant: isHardnessCompliant,
+        testPoints: dto?.testPoints || dto?.actualHardness?.testPoints || job.execution?.inspectionData?.testPoints || []
+      },
+
+      // 4. Case Depth (Actual and Target Limits)
       targetCaseDepthMinMm,
       targetCaseDepthMaxMm,
       effectiveCaseDepthMm,
       isCaseDepthCompliant,
-      caseDepthMethod: dto?.caseDepthMethod || job.execution?.inspectionData?.caseDepthMethod || 'MICROHARDNESS_TRAVERSE',
+      caseDepthMethod: dto?.caseDepthMethod || dto?.caseDepth?.method || job.execution?.inspectionData?.caseDepthMethod || 'MICROHARDNESS_TRAVERSE',
+      caseDepth: {
+        effectiveCaseDepthMm,
+        targetMinMm: targetCaseDepthMinMm,
+        targetMaxMm: targetCaseDepthMaxMm,
+        isCompliant: isCaseDepthCompliant,
+        method: dto?.caseDepthMethod || dto?.caseDepth?.method || job.execution?.inspectionData?.caseDepthMethod || 'MICROHARDNESS_TRAVERSE'
+      },
+
+      // 5 & 6. Quantities
       quantityReceived,
       quantityDelivered,
       quantityRejected,
+      quantities: {
+        quantityReceived,
+        quantityDelivered,
+        quantityRejected
+      },
+
+      // Quality Sign-off & Audit Metadata
       inspectorId: actor.userId,
       inspectorName: actor.name || actor.email || 'Inspector',
       inspectedAt: new Date(),
+      inspectedBy: {
+        userId: actor.userId,
+        email: actor.email || '',
+        role: actor.role || 'QC_INSPECTOR'
+      },
       disposition: 'APPROVED',
-      notes: dto?.notes || job.execution?.inspectionData?.notes || null
+      notes: dto?.notes || job.execution?.inspectionData?.notes || null,
+      remarks: dto?.remarks || job.execution?.inspectionData?.remarks || null
     };
 
     const updateData = {
