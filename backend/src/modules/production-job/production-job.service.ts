@@ -38,7 +38,8 @@ import {
   IBatchOrderGenealogy,
   IBatchOrderWorkflowState,
   IBatchOrderProductionReadiness,
-  PRODUCTION_ONLY_FIELDS
+  PRODUCTION_ONLY_FIELDS,
+  isJobInInspection
 } from './production-job.types.js';
 import { customerRepository } from '../customer/customer.repository.js';
 import { itemRepository } from '../item/item.repository.js';
@@ -54,7 +55,7 @@ import { constraintAnalysisService } from '../constraint-analysis/constraint-ana
 import { auditService } from '../audit/audit.service.js';
 import { DomainEventBus } from '../../core/events/domain-event-bus.js';
 import { DomainEvents } from '../../core/constants/events.js';
-import { NotFoundError, BadRequestError, ConflictError } from '../../core/errors/app-error.js';
+import { NotFoundError, BadRequestError, ConflictError, ForbiddenError } from '../../core/errors/app-error.js';
 import { PaginationOptions, PaginatedResult } from '../../core/types/pagination.js';
 import { allocationLockManager } from '../../core/concurrency/allocation-lock.js';
 
@@ -70,6 +71,14 @@ export class ProductionJobService {
   constructor(
     private readonly repo: IProductionJobRepository = productionJobRepository
   ) {}
+
+  /**
+   * Single Authoritative Inspection Detector
+   * Celestium ERP Inspection Phase Invariant
+   */
+  public isJobInInspection(job: any): boolean {
+    return isJobInInspection(job);
+  }
 
   /**
    * 1. Authoritative Batch Order Creation
@@ -1159,6 +1168,12 @@ export class ProductionJobService {
       );
     }
 
+    if (this.isJobInInspection(job)) {
+      throw new BadRequestError(
+        `Inspection Lock Violation: Process details cannot be modified while Batch Order '${job.boNumber || job.jobNumber}' is in Quality Inspection.`
+      );
+    }
+
     if (
       job.workflowState?.waitingForInspection ||
       (job as any).waitingForInspection ||
@@ -1496,12 +1511,16 @@ export class ProductionJobService {
       );
     }
 
+    if (this.isJobInInspection(job)) {
+      throw new BadRequestError(
+        `Inspection Lock Violation: Batch Order '${job.boNumber || job.jobNumber}' is locked against modifications while in active Quality Inspection. Only authorized inspection workflows may modify inspection data.`
+      );
+    }
+
     if (
       job.workflowState?.waitingForInspection ||
       (job as any).waitingForInspection ||
       job.status === 'WAITING_FOR_INSPECTION' ||
-      job.workflowState?.inInspection ||
-      (job as any).inInspection ||
       job.status === 'QUALITY_CHECK' ||
       job.status === 'COMPLETED'
     ) {
@@ -1632,8 +1651,7 @@ export class ProductionJobService {
       job.workflowState?.waitingForInspection ||
       (job as any).waitingForInspection ||
       job.status === 'WAITING_FOR_INSPECTION' ||
-      job.workflowState?.inInspection ||
-      (job as any).inInspection ||
+      this.isJobInInspection(job) ||
       job.status === 'QUALITY_CHECK'
     ) {
       throw new BadRequestError(
@@ -1741,8 +1759,7 @@ export class ProductionJobService {
       job.workflowState?.waitingForInspection ||
       (job as any).waitingForInspection ||
       job.status === 'WAITING_FOR_INSPECTION' ||
-      job.workflowState?.inInspection ||
-      (job as any).inInspection ||
+      this.isJobInInspection(job) ||
       job.status === 'QUALITY_CHECK'
     ) {
       throw new BadRequestError(
@@ -1803,8 +1820,7 @@ export class ProductionJobService {
       job.workflowState?.waitingForInspection ||
       (job as any).waitingForInspection ||
       job.status === 'WAITING_FOR_INSPECTION' ||
-      job.workflowState?.inInspection ||
-      (job as any).inInspection ||
+      this.isJobInInspection(job) ||
       job.status === 'QUALITY_CHECK'
     ) {
       throw new BadRequestError(
@@ -1924,8 +1940,7 @@ export class ProductionJobService {
       job.workflowState?.waitingForInspection ||
       (job as any).waitingForInspection ||
       job.status === 'WAITING_FOR_INSPECTION' ||
-      job.workflowState?.inInspection ||
-      (job as any).inInspection ||
+      this.isJobInInspection(job) ||
       job.status === 'QUALITY_CHECK'
     ) {
       throw new BadRequestError(
@@ -2588,6 +2603,12 @@ export class ProductionJobService {
       );
     }
 
+    if (this.isJobInInspection(job) || currentStatus === 'IN_INSPECTION') {
+      throw new BadRequestError(
+        `Inspection Lock Violation: In-inspection Batch Orders cannot be manually transitioned through generic status endpoints. Quality disposition must be completed via approve-inspection or fail-inspection.`
+      );
+    }
+
     // State Transition Authority: Prevent phase skipping from WAITING_FOR_PRODUCTION
     if (currentStatus === 'WAITING_FOR_PRODUCTION') {
       const downstreamPhases = ['QUALITY_CHECK', 'STORAGE', 'READY_FOR_DISPATCH', 'DISPATCHED', 'COMPLETED'];
@@ -2687,8 +2708,7 @@ export class ProductionJobService {
       job.workflowState?.waitingForInspection ||
       (job as any).waitingForInspection ||
       job.status === 'WAITING_FOR_INSPECTION' ||
-      job.workflowState?.inInspection ||
-      (job as any).inInspection ||
+      this.isJobInInspection(job) ||
       job.status === 'QUALITY_CHECK'
     ) {
       throw new BadRequestError(
@@ -3132,6 +3152,12 @@ export class ProductionJobService {
       );
     }
 
+    if (this.isJobInInspection(job)) {
+      throw new BadRequestError(
+        `Inspection Lock Violation: Batch Order '${job.boNumber || job.jobNumber}' is currently in Quality Inspection and cannot be taken into production (BO is not waiting for production).`
+      );
+    }
+
     const isWaiting = job.waitingForProduction || (job.workflowState as any)?.waitingForProduction || job.status === 'WAITING_FOR_PRODUCTION';
     if (!isWaiting) {
       throw new BadRequestError(
@@ -3327,8 +3353,7 @@ export class ProductionJobService {
       job.workflowState?.waitingForInspection ||
       (job as any).waitingForInspection ||
       job.status === 'WAITING_FOR_INSPECTION' ||
-      job.workflowState?.inInspection ||
-      (job as any).inInspection ||
+      this.isJobInInspection(job) ||
       job.status === 'QUALITY_CHECK' ||
       job.status === 'COMPLETED'
     ) {
@@ -3510,11 +3535,10 @@ export class ProductionJobService {
     }
 
     if (
+      this.isJobInInspection(job) ||
       job.workflowState?.waitingForInspection ||
       (job as any).waitingForInspection ||
       job.status === 'WAITING_FOR_INSPECTION' ||
-      job.workflowState?.inInspection ||
-      (job as any).inInspection ||
       job.status === 'QUALITY_CHECK' ||
       job.status === 'COMPLETED'
     ) {
@@ -3642,11 +3666,10 @@ export class ProductionJobService {
     }
 
     if (
+      this.isJobInInspection(job) ||
       job.workflowState?.waitingForInspection ||
       (job as any).waitingForInspection ||
       job.status === 'WAITING_FOR_INSPECTION' ||
-      job.workflowState?.inInspection ||
-      (job as any).inInspection ||
       job.status === 'QUALITY_CHECK' ||
       job.status === 'COMPLETED'
     ) {
@@ -4760,9 +4783,8 @@ export class ProductionJobService {
 
     // 1. Concurrency / Already in Inspection check
     if (
-      job.inInspection ||
-      (job.workflowState as any)?.inInspection ||
-      job.status === 'IN_INSPECTION'
+      this.isJobInInspection(job) ||
+      (job as any).claimedBy
     ) {
       throw new ConflictError(
         `Take Inspection Conflict: Batch Order '${job.boNumber || job.jobNumber}' is already in inspection and cannot be taken simultaneously by another user.`
@@ -4814,6 +4836,8 @@ export class ProductionJobService {
       );
     }
 
+    const claimTime = new Date();
+
     const updateData = {
       $set: {
         status: 'IN_INSPECTION',
@@ -4830,13 +4854,26 @@ export class ProductionJobService {
         'workflowState.inInspection': true,
         'workflowState.waitingForDispatch': false,
         'workflowState.dispatched': false,
-        'workflowState.inspection': false
+        'workflowState.inspection': false,
+        claimedBy: actor.userId,
+        claimedAt: claimTime,
+        claimedByEmail: actor.email || null,
+        claimedByRole: actor.role || null,
+        'execution.inspectionData.inspectorId': actor.userId,
+        'execution.inspectionData.inspectorName': (actor as any).name || actor.email || actor.userId,
+        'execution.inspectionData.inspectedAt': claimTime,
+        'execution.inspectionData.inspectedBy': {
+          userId: actor.userId,
+          email: actor.email || null,
+          role: actor.role || null
+        },
+        'execution.inspectionData.disposition': 'PENDING'
       },
       $push: {
         transitionHistory: {
           fromStatus: job.status,
           toStatus: 'IN_INSPECTION',
-          timestamp: new Date(),
+          timestamp: claimTime,
           performedBy: {
             userId: actor.userId,
             email: actor.email,
@@ -4855,16 +4892,53 @@ export class ProductionJobService {
       );
     }
 
+    this.eventBus.publish({
+      name: DomainEvents.JOB_INSPECTION_STARTED,
+      tenantId,
+      occurredAt: claimTime,
+      actorId: actor.userId,
+      payload: {
+        jobId: updated.id || (updated as any)._id?.toString(),
+        jobNumber: updated.jobNumber,
+        boNumber: updated.boNumber,
+        actorId: actor.userId,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        occurredAt: claimTime,
+        resultingState: 'IN_INSPECTION',
+        workflowState: {
+          waitingForProduction: false,
+          inProduction: false,
+          waitingForInspection: false,
+          inInspection: true,
+          waitingForDispatch: false,
+          dispatched: false,
+          inspection: false
+        }
+      }
+    });
+
     await auditService.record(tenantId, {
       actorId: actor.userId,
-      action: 'TAKE_FOR_INSPECTION',
+      actorEmail: actor.email,
+      actorRole: actor.role,
+      action: 'INSPECTION_STARTED',
       entityType: 'BatchOrder',
       entityId: updated.id || (updated as any)._id?.toString(),
       metadata: {
         boNumber: updated.boNumber,
         jobNumber: updated.jobNumber,
+        actingUser: actor.userId,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        timestamp: claimTime.toISOString(),
         fromStatus: job.status,
-        toStatus: 'IN_INSPECTION'
+        toStatus: 'IN_INSPECTION',
+        resultingState: 'IN_INSPECTION',
+        workflowState: {
+          waitingForInspection: false,
+          inInspection: true
+        }
       }
     });
 
@@ -4882,15 +4956,44 @@ export class ProductionJobService {
       throw new NotFoundError(`Batch Order with identifier '${jobId}' not found.`);
     }
 
-    const isInInspection = Boolean(
-      job.inInspection ||
-      (job.workflowState as any)?.inInspection ||
-      job.status === 'IN_INSPECTION'
-    );
-
-    if (!isInInspection) {
+    if (!this.isJobInInspection(job)) {
       throw new BadRequestError(
         `Cannot record inspection data: Batch Order '${job.boNumber || job.jobNumber}' is not in active inspection (current status: '${job.status}').`
+      );
+    }
+
+    // Exclusive Inspection Ownership Check
+    if (
+      job.claimedBy &&
+      job.claimedBy !== actor.userId &&
+      actor.role !== 'QUALITY_LEAD' &&
+      actor.role !== 'METALLURGIST' &&
+      actor.role !== 'PLANT_MANAGER' &&
+      actor.role !== 'ADMIN'
+    ) {
+      throw new ForbiddenError(
+        `Inspection Ownership Violation: Batch Order '${job.boNumber || job.jobNumber}' is exclusively claimed by inspector '${job.claimedBy}'. Another inspector cannot modify this active inspection session.`
+      );
+    }
+
+    // Recipe Protection Check
+    if (dto?.recipeId || dto?.recipeSnapshot || dto?.recipeCode) {
+      throw new BadRequestError(
+        `Recipe Protection Violation: Batch Order recipe is locked and immutable during Quality Inspection. Recipe substitution is strictly prohibited.`
+      );
+    }
+
+    // Production Data Protection Check
+    if (
+      dto?.furnaceCharge ||
+      dto?.stageProgress ||
+      dto?.loadedPieces !== undefined ||
+      dto?.actualTemperatureC !== undefined ||
+      dto?.loadedQuantity !== undefined ||
+      dto?.loadedWeightKg !== undefined
+    ) {
+      throw new BadRequestError(
+        `Production Data Protection Violation: Historical production telemetry, piece counts, and charge actuals cannot be modified during Quality Inspection. Silent rewriting of production values is strictly prohibited.`
       );
     }
 
@@ -5037,15 +5140,23 @@ export class ProductionJobService {
       throw new NotFoundError(`Batch Order with identifier '${jobId}' not found.`);
     }
 
-    const isInInspection = Boolean(
-      job.inInspection ||
-      (job.workflowState as any)?.inInspection ||
-      job.status === 'IN_INSPECTION'
-    );
-
-    if (!isInInspection) {
+    if (!this.isJobInInspection(job)) {
       throw new BadRequestError(
         `Cannot approve for dispatch: Batch Order '${job.boNumber || job.jobNumber}' is not in active inspection (current status: '${job.status}').`
+      );
+    }
+
+    // Exclusive Inspection Ownership Check
+    if (
+      job.claimedBy &&
+      job.claimedBy !== actor.userId &&
+      actor.role !== 'QUALITY_LEAD' &&
+      actor.role !== 'METALLURGIST' &&
+      actor.role !== 'PLANT_MANAGER' &&
+      actor.role !== 'ADMIN'
+    ) {
+      throw new ForbiddenError(
+        `Inspection Ownership Violation: Batch Order '${job.boNumber || job.jobNumber}' is exclusively claimed by inspector '${job.claimedBy}'. Another inspector cannot approve this active inspection session.`
       );
     }
 
@@ -5279,15 +5390,23 @@ export class ProductionJobService {
       throw new NotFoundError(`Batch Order with identifier '${jobId}' not found.`);
     }
 
-    const isInInspection = Boolean(
-      job.inInspection ||
-      (job.workflowState as any)?.inInspection ||
-      job.status === 'IN_INSPECTION'
-    );
-
-    if (!isInInspection) {
+    if (!this.isJobInInspection(job)) {
       throw new BadRequestError(
         `Cannot fail inspection: Batch Order '${job.boNumber || job.jobNumber}' is not in active inspection (current status: '${job.status}').`
+      );
+    }
+
+    // Exclusive Inspection Ownership Check
+    if (
+      job.claimedBy &&
+      job.claimedBy !== actor.userId &&
+      actor.role !== 'QUALITY_LEAD' &&
+      actor.role !== 'METALLURGIST' &&
+      actor.role !== 'PLANT_MANAGER' &&
+      actor.role !== 'ADMIN'
+    ) {
+      throw new ForbiddenError(
+        `Inspection Ownership Violation: Batch Order '${job.boNumber || job.jobNumber}' is exclusively claimed by inspector '${job.claimedBy}'. Another inspector cannot fail or reject this active inspection session.`
       );
     }
 

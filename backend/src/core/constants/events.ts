@@ -14,6 +14,7 @@ export const DomainEvents = {
   JOB_DOWNTIME_LOGGED: 'Job.DowntimeLogged',
   JOB_COMPLETED: 'Job.Completed',
   JOB_APPROVED_FOR_INSPECTION: 'Job.ApprovedForInspection',
+  JOB_INSPECTION_STARTED: 'Job.InspectionStarted',
   JOB_INSPECTION_APPROVED: 'Job.InspectionApproved',
   JOB_INSPECTION_FAILED: 'Job.InspectionFailed',
   JOB_CANCELLED: 'Job.Cancelled',

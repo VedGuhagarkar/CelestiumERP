@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 import { BaseRepository } from '../../core/repository/base.repository.js';
-import { ProductionJobDocument, JobStatus } from './production-job.types.js';
+import { ProductionJobDocument, JobStatus, isJobInInspection } from './production-job.types.js';
 import { ProductionJobModel } from './production-job.model.js';
 import { PaginatedResult, PaginationOptions } from '../../core/types/pagination.js';
 import { BadRequestError } from '../../core/errors/app-error.js';
@@ -203,6 +203,53 @@ export class ProductionJobRepository
         if (isAttemptingPostProdField) {
           throw new BadRequestError(
             `Post-Production Lock Violation: Batch Order '${existing.boNumber || existing.jobNumber}' is locked against modifications once production has completed and entered Quality Inspection.`
+          );
+        }
+      }
+
+      if (isJobInInspection(existing)) {
+        const inspectionForbiddenFields = [
+          'processDetails',
+          'customer',
+          'item',
+          'poId',
+          'poNumber',
+          'grnId',
+          'grnNumber',
+          'boNumber',
+          'batchOrderNumber',
+          'recipeSnapshot',
+          'specificationSnapshot',
+          'materialAllocations',
+          'planId',
+          'planNumber',
+          'timeline.plannedStartDate',
+          'timeline.targetCompletionDate',
+          'timeline.actualStartDate',
+          'timeline.actualCompletionDate',
+          'quantity.loadedQuantity',
+          'quantity.completedQuantity',
+          'quantity.scrappedQuantity',
+          'quantity.targetQuantity',
+          'quantity.allocatedQuantity',
+          'assignedFurnaceId',
+          'assignedOperatorId',
+          'equipmentAssignment',
+          'operatorAssignment',
+          'execution.furnaceCharge',
+          'execution.stageProgress',
+          'execution.cycleTimer',
+          'execution.downtimeLog',
+          'execution.productionLogs',
+          'execution.storagePlacement'
+        ];
+        const isAttemptingInspectionForbiddenField = inspectionForbiddenFields.some((field) =>
+          updateKeys.includes(field) ||
+          updateKeys.some((k) => k === field || k.startsWith(field + '.'))
+        );
+        if (isAttemptingInspectionForbiddenField) {
+          throw new BadRequestError(
+            `Inspection Lock Violation: Batch Order '${existing.boNumber || existing.jobNumber}' is locked against unrelated modifications while in Quality Inspection. Only authorized inspection workflows may modify inspection-owned data.`
           );
         }
       }
@@ -694,7 +741,19 @@ export class ProductionJobRepository
       'workflowState.waitingForDispatch': { $ne: true },
       dispatched: { $ne: true },
       'workflowState.dispatched': { $ne: true },
-      'workflowState.inspection': { $ne: true }
+      'workflowState.inspection': { $ne: true },
+      status: {
+        $nin: [
+          'IN_INSPECTION',
+          'IN_PRODUCTION',
+          'WAITING_FOR_DISPATCH',
+          'DISPATCHED',
+          'COMPLETED',
+          'CANCELLED',
+          'INSPECTION'
+        ]
+      },
+      claimedBy: { $in: [null, undefined] }
     };
 
     return this.model.findOneAndUpdate(filter, updateData, { new: true }).exec();

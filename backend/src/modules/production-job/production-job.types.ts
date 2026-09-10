@@ -479,6 +479,10 @@ export interface IProductionJob {
   dispatched?: boolean;
   inspection?: boolean;
   workflowState?: IBatchOrderWorkflowState;
+  claimedBy?: string | null;
+  claimedAt?: Date | null;
+  claimedByEmail?: string | null;
+  claimedByRole?: string | null;
   priority: JobPriority;
   recipeSnapshot: IJobRecipeSnapshot;
   specificationSnapshot: IJobSpecificationSnapshot;
@@ -837,3 +841,15 @@ export const PRODUCTION_ONLY_FIELDS = [
   'scrappedQuantity'
 ] as const;
 
+/**
+ * Single Authoritative Inspection Detector
+ * Celestium ERP Inspection Phase Invariant
+ */
+export function isJobInInspection(job: any): boolean {
+  if (!job) return false;
+  return Boolean(
+    job.inInspection === true ||
+    job.workflowState?.inInspection === true ||
+    job.status === 'IN_INSPECTION'
+  );
+}

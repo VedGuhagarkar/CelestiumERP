@@ -353,27 +353,32 @@ const hardnessTestPointSchema = new Schema(
 
 const heatTreatmentInspectionDataSchema = new Schema(
   {
-    furnaceId: { type: String, required: true },
-    furnaceCode: { type: String, required: true, uppercase: true },
+    furnaceId: { type: String, default: null },
+    furnaceCode: { type: String, uppercase: true, default: null },
     equipmentNotes: { type: String, default: null },
-    minHardness: { type: Number, required: true },
-    maxHardness: { type: Number, required: true },
-    scale: { type: String, required: true, default: 'HRC' },
+    minHardness: { type: Number, default: null },
+    maxHardness: { type: Number, default: null },
+    scale: { type: String, default: 'HRC' },
     specificationNotes: { type: String, default: null },
-    measuredAverage: { type: Number, required: true },
+    measuredAverage: { type: Number, default: null },
     testPoints: { type: [hardnessTestPointSchema], default: [] },
-    isHardnessCompliant: { type: Boolean, required: true },
+    isHardnessCompliant: { type: Boolean, default: false },
     targetCaseDepthMinMm: { type: Number, default: null },
     targetCaseDepthMaxMm: { type: Number, default: null },
-    effectiveCaseDepthMm: { type: Number, required: true },
-    isCaseDepthCompliant: { type: Boolean, required: true },
+    effectiveCaseDepthMm: { type: Number, default: null },
+    isCaseDepthCompliant: { type: Boolean, default: false },
     caseDepthMethod: { type: String, default: null },
-    quantityReceived: { type: Number, required: true, min: 0.001 },
-    quantityDelivered: { type: Number, required: true, min: 0.001 },
+    quantityReceived: { type: Number, default: null },
+    quantityDelivered: { type: Number, default: null },
     quantityRejected: { type: Number, default: 0, min: 0 },
-    inspectorId: { type: String, required: true },
-    inspectorName: { type: String, required: true },
+    inspectorId: { type: String, default: null },
+    inspectorName: { type: String, default: null },
     inspectedAt: { type: Date, default: Date.now },
+    inspectedBy: {
+      userId: { type: String, default: null },
+      email: { type: String, default: null },
+      role: { type: String, default: null }
+    },
     disposition: {
       type: String,
       enum: ['APPROVED', 'REJECTED', 'PENDING'],
@@ -500,6 +505,10 @@ const productionJobSchema = createBaseSchema<ProductionJobDocument>({
       inspection: false
     })
   },
+  claimedBy: { type: String, default: null },
+  claimedAt: { type: Date, default: null },
+  claimedByEmail: { type: String, default: null },
+  claimedByRole: { type: String, default: null },
   priority: {
     type: String,
     enum: ['LOW', 'NORMAL', 'HIGH', 'URGENT', 'AOG_CRITICAL'],
@@ -638,6 +647,55 @@ productionJobSchema.pre('save', function (next) {
       ) {
         return next(
           new Error('In-Production Lock Violation: Batch Order is locked against unrelated modifications while in production.')
+        );
+      }
+    }
+
+    const isInspectionActive =
+      this.inInspection ||
+      (this.workflowState && this.workflowState.inInspection) ||
+      this.status === 'IN_INSPECTION';
+
+    if (isInspectionActive) {
+      if (
+        this.isModified('processDetails') ||
+        this.isModified('customer') ||
+        this.isModified('item') ||
+        this.isModified('poId') ||
+        this.isModified('poNumber') ||
+        this.isModified('grnId') ||
+        this.isModified('grnNumber') ||
+        this.isModified('boNumber') ||
+        this.isModified('batchOrderNumber') ||
+        this.isModified('specificationSnapshot') ||
+        this.isModified('materialAllocations') ||
+        this.isModified('planId') ||
+        this.isModified('planNumber') ||
+        this.isModified('timeline.plannedStartDate') ||
+        this.isModified('timeline.targetCompletionDate') ||
+        this.isModified('timeline.actualStartDate') ||
+        this.isModified('timeline.actualCompletionDate') ||
+        this.isModified('quantity.loadedQuantity') ||
+        this.isModified('quantity.completedQuantity') ||
+        this.isModified('quantity.scrappedQuantity') ||
+        this.isModified('quantity.targetQuantity') ||
+        this.isModified('quantity.allocatedQuantity') ||
+        this.isModified('assignedFurnaceId') ||
+        this.isModified('assignedOperatorId') ||
+        this.isModified('equipmentAssignment') ||
+        this.isModified('operatorAssignment') ||
+        this.isModified('execution.furnaceCharge') ||
+        this.isModified('execution.stageProgress') ||
+        this.isModified('execution.cycleTimer') ||
+        this.isModified('execution.downtimeLog') ||
+        this.isModified('execution.productionLogs') ||
+        this.isModified('execution.storagePlacement') ||
+        (this.isModified('isDeleted') && this.isDeleted)
+      ) {
+        return next(
+          new Error(
+            'Inspection Lock Violation: Batch Order is locked against unrelated modifications while in Quality Inspection. Only authorized inspection workflows may modify inspection-owned data.'
+          )
         );
       }
     }

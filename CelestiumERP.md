@@ -26,7 +26,7 @@
    - 1.14 Security Stack, Middleware & Logging Infrastructure
    - 1.15 SRE Health, Liveness & Readiness Probes
 2. [Core Platform Infrastructure Catalog](#2-core-platform-infrastructure-catalog)
-3. [Domain Event Bus Registry (89 Typed Events)](#3-domain-event-bus-registry-89-typed-events)
+3. [Domain Event Bus Registry (92 Typed Events)](#3-domain-event-bus-registry-92-typed-events)
 4. [RBAC & Governance Permission Catalog (55 Granular Permissions)](#4-rbac--governance-permission-catalog-55-granular-permissions)
 5. [Complete Backend Domain Modules Catalog (All 38 Modules)](#5-complete-backend-domain-modules-catalog-all-38-modules)
    - 5.1 Authentication (`auth`)
@@ -95,10 +95,12 @@
    - 8.1 Database Seeding Engine (`backend/src/scripts/seed.ts`)
    - 8.2 Centralized Configuration Subsystem (`backend/src/config/`)
    - 8.3 Operational Runbooks & Technical Specifications (`docs/`)
-   - 8.4 Automated Test Suite Matrix (66 Backend Specs + Frontend Suites)
+   - 8.4 Automated Test Suite Matrix (65 Backend Specs + Frontend Suites)
      - *Prompt 8:* `production-operator-workspace.spec.ts`
      - *Prompt 9:* `production-security-concurrency.spec.ts`
      - *Prompt 10:* `production-e2e-integration.spec.ts`
+     - *Inspection Prompt 2:* `inspection-queue.spec.ts`
+     - *Inspection Prompt 3:* `inspection-lock.spec.ts`
 
 ---
 
@@ -270,15 +272,16 @@ The core framework in `backend/src/core` provides foundational utilities and bas
 
 ---
 
-## 3. Domain Event Bus Registry (91 Typed Events)
+## 3. Domain Event Bus Registry (92 Typed Events)
 
-The in-memory `DomainEventBus` manages 91 strongly typed domain events across 11 business domains:
+The in-memory `DomainEventBus` manages 92 strongly typed domain events across 11 business domains:
 
 | Domain | Event Identifier | Emitted When | Typical Subscribed Side Effects |
 |---|---|---|---|
 | **Jobs** | `Job.Created` | New production job work order is drafted. | Audit logging, notification dispatch. |
 | **Jobs** | `Job.InProduction` | Batch order atomically taken into production (`waiting_for_production` -> `in_production`). | Clears prior flags, establishes single active flag `inProduction = true`, locks from unrelated modifications. |
 | **Jobs** | `Job.ApprovedForInspection` | Production execution completed and approved for inspection (`in_production` -> `waiting_for_inspection`). | Clears prior flags, activates `waitingForInspection = true`, surfaces BO in Quality Inspection queue. |
+| **Jobs** | `Job.InspectionStarted` | Batch order claimed and taken into Quality Inspection (`waiting_for_inspection` -> `in_inspection`). | Clears prior flags, activates `inInspection = true`, binds inspector `claimedBy`, locks BO from external operations. |
 | **Jobs** | `Job.InspectionApproved` | Batch order heat-treatment inspection passed and approved for dispatch (`in_inspection` -> `waiting_for_dispatch`). | Clears prior flags, activates `waitingForDispatch = true`, transitions BO to dispatch staging queue (without auto-dispatching). |
 | **Jobs** | `Job.InspectionFailed` | Batch order heat-treatment inspection rejected and quarantined (`in_inspection` -> `inspection`). | Clears prior flags, activates `inspection = true` failure/quarantine flag, logs non-conformance reason. |
 | **Jobs** | `Job.Scheduled` | Job assigned to furnace time slot. | Machine calendar update, operator notification. |
@@ -978,7 +981,8 @@ _No direct HTTP routes mounted for this internal domain service._
 
 #### Models & Schemas
 - **`production-job.model.ts`** — Mongoose model: `ProductionJob`. Exported interfaces:
-  - `IProductionJob`: Complete domain document representing a Batch Order / Production Job.
+  - `IProductionJob`: Complete domain document representing a Batch Order / Production Job. Includes exclusive inspection session metadata: `claimedBy: string | null`, `claimedAt: Date | null`, `claimedByEmail: string | null`, `claimedByRole: string | null`.
+  - `isJobInInspection(job: any): boolean`: Canonical exported helper function providing unified detection across status flags, workflow states, and claimed sessions.
   - `IProcessDetailRow`: 15-position process details row (`position: 1..15`, `stageName`, `targetTemp`, `targetDurationMinutes`, `quenchMedium`, `atmosphere`, `tolerance`, `operatorNotes`, `isCompleted`).
   - `IBatchOrderGenealogy`: Immutable source lineage (`purchaseOrderId`, `purchaseOrderNumber`, `grnId`, `grnNumber`, `itemId`, `itemPartNumber`, `materialName`, `recipeId`, `recipeCode`, `isImmutable: true`).
   - `IBatchOrderProductionReadiness`: 10-point readiness check payload (`isProductionReady`, `reasons`, `checks`, `evaluatedAt`).
@@ -991,7 +995,7 @@ _No direct HTTP routes mounted for this internal domain service._
     4. Case depth (`effectiveCaseDepthMm`, `isCaseDepthCompliant`, `caseDepthMethod`, `totalCaseDepthMm`).
     5. Quantity received (`quantityReceived > 0`).
     6. Quantity delivered (`0 < quantityDelivered <= quantityReceived`, with `quantityRejected = quantityReceived - quantityDelivered`).
-    - Quality sign-off metadata: `microstructure`, `visualInspection`, `inspectorId`, `inspectorName`, `inspectedAt`, `concessionReason`, `rejectionReason`, `defectCategory`.
+    - Quality sign-off metadata: `microstructure`, `visualInspection`, `inspectorId`, `inspectorName`, `inspectedAt`, `inspectedBy: { userId, email, role }`, `concessionReason`, `rejectionReason`, `defectCategory`, `disposition: 'PENDING' | 'ACCEPTED' | 'REJECTED'`.
   - `IProductionExecution`: Reconstructed execution state tracking furnace, operator, shift, loaded piece count, loaded weight, completed piece count, scrapped piece count, furnace charge parameters (`furnaceCharge`), recipe stage progress logs (`IJobStageProgress[]`), and approval metadata.
   - `RecordFurnaceChargeDto`: Authoritative furnace charge input payload (`furnaceId`, `shiftId`, `loadNumber`, `loadedPieces`, `loadedWeightKg`, `setpointTempC`, `atmosphereType`, `notes`).
   - `SaveProductionDataDto`: Partial production execution payload allowing incremental saves of furnace charge, stage progress actuals, and operator thermal notes without triggering workflow state transitions.
@@ -1003,6 +1007,7 @@ _No direct HTTP routes mounted for this internal domain service._
   - `IJobStageProgress`: Authoritative Recipe execution progress telemetry: `stageName`, `sequence`, `targetTemperatureC`, `actualTemperatureC`, `targetDurationMinutes`, `actualDurationMinutes`, `temperatureDeviationC`, `durationDeviationMinutes`, `isCompliant`, `deviationWarning`, `quenchMedium`, `quenchParameters` (`medium`, `agitationSpeedRpm`, `mediaInitialTempC`, `mediaFinalTempC`), `atmosphereLevel`, `atmosphereDetails`, `operatorNotes`, `loggedAt`, `loggedBy`.
   - `IProductionExecutionReadiness`: Execution readiness audit evaluating all recipe stages completed, piece count balance ($Q_{\text{completed}} + Q_{\text{scrapped}} = Q_{\text{loaded}}$), furnace equipment assigned, and operator assigned.
   - `IJobStageLog`, `IJobDowntimeLog`, `IJobTransitionLog`: Telemetry and lifecycle logs.
+  - **Mongoose `pre('save')` Hook Enforcement:** Enforces that when `isJobInInspection(this)` is true, modifications to non-inspection fields (`processDetails`, `customer`, `item`, `poId`, `grnId`, `boNumber`, `timeline`, `quantity`, `recipeSnapshot`, `assignedFurnaceId`, `assignedOperatorId`, `equipmentAssignment`, `operatorAssignment`, `execution.furnaceCharge`, `execution.stageProgress`) are strictly blocked with `Inspection Lock Violation`.
 
 #### Repositories
 - **`ProductionJobRepository`** (`production-job.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
@@ -1011,11 +1016,11 @@ _No direct HTTP routes mounted for this internal domain service._
     - `findInInspectionQueue(tenantId)`: Returns batch orders actively in inspection (`workflowState.inInspection: true`).
     - `findWaitingForDispatchQueue(tenantId)`: Returns batch orders approved by quality inspection waiting for dispatch staging (`workflowState.waitingForDispatch: true`).
     - `findInspectionFailedQueue(tenantId)`: Returns batch orders rejected/quarantined by quality inspection (`workflowState.inspection: true`).
-    - `atomicTakeForInspection(tenantId, id, update)`: Atomically transitions BO from `waitingForInspection` to `inInspection`, enforcing single-winner concurrency lock (`409 Conflict` on race).
+    - `atomicTakeForInspection(tenantId, id, update)`: Atomically transitions BO from `waitingForInspection` to `inInspection`, enforcing single-winner concurrency lock (`409 Conflict` on race) and binding `claimedBy` / `claimedAt`.
     - `atomicApproveForDispatch(tenantId, id, update)`: Atomically transitions BO from `inInspection` to `waitingForDispatch`, persisting complete inspection sub-document and locking post-production execution data.
     - `atomicFailInspection(tenantId, id, update)`: Atomically transitions BO from `inInspection` to `inspection` (quarantine state) with rejection disposition notes.
   - Concurrency & Lock Enforcement:
-    - `updateById()` strictly intercepts update attempts on in-production jobs, preventing mutation of processDetails, timeline, quantity, items, recipe snapshots, and source genealogy.
+    - `updateById()` strictly intercepts update attempts on in-production jobs and in-inspection jobs, preventing mutation of processDetails, timeline, quantity, items, recipe snapshots, and source genealogy with `Inspection Lock Violation`.
     - Post-Production Lock & Recipe Protection: `updateById()` permanently protects `recipeSnapshot` against substitution (`Recipe Protection Violation`), and intercepts updates on completed jobs in `waitingForInspection`, `inInspection`, `waitingForDispatch`, `dispatched`, or `inspection`, rejecting modifications to furnace charges, stage progress actuals, process details, customer, item, PO/GRN references, quantities, and furnace/operator assignments with `Post-Production Lock Violation`.
     - `atomicApproveForInspection()` asserts `status: 'IN_PRODUCTION' | 'IN_PROGRESS'` or `workflowState.inProduction: true`, preventing race conditions and multiple approvals (`409 Conflict`).
   - Planning Phase Methods: `generateNextJobNumber()`, `findJobByNumber()`, `findByPlanId()`, `findJobsByPlanId()`, `findByIdempotencyKey()`, `queryJobs()`, `findActiveQueueJobs()` (strictly delegates to `findWaitingForProductionQueue()`), `findConflictingJobs()`, `findEligiblePOs()`, `findEligibleGRNsForPO()`, `findEligiblePartsForGRN()`, `findActiveAllocationsForGRN()`.
@@ -1075,15 +1080,22 @@ _No direct HTTP routes mounted for this internal domain service._
       - **Furnace Charge State:** Surfaces active charge number, assigned furnace, shift, loaded piece count, loaded weight (kg), initial furnace temperature, and operator setup notes.
       - **Live Execution Readiness:** Verifies operational readiness (stages completed, piece count balance, equipment and operator assignment).
       - **State Awareness & Stale Protection:** Surfaces actionable execution permissions when `inProduction = true`, while enforcing read-only lock banners and disabled controls for historical/completed BOs.
-  - *Authoritative Inspection Phase Methods (Prompt 1 Reconstruction):*
+  - *Authoritative Inspection Phase Methods (Prompt 1 & Prompt 3 Reconstruction):*
     - `getInInspectionQueue(tenantId)`: Surfaces batch orders actively undergoing inspection (`inInspection: true`).
     - `getWaitingForDispatchQueue(tenantId)`: Surfaces batch orders approved by inspection awaiting dispatch release (`waitingForDispatch: true`).
     - `getInspectionFailedQueue(tenantId)`: Surfaces batch orders rejected/quarantined by inspection (`inspection: true`).
     - `getInspectionWorkbenchData(tenantId, id)`: Compiles comprehensive heat-treatment inspection workbench data: complete unbroken genealogy (`PO -> GRN -> BO`), recipe target limits, furnace charge parameters, execution telemetry, and current inspection sub-document.
-    - `takeForInspection(tenantId, id, actorId, dto)`: Atomically transitions BO from `waitingForInspection` to `inInspection`, establishes single active flag (`inInspection: true`), rejects concurrent claims with `409 Conflict`, assigns inspector identity, logs audit diff, and publishes domain event.
-    - `recordHeatTreatmentInspectionData(tenantId, id, actorId, dto)`: Validates active inspection status (`inInspection: true`), validates intermediate test readings against recipe limits, and saves partial inspection actuals without advancing state.
-    - `approveInspectionForDispatch(tenantId, id, actorId, dto)`: Validates all Six Mandatory Heat-Treatment Inspection Fields (furnace identification, specification limits, actual hardness readings with compliance flag, case depth evaluation, quantity received, quantity delivered), validates quantity balance ($Q_{\text{del}} \le Q_{\text{rec}}$, $Q_{\text{rej}} = Q_{\text{rec}} - Q_{\text{del}}$), atomically transitions to `waitingForDispatch: true` ($\sum \text{flag}_i = 1$), stages BO for dispatch without auto-dispatching, and publishes `Job.InspectionApproved`.
-    - `failInspection(tenantId, id, actorId, dto)`: Atomically transitions BO to quarantined failure state `inspection: true` ($\sum \text{flag}_i = 1$), records defect category, rejection reason, and inspector notes, and publishes `Job.InspectionFailed`.
+    - `takeForInspection(tenantId, id, actorId, dto)`: Atomically transitions BO from `waitingForInspection` to `inInspection`, establishes single active flag (`inInspection: true`), rejects concurrent claims with `409 Conflict`, records exclusive ownership (`claimedBy`, `claimedAt`, `claimedByEmail`, `claimedByRole`, `inspectedBy`), sets `disposition = 'PENDING'`, logs audit diff `INSPECTION_STARTED`, and publishes `Job.InspectionStarted`.
+    - `recordHeatTreatmentInspectionData(tenantId, id, actorId, dto)`: Validates active inspection status (`isJobInInspection`), enforces exclusive ownership (`403 Forbidden` if another inspector without QA Lead/Admin role), enforces Recipe Protection (`Recipe Protection Violation` on recipe tampering), enforces Production Data Protection (`Production Data Protection Violation` on telemetry/piece tampering), and saves partial inspection actuals without advancing state.
+    - `approveInspectionForDispatch(tenantId, id, actorId, dto)`: Validates active inspection status, enforces exclusive ownership (`403 Forbidden`), validates all Six Mandatory Heat-Treatment Inspection Fields, validates quantity balance ($Q_{\text{del}} \le Q_{\text{rec}}$, $Q_{\text{rej}} = Q_{\text{rec}} - Q_{\text{del}}$), atomically transitions to `waitingForDispatch: true` ($\sum \text{flag}_i = 1$), stages BO for dispatch without auto-dispatching, and publishes `Job.InspectionApproved`.
+    - `failInspection(tenantId, id, actorId, dto)`: Validates active inspection status, enforces exclusive ownership (`403 Forbidden`), atomically transitions BO to quarantined failure state `inspection: true` ($\sum \text{flag}_i = 1$), records defect category, rejection reason, and inspector notes, and publishes `Job.InspectionFailed`.
+  - *Inspection Lock & Cross-Phase Protection Invariants (Prompt 3):*
+    - **Queue Locking:** Taking a BO into inspection atomically excludes it from `GET /queue/waiting-for-inspection`.
+    - **Production Operation Lockout:** While a BO is in inspection (`isJobInInspection`), `takeForProduction`, `recordRecipeStageProgress`, `recordFurnaceCharge`, and `saveProductionData` are strictly rejected with `400 Bad Request` (`Inspection Lock Violation` or `Post-Production Lock Violation`).
+    - **Planning Operation Lockout:** While in inspection, `updateJob`, `updateProcessDetails`, `assignOperator`, `removeOperator`, `assignFurnace`, `removeFurnace`, and `cancelJob` are strictly rejected with `400 Bad Request` (`Inspection Lock Violation`).
+    - **Dispatch & Generic Transition Lockout:** Direct manual transitions via `/transition` are rejected with `400 Bad Request`; disposition must proceed exclusively through `/approve-inspection` or `/fail-inspection`.
+    - **Recipe & Production Data Protection:** Inspection payloads are strictly prohibited from substituting or modifying `recipeSnapshot`, or rewriting historical production actuals (furnace charges, stage progress, loaded piece counts).
+    - **Read-Only Viewing Integrity:** Read-only inspection and viewing (`GET /api/v1/production-jobs/:id`) remains 100% permitted.
   - *Planning Phase Methods:* `getEligiblePOs()`, `getEligibleGRNsForPO()`, `getEligiblePartsForGRN()`, `createBatchOrder()`, `getProcessDetails()`, `updateProcessDetails()`, `getBatchOrderGenealogy()`, `getBatchOrderProductionReadiness()`.
   - *Cleaned Up / Disabled:* `createDirectJob()` permanently disabled with `BadRequestError` to prevent un-genealogized work order bypass; legacy duplicate queue queries unified under `findWaitingForProductionQueue()`.
 
@@ -1175,19 +1187,25 @@ _No direct HTTP routes mounted for this internal domain service._
   4. Case depth (`effectiveCaseDepthMm`, `isCaseDepthCompliant`, `caseDepthMethod`, `totalCaseDepthMm`).
   5. Quantity received (`quantityReceived > 0`).
   6. Quantity delivered (`0 < quantityDelivered <= quantityReceived`, `quantityRejected = quantityReceived - quantityDelivered`).
-  - Microstructure evaluation, visual inspection, inspector ID, sign-off timestamp, and rejection reason.
+  - Microstructure evaluation, visual inspection, inspector ID, sign-off timestamp, `inspectedBy: { userId, email, role }`, `disposition: 'PENDING' | 'ACCEPTED' | 'REJECTED'`, and rejection reason.
+  - Exclusive Session Metadata: `claimedBy`, `claimedAt`, `claimedByEmail`, `claimedByRole` on parent Batch Order document.
 
 #### Repositories
 - **`QualityInspectionRepository`** (`quality-inspection.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated standalone inspection queries.
 - **`ProductionJobRepository`** (`production-job.repository.ts`): Powers the authoritative Batch Order Inspection Phase queues and atomic state transitions:
   - `findWaitingForInspectionQueue()`, `findInInspectionQueue()`, `findWaitingForDispatchQueue()`, `findInspectionFailedQueue()`.
-  - `atomicTakeForInspection()`, `atomicApproveForDispatch()`, `atomicFailInspection()`.
+  - `atomicTakeForInspection()`: Atomically claims BO, asserts waiting state, binds `claimedBy`/`claimedAt`, clears waiting flag, sets `inInspection = true` ($\sum=1$), and throws `409 Conflict` on race.
+  - `atomicApproveForDispatch()`, `atomicFailInspection()`.
 
 #### Services
 - **`QualityInspectionService`** (`quality-inspection.service.ts`): Manages standalone inspection records, inspector assignment, test results, and NCR escalation.
 - **`ProductionJobService`** (`production-job.service.ts`): Executes authoritative Batch Order Inspection Phase operations:
   - `getWaitingForInspectionQueue()`, `getInInspectionQueue()`, `getWaitingForDispatchQueue()`, `getInspectionFailedQueue()`, `getInspectionWorkbenchData()`.
-  - `takeForInspection()`, `recordHeatTreatmentInspectionData()`, `approveInspectionForDispatch()`, `failInspection()`.
+  - `takeForInspection()`: Atomically claims BO, enforces single-winner concurrency (`409 Conflict`), records `claimedBy`, `claimedAt`, `inspectedBy`, emits `Job.InspectionStarted`, and logs `INSPECTION_STARTED`.
+  - `recordHeatTreatmentInspectionData()`: Validates `isJobInInspection`, enforces exclusive ownership (`403 Forbidden` if another inspector), enforces Recipe Protection (`400 Bad Request`), enforces Production Data Protection (`400 Bad Request`), and saves partial test data.
+  - `approveInspectionForDispatch()`: Validates `isJobInInspection`, enforces exclusive ownership (`403 Forbidden`), validates all Six Mandatory Fields, sets `waitingForDispatch = true` ($\sum=1$), and publishes `Job.InspectionApproved`.
+  - `failInspection()`: Validates `isJobInInspection`, enforces exclusive ownership (`403 Forbidden`), sets `inspection = true` ($\sum=1$), and publishes `Job.InspectionFailed`.
+  - Cross-Phase Lock Enforcement: Prohibits `takeForProduction`, `recordFurnaceCharge`, `recordRecipeStageProgress`, `saveProductionData`, `updateJob`, `updateProcessDetails`, operator/furnace changes, cancellation, or generic status transitions while in active inspection.
 
 #### Controllers
 - **`QualityInspectionController`** (`quality-inspection.controller.ts`): Handles standalone quality inspection records and auxiliary testing endpoints.
@@ -2387,22 +2405,32 @@ $$\mathbf{Production\ Completion} \longrightarrow \mathbf{Waiting\ for\ Inspecti
        9. *Production Telemetry:* `assignedFurnaceCode`, `assignedOperatorName`, `shiftId`, `chargeNumber`, verified stages, and locked production flag.
    - **Server-Side Authorization Enforcement:** Guarded strictly by `requireAnyPermission(PERMISSIONS.QUALITY_INSPECTION_VIEW, PERMISSIONS.QUALITY_INSPECTION_RECORD, PERMISSIONS.QUALITY_INSPECTION_VERIFY)`. Non-inspection roles (including general production operators) receive `403 Forbidden`. Frontend does not rely on hidden buttons alone.
 
-2. **Atomic Inspection Ingestion (`waiting for inspection` $\longrightarrow$ `in inspection`):**
-   - A certified QC inspector claims the BO via `POST /api/v1/production-jobs/:id/take-for-inspection` (or `POST /api/v1/quality-inspections/:id/take-for-inspection`), providing `inspectorId` and optional intake notes.
-   - **State Verification at Moment of Execution:** Verifies that the BO is currently in `waitingForInspection = true`.
+2. **Atomic Inspection Ingestion & Exclusive Ownership (`waiting for inspection` $\longrightarrow$ `in inspection`):**
+   - A certified QC inspector claims the BO via `POST /api/v1/production-jobs/:id/take-for-inspection` (or `POST /api/v1/quality-inspections/:id/take-for-inspection`), providing optional intake notes.
+   - **State Verification at Moment of Execution:** Verifies that the BO is currently in `waitingForInspection = true` and has not already been claimed or moved downstream.
    - **Atomic State Mutation:**
-     - Atomically clears previous workflow flags.
-     - Sets `workflowState.waitingForInspection = false` and `workflowState.inInspection = true` (enforcing $\sum \text{flag}_i = 1$).
-     - Sets status to `IN_INSPECTION` (or `QUALITY_CHECK`), records inspector identity and start timestamp.
+     - Atomically clears previous workflow flags (`waitingForProduction: false`, `inProduction: false`, `waitingForInspection: false`, `waitingForDispatch: false`, `dispatched: false`, `inspection: false`).
+     - Activates `inInspection = true` (enforcing exact single active flag invariant: $\sum \text{flag}_i = 1$).
+     - Sets status to `IN_INSPECTION` (or `QUALITY_CHECK`).
+     - Binds exclusive inspector ownership metadata: `claimedBy: actor.userId`, `claimedAt: new Date()`, `claimedByEmail: actor.email`, `claimedByRole: actor.role`, and `execution.inspectionData.inspectedBy = { userId, email, role }`.
+     - Initializes `execution.inspectionData.disposition = 'PENDING'`.
+     - Records immutable audit log `INSPECTION_STARTED` and emits domain event `Job.InspectionStarted` (`DomainEvents.JOB_INSPECTION_STARTED`).
    - **Concurrency Collision Protection (Single-Winner Guarantee):**
-     - Uses conditional atomic query matching `{ _id: id, 'workflowState.waitingForInspection': true, 'workflowState.inInspection': { $ne: true } }`.
-     - If two inspectors attempt to claim the same BO simultaneously, exactly one succeeds; the second receives `409 Conflict`, and the client immediately refreshes the queue.
-   - **Active Session Isolation:** The BO is immediately removed from the waiting-for-inspection queue and surfaces in the In-Inspection Active Workbench.
+     - Uses conditional atomic query matching `{ _id: id, status: { $nin: ['IN_INSPECTION', 'IN_PRODUCTION', 'WAITING_FOR_DISPATCH', 'DISPATCHED', 'COMPLETED', 'CANCELLED', 'INSPECTION'] }, 'workflowState.inInspection': { $ne: true }, claimedBy: { $in: [null, undefined] } }`.
+     - If two inspectors attempt to claim the same BO simultaneously, exactly one succeeds (`200 OK`); the second receives `409 Conflict`, preventing double-claiming races.
+   - **Active Session Exclusive Ownership Guard:**
+     - Once claimed, only the claiming inspector (or users with `QUALITY_LEAD`, `METALLURGIST`, `PLANT_MANAGER`, or `ADMIN` roles) can record test data (`POST /:id/inspection-data`), approve inspection (`POST /:id/approve-inspection`), or fail inspection (`POST /:id/fail-inspection`).
+     - Concurrent or competitor inspectors attempting to manipulate an active session receive `403 Forbidden` (`Inspection Ownership Violation`).
 
-3. **Post-Production Lock & Execution History Immutability:**
-   - Once a Batch Order enters inspection or subsequent downstream states (`waitingForInspection`, `inInspection`, `waitingForDispatch`, `dispatched`, `inspection`), all historical production execution data is permanently frozen.
-   - Mongoose document `pre('save')` hooks and repository interceptors reject any modifications to furnace charge actuals, stage progress telemetry, initial loaded piece counts, or recipe snapshots with `Post-Production Lock Violation`.
-   - Inspection operations are restricted strictly to the `inspectionData` sub-document, preserving absolute regulatory auditability (AMS 2750G / ISO 17025).
+3. **Inspection Lock Behavior & Protection Invariants:**
+   - **Queue Exclusion:** As soon as `inInspection = true`, the BO atomically disappears from the `waiting-for-inspection` queue (`GET /queue/waiting-for-inspection`) and appears exclusively in the active `in-inspection` queue.
+   - **Production Operation Lockout:** Production operations are strictly blocked while the BO is in inspection (`isJobInInspection`). Calls to `takeForProduction`, `recordRecipeStageProgress`, `recordFurnaceCharge`, and `saveProductionData` are rejected with `400 Bad Request` (`Inspection Lock Violation` or `Post-Production Lock Violation`).
+   - **Planning Operation Lockout:** Planning and job alteration endpoints are strictly locked: `updateJob`, `updateProcessDetails`, `assignOperator`, `removeOperator`, `assignFurnace`, `removeFurnace`, and `cancelJob` are rejected with `400 Bad Request` (`Inspection Lock Violation`).
+   - **Dispatch & Status Transition Lockout:** Generic status transitions via `/transition` are prohibited with `400 Bad Request`. Quality release must proceed strictly through `/approve-inspection` or `/fail-inspection`.
+   - **Recipe Protection Invariant:** The bound `recipeSnapshot` is permanently immutable. Any inspection payload attempting to substitute or alter recipe parameters (`recipeId`, `recipeCode`, `recipeSnapshot`) is rejected with `400 Bad Request` (`Recipe Protection Violation`).
+   - **Production Data Protection Invariant:** Historical production telemetry, furnace charge actuals, and loaded piece counts cannot be silently rewritten or modified during quality inspection. Payloads attempting to alter `furnaceCharge`, `stageProgress`, or loaded quantities are rejected with `400 Bad Request` (`Production Data Protection Violation`).
+   - **Defense-in-Depth Enforcement:** Enforced at Mongoose model `pre('save')` hooks, repository `updateById` interceptors, and service-layer validation boundaries.
+   - **Read-Only Fidelity:** Authorized read-only viewing (`GET /api/v1/production-jobs/:id`) remains fully accessible to all privileged roles.
 
 4. **The Six Mandatory Heat-Treatment Inspection Fields:**
    Before any Batch Order can be approved for dispatch release, the inspection engine strictly verifies and enforces all six mandatory heat-treatment parameters:
@@ -2724,10 +2752,10 @@ The platform includes 8 authoritative engineering specifications and operational
 7. **`PHASE_1_CERTIFICATION_REPORT.md`:** Verification findings for core platform stability, data boundary enforcement, and error resilience.
 8. **`FACTORY_ACCEPTANCE_REPORT.md`:** End-to-end metallurgical workflow verification and compliance sign-off.
 
-### 8.4 Automated Test Suite Matrix (63 Backend Specs + Frontend Suites)
+### 8.4 Automated Test Suite Matrix (65 Backend Specs + Frontend Suites)
 
 The codebase features comprehensive test suites validating layer boundaries, data integrity, and business logic:
-- **Backend Test Summary:** **63 Test Suites, 756 Tests Passed (0 Failures, 100% Pass Rate)**
+- **Backend Test Summary:** **65 Test Suites, 785 Tests Passed (0 Failures, 100% Pass Rate)**
 - **Frontend Test Summary:** **3 Test Suites, 50 Tests Passed (0 Failures, 100% Pass Rate)**
 
 #### 1. Backend Architecture Governance
@@ -2973,6 +3001,31 @@ The codebase features comprehensive test suites validating layer boundaries, dat
   - Invariant 18 (Rejection Domain Event Publication): Publishes `Job.InspectionFailed` with defect category and failure explanation on the event bus.
   - Invariant 19 (Multi-Point Hardness Traverse Validation): Validates discrete point identifiers, measured values, locations, and average hardness calculation.
   - Invariant 20 (Single Active Workflow Flag Invariant on Quarantine): Verifies $\sum \text{flag}_i = 1$ in the failure quarantine state (`inspection: true`).
+- `backend/tests/inspection-queue.spec.ts` (15 tests — Prompt 2: Inspection Queue, Authorization & Concurrency Control):
+  - Invariant 1 (Strict Role Authorization on Queue Query): Rejects non-QA users with `403 Forbidden` (`requireAnyPermission(QUALITY_INSPECTION_VIEW, QUALITY_INSPECTION_RECORD, QUALITY_INSPECTION_VERIFY)`).
+  - Invariant 2 (Permitted QA Access): Grants inspection queue access (`200 OK`) to authorized QA inspectors (`QC_INSPECTOR`, `METALLURGIST`).
+  - Invariant 3 (Empty Queue Handling): Returns empty array (`[]`) when no BOs are waiting for inspection.
+  - Invariant 4 (Authoritative 9-Dimension Payload): Returns BO Identity, PO Lineage, GRN Lineage, Part Specs, Recipe Authority (`isMasterRecipeProtected: true`), Quantities, Weight, Due Date, and Production Telemetry without master data duplication.
+  - Invariant 5 (Atomic Transition waitingForInspection -> inInspection): Claims waiting BO, establishes single active flag ($\sum \text{flag}_i = 1$), clears `waitingForInspection`.
+  - Invariant 6 (Concurrency Single-Winner Guarantee on Take): Simultaneous claims on same BO -> exactly one wins (`200 OK`), second receives `409 Conflict`.
+  - Invariant 7 (Already In-Inspection Rejection): Rejects duplicate take request on active inspection session with `409 Conflict`.
+  - Invariant 8 (Invalid State Take Rejection): Rejects taking completed, dispatched, or quarantined BOs with `400 Bad Request`.
+- `backend/tests/inspection-lock.spec.ts` (14 tests — Prompt 3: Implement the Inspection Lock and Exclusive Ownership):
+  - Invariant 1 (Atomic Transition & Workflow Exclusivity): Atomically mutates `waitingForInspection -> inInspection` with single active flag ($\sum \text{flag}_i = 1$), sets `claimedBy`, `claimedAt`, `claimedByEmail`, `claimedByRole`, `execution.inspectionData.inspectedBy`, and sets `disposition = 'PENDING'`.
+  - Invariant 2 (Exclusive Ownership & Race Protection): Concurrency collision protection; two inspectors claiming same BO -> first succeeds (`200 OK`), second receives `409 Conflict`.
+  - Invariant 3 (Atomic DB Update Race Guard): If database conditional update returns null due to race condition, returns `409 Conflict`.
+  - Invariant 4 (Active Session Exclusive Ownership Guard): Rejects competitor inspectors from recording test data, approving dispatch, or failing inspection with `403 Forbidden` (`Inspection Ownership Violation`).
+  - Invariant 5 (Authorized Lead/Admin Override): Permits `METALLURGIST` (QA Lead), `PLANT_MANAGER`, or `ADMIN` to override/proceed with inspection session.
+  - Invariant 6 (Queue Lock Semantics): Confirms in-inspection BO is completely excluded from `waiting-for-inspection` queue queries.
+  - Invariant 7 (Production Operation Lockout): Rejects `takeForProduction` with `400 Bad Request` (`Inspection Lock Violation`).
+  - Invariant 8 (Execution Telemetry Lockout): Rejects `recordRecipeStageProgress` and `recordFurnaceCharge` with `400 Bad Request` (`Post-Production Lock Violation`).
+  - Invariant 9 (Planning Operation Lockout): Rejects generic updates (`updateJob`), process details editing (`updateProcessDetails`), operator assignment/removal, furnace assignment/removal, and job cancellation with `400 Bad Request` (`Inspection Lock Violation`).
+  - Invariant 10 (Dispatch Operation Lockout): Rejects generic manual status transitions via `/transition` with `400 Bad Request`.
+  - Invariant 11 (Recipe Protection Invariant): Rejects inspection payloads attempting to substitute or alter `recipeSnapshot` with `400 Bad Request` (`Recipe Protection Violation`).
+  - Invariant 12 (Production Data Protection Invariant): Rejects inspection payloads attempting to rewrite production telemetry, piece counts, or charge actuals with `400 Bad Request` (`Production Data Protection Violation`).
+  - Invariant 13 (Authorized Inspection Editing Permitted): Permits claimed inspector to record valid heat-treatment inspection actuals (`200 OK`).
+  - Invariant 14 (Read-Only Viewing Fidelity): Asserts `GET /:id` returns 100% complete execution history and bound inspection session in read-only mode (`200 OK`).
+  - Audit & Events: Emits `Job.InspectionStarted` (`DomainEvents.JOB_INSPECTION_STARTED`) and records audit action `INSPECTION_STARTED`.
 
 #### 4. Domain Integration Suites (48 Core Specs in `backend/tests/`)
 - Production Execution & Lifecycle: `production-job.spec.ts`, `production-execution-workflow.spec.ts`, `production-scheduling.spec.ts`, `plan-to-job-handoff.spec.ts`.
