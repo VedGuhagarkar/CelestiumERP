@@ -641,13 +641,15 @@ export class ProductionJobService {
           inInspection: false,
           waitingForDispatch: false,
           dispatched: false,
+          inspection: false,
           workflowState: {
             waitingForProduction: true,
             inProduction: false,
             waitingForInspection: false,
             inInspection: false,
             waitingForDispatch: false,
-            dispatched: false
+            dispatched: false,
+            inspection: false
           },
           priority: dto.priority || 'NORMAL',
           recipeSnapshot,
@@ -2025,7 +2027,8 @@ export class ProductionJobService {
       waitingForInspection: false,
       inInspection: false,
       waitingForDispatch: false,
-      dispatched: false
+      dispatched: false,
+      inspection: false
     };
     (job as any).waitingForProduction = false;
     (job as any).inProduction = true;
@@ -2630,7 +2633,8 @@ export class ProductionJobService {
         waitingForInspection: false,
         inInspection: false,
         waitingForDispatch: false,
-        dispatched: false
+        dispatched: false,
+        inspection: false
       };
       (job as any).waitingForProduction = false;
       (job as any).inProduction = true;
@@ -3649,7 +3653,7 @@ export class ProductionJobService {
     const furnaceCharge = job.execution?.furnaceCharge;
     const chargeRecorded = !!(
       furnaceCharge?.chargeNumber ||
-      job.execution?.stageProgress?.length > 0
+      (job.execution?.stageProgress?.length ?? 0) > 0
     );
     if (furnaceCharge && (furnaceCharge.loadedWeightKg <= 0 || furnaceCharge.loadedPieceCount <= 0)) {
       missingRequirements.push('Furnace charge must have positive loaded weight and piece count.');
@@ -3792,7 +3796,7 @@ export class ProductionJobService {
       job.assignedOperatorId ||
       (job as any).operatorAssignment?.operatorId ||
       job.execution?.furnaceCharge?.operatorId ||
-      job.execution?.operatorId ||
+      (job.execution as any)?.operatorId ||
       actor.userId
     );
     if (!hasOperatorAssigned) {
@@ -4123,13 +4127,15 @@ export class ProductionJobService {
       inInspection: false,
       waitingForDispatch: false,
       dispatched: false,
+      inspection: false,
       workflowState: {
         waitingForProduction: true,
         inProduction: false,
         waitingForInspection: false,
         inInspection: false,
         waitingForDispatch: false,
-        dispatched: false
+        dispatched: false,
+        inspection: false
       },
       processDetails: this.buildDefaultProcessTable(),
       priority: (plan as any).demandRequirement?.priority || (plan as any).priority || 'NORMAL',
@@ -4499,7 +4505,7 @@ export class ProductionJobService {
         | 'COMPLETED_DEVIATION'
         | 'NEXT_IN_SEQUENCE'
         | 'LOCKED';
-      if (isExecuted) {
+      if (isExecuted && logged) {
         status =
           logged.isCompliant !== false && !logged.deviationWarning
             ? 'COMPLETED_COMPLIANT'
@@ -4621,6 +4627,742 @@ export class ProductionJobService {
     planId: string
   ): Promise<ProductionJobDocument[]> {
     return this.repo.findByPlanId(tenantId, planId);
+  }
+
+  // ==========================================
+  // AUTHORITATIVE QUALITY INSPECTION PHASE (Prompt 1)
+  // ==========================================
+
+  public async getInInspectionQueue(
+    tenantId: string,
+    filters: any = {}
+  ): Promise<ProductionJobDocument[]> {
+    return this.repo.findInInspectionQueue(tenantId, filters);
+  }
+
+  public async getWaitingForDispatchQueue(
+    tenantId: string,
+    filters: any = {}
+  ): Promise<ProductionJobDocument[]> {
+    return this.repo.findWaitingForDispatchQueue(tenantId, filters);
+  }
+
+  public async getInspectionFailedQueue(
+    tenantId: string,
+    filters: any = {}
+  ): Promise<ProductionJobDocument[]> {
+    return this.repo.findInspectionFailedQueue(tenantId, filters);
+  }
+
+  public async takeForInspection(
+    tenantId: string,
+    jobId: string,
+    actor: { userId: string; email?: string; role?: string },
+    notes?: string
+  ): Promise<ProductionJobDocument> {
+    const job = await this.repo.findById(tenantId, jobId);
+    if (!job) {
+      throw new NotFoundError(`Batch Order with identifier '${jobId}' not found.`);
+    }
+
+    const isWaitingForInspection = Boolean(
+      job.waitingForInspection ||
+      (job.workflowState as any)?.waitingForInspection ||
+      job.status === 'WAITING_FOR_INSPECTION' ||
+      job.status === 'QUALITY_CHECK'
+    );
+
+    if (!isWaitingForInspection) {
+      throw new BadRequestError(
+        `Cannot take Batch Order '${job.boNumber || job.jobNumber}' for inspection: BO is currently in state '${job.status}' and not in 'waiting for inspection'.`
+      );
+    }
+
+    const updateData = {
+      $set: {
+        status: 'IN_INSPECTION',
+        waitingForProduction: false,
+        inProduction: false,
+        waitingForInspection: false,
+        inInspection: true,
+        waitingForDispatch: false,
+        dispatched: false,
+        inspection: false,
+        'workflowState.waitingForProduction': false,
+        'workflowState.inProduction': false,
+        'workflowState.waitingForInspection': false,
+        'workflowState.inInspection': true,
+        'workflowState.waitingForDispatch': false,
+        'workflowState.dispatched': false,
+        'workflowState.inspection': false
+      },
+      $push: {
+        transitionHistory: {
+          fromStatus: job.status,
+          toStatus: 'IN_INSPECTION',
+          timestamp: new Date(),
+          performedBy: {
+            userId: actor.userId,
+            email: actor.email,
+            role: actor.role
+          },
+          reason: 'Claimed and taken for Quality Inspection by inspector',
+          notes: notes || null
+        }
+      }
+    };
+
+    const updated = await this.repo.atomicTakeForInspection(tenantId, jobId, updateData);
+    if (!updated) {
+      throw new ConflictError(
+        `Take Inspection Conflict: Batch Order '${job.boNumber || job.jobNumber}' was already claimed by another inspector or is no longer waiting for inspection.`
+      );
+    }
+
+    await auditService.record(tenantId, {
+      actorId: actor.userId,
+      action: 'TAKE_FOR_INSPECTION',
+      entityType: 'BatchOrder',
+      entityId: updated.id || (updated as any)._id?.toString(),
+      metadata: {
+        boNumber: updated.boNumber,
+        jobNumber: updated.jobNumber,
+        fromStatus: job.status,
+        toStatus: 'IN_INSPECTION'
+      }
+    });
+
+    return updated;
+  }
+
+  public async recordHeatTreatmentInspectionData(
+    tenantId: string,
+    jobId: string,
+    dto: any,
+    actor: { userId: string; email?: string; role?: string; name?: string }
+  ): Promise<ProductionJobDocument> {
+    const job = await this.repo.findById(tenantId, jobId);
+    if (!job) {
+      throw new NotFoundError(`Batch Order with identifier '${jobId}' not found.`);
+    }
+
+    const isInInspection = Boolean(
+      job.inInspection ||
+      (job.workflowState as any)?.inInspection ||
+      job.status === 'IN_INSPECTION'
+    );
+
+    if (!isInInspection) {
+      throw new BadRequestError(
+        `Cannot record inspection data: Batch Order '${job.boNumber || job.jobNumber}' is not in active inspection (current status: '${job.status}').`
+      );
+    }
+
+    // Furnace / Equipment resolution
+    const furnaceId =
+      dto.furnaceId ||
+      job.execution?.inspectionData?.furnaceId ||
+      job.equipmentAssignment?.furnaceId ||
+      job.execution?.furnaceCharge?.furnaceId ||
+      'FURNACE-01';
+
+    const furnaceCode =
+      dto.furnaceCode ||
+      job.execution?.inspectionData?.furnaceCode ||
+      job.equipmentAssignment?.furnaceCode ||
+      job.execution?.furnaceCharge?.furnaceCode ||
+      'FURNACE-01';
+
+    // Hardness Specification
+    const minHardness =
+      dto.minHardness ??
+      job.execution?.inspectionData?.minHardness ??
+      (job.specificationSnapshot?.surfaceHardness as any)?.min ??
+      (job.recipeSnapshot?.metallurgicalTargets as any)?.minHardness ??
+      null;
+
+    const maxHardness =
+      dto.maxHardness ??
+      job.execution?.inspectionData?.maxHardness ??
+      (job.specificationSnapshot?.surfaceHardness as any)?.max ??
+      (job.recipeSnapshot?.metallurgicalTargets as any)?.maxHardness ??
+      null;
+
+    const scale =
+      dto.scale ||
+      job.execution?.inspectionData?.scale ||
+      (job.specificationSnapshot?.surfaceHardness as any)?.scale ||
+      'HRC';
+
+    // Actual Hardness
+    const measuredAverage =
+      dto.measuredAverage ??
+      job.execution?.inspectionData?.measuredAverage ??
+      null;
+
+    const isHardnessCompliant =
+      dto.isHardnessCompliant !== undefined
+        ? dto.isHardnessCompliant
+        : minHardness !== null && maxHardness !== null && measuredAverage !== null
+        ? measuredAverage >= minHardness && measuredAverage <= maxHardness
+        : true;
+
+    // Case Depth
+    const effectiveCaseDepthMm =
+      dto.effectiveCaseDepthMm ??
+      job.execution?.inspectionData?.effectiveCaseDepthMm ??
+      null;
+
+    const targetCaseDepthMinMm =
+      dto.targetCaseDepthMinMm ??
+      job.execution?.inspectionData?.targetCaseDepthMinMm ??
+      (job.specificationSnapshot?.caseDepth as any)?.minMm ??
+      null;
+
+    const targetCaseDepthMaxMm =
+      dto.targetCaseDepthMaxMm ??
+      job.execution?.inspectionData?.targetCaseDepthMaxMm ??
+      (job.specificationSnapshot?.caseDepth as any)?.maxMm ??
+      null;
+
+    const isCaseDepthCompliant =
+      dto.isCaseDepthCompliant !== undefined
+        ? dto.isCaseDepthCompliant
+        : targetCaseDepthMinMm !== null && targetCaseDepthMaxMm !== null && effectiveCaseDepthMm !== null
+        ? effectiveCaseDepthMm >= targetCaseDepthMinMm && effectiveCaseDepthMm <= targetCaseDepthMaxMm
+        : true;
+
+    // Quantities
+    const quantityReceived =
+      dto.quantityReceived ??
+      job.execution?.inspectionData?.quantityReceived ??
+      job.quantity?.loadedQuantity ??
+      job.quantity?.targetQuantity ??
+      null;
+
+    const quantityDelivered =
+      dto.quantityDelivered ??
+      job.execution?.inspectionData?.quantityDelivered ??
+      quantityReceived;
+
+    if (quantityReceived !== null && quantityDelivered !== null && quantityDelivered > quantityReceived) {
+      throw new BadRequestError(
+        `Quantity delivered (${quantityDelivered}) cannot exceed quantity received (${quantityReceived}).`
+      );
+    }
+
+    const consolidatedData: any = {
+      furnaceId,
+      furnaceCode,
+      equipmentNotes: dto.equipmentNotes || job.execution?.inspectionData?.equipmentNotes || null,
+      minHardness: minHardness ?? 0,
+      maxHardness: maxHardness ?? 0,
+      scale,
+      specificationNotes: dto.specificationNotes || job.execution?.inspectionData?.specificationNotes || null,
+      measuredAverage: measuredAverage ?? 0,
+      testPoints: dto.testPoints || job.execution?.inspectionData?.testPoints || [],
+      isHardnessCompliant: Boolean(isHardnessCompliant),
+      targetCaseDepthMinMm,
+      targetCaseDepthMaxMm,
+      effectiveCaseDepthMm: effectiveCaseDepthMm ?? 0,
+      isCaseDepthCompliant: Boolean(isCaseDepthCompliant),
+      caseDepthMethod: dto.caseDepthMethod || job.execution?.inspectionData?.caseDepthMethod || 'MICROHARDNESS_TRAVERSE',
+      quantityReceived: quantityReceived ?? 0,
+      quantityDelivered: quantityDelivered ?? 0,
+      quantityRejected: dto.quantityRejected ?? (quantityReceived && quantityDelivered ? quantityReceived - quantityDelivered : 0),
+      inspectorId: actor.userId,
+      inspectorName: actor.name || actor.email || 'Inspector',
+      inspectedAt: new Date(),
+      disposition: dto.disposition || job.execution?.inspectionData?.disposition || 'PENDING',
+      defectCategory: dto.defectCategory || job.execution?.inspectionData?.defectCategory || null,
+      defectReason: dto.defectReason || job.execution?.inspectionData?.defectReason || null,
+      correctiveAction: dto.correctiveAction || job.execution?.inspectionData?.correctiveAction || null,
+      notes: dto.notes || job.execution?.inspectionData?.notes || null
+    };
+
+    if (!job.execution) {
+      job.execution = { stageProgress: [], downtimeLog: [], productionLogs: [] };
+    }
+    job.execution.inspectionData = consolidatedData;
+
+    await job.save();
+
+    return job;
+  }
+
+  public async approveInspectionForDispatch(
+    tenantId: string,
+    jobId: string,
+    dto: any,
+    actor: { userId: string; email?: string; role?: string; name?: string }
+  ): Promise<ProductionJobDocument> {
+    const job = await this.repo.findById(tenantId, jobId);
+    if (!job) {
+      throw new NotFoundError(`Batch Order with identifier '${jobId}' not found.`);
+    }
+
+    const isInInspection = Boolean(
+      job.inInspection ||
+      (job.workflowState as any)?.inInspection ||
+      job.status === 'IN_INSPECTION'
+    );
+
+    if (!isInInspection) {
+      throw new BadRequestError(
+        `Cannot approve for dispatch: Batch Order '${job.boNumber || job.jobNumber}' is not in active inspection (current status: '${job.status}').`
+      );
+    }
+
+    // Resolve and validate all SIX mandatory heat-treatment fields:
+    // 1. Furnace / Equipment
+    const furnaceId =
+      dto?.furnaceId ||
+      job.execution?.inspectionData?.furnaceId ||
+      job.equipmentAssignment?.furnaceId ||
+      job.execution?.furnaceCharge?.furnaceId;
+
+    const furnaceCode =
+      dto?.furnaceCode ||
+      job.execution?.inspectionData?.furnaceCode ||
+      job.equipmentAssignment?.furnaceCode ||
+      job.execution?.furnaceCharge?.furnaceCode;
+
+    // 2. Hardness Specification
+    const minHardness =
+      dto?.minHardness ??
+      job.execution?.inspectionData?.minHardness ??
+      (job.specificationSnapshot?.surfaceHardness as any)?.min ??
+      (job.recipeSnapshot?.metallurgicalTargets as any)?.minHardness;
+
+    const maxHardness =
+      dto?.maxHardness ??
+      job.execution?.inspectionData?.maxHardness ??
+      (job.specificationSnapshot?.surfaceHardness as any)?.max ??
+      (job.recipeSnapshot?.metallurgicalTargets as any)?.maxHardness;
+
+    const scale =
+      dto?.scale ||
+      job.execution?.inspectionData?.scale ||
+      (job.specificationSnapshot?.surfaceHardness as any)?.scale ||
+      'HRC';
+
+    // 3. Actual Hardness
+    const measuredAverage =
+      dto?.measuredAverage ??
+      job.execution?.inspectionData?.measuredAverage;
+
+    // 4. Case Depth
+    const effectiveCaseDepthMm =
+      dto?.effectiveCaseDepthMm ??
+      job.execution?.inspectionData?.effectiveCaseDepthMm;
+
+    // 5. Quantity Received
+    const quantityReceived =
+      dto?.quantityReceived ??
+      job.execution?.inspectionData?.quantityReceived ??
+      job.quantity?.loadedQuantity ??
+      job.quantity?.targetQuantity;
+
+    // 6. Quantity Delivered
+    const quantityDelivered =
+      dto?.quantityDelivered ??
+      job.execution?.inspectionData?.quantityDelivered ??
+      (dto?.quantityReceived ? dto.quantityReceived - (dto.quantityRejected || 0) : null) ??
+      (quantityReceived ? quantityReceived - (job.execution?.inspectionData?.quantityRejected || 0) : null);
+
+    // Strict validation of the SIX fields
+    const missingFields: string[] = [];
+    if (!furnaceId && !furnaceCode) missingFields.push('1. Furnace/Equipment');
+    if (minHardness === undefined || minHardness === null || maxHardness === undefined || maxHardness === null) {
+      missingFields.push('2. Hardness Specification (minHardness, maxHardness)');
+    }
+    if (measuredAverage === undefined || measuredAverage === null || measuredAverage <= 0) {
+      missingFields.push('3. Actual Hardness (measuredAverage)');
+    }
+    if (effectiveCaseDepthMm === undefined || effectiveCaseDepthMm === null || effectiveCaseDepthMm <= 0) {
+      missingFields.push('4. Case Depth (effectiveCaseDepthMm)');
+    }
+    if (quantityReceived === undefined || quantityReceived === null || quantityReceived <= 0) {
+      missingFields.push('5. Quantity Received');
+    }
+    if (quantityDelivered === undefined || quantityDelivered === null || quantityDelivered <= 0) {
+      missingFields.push('6. Quantity Delivered');
+    }
+
+    if (missingFields.length > 0) {
+      throw new BadRequestError(
+        `Inspection Approval Rejected: All six heat-treatment inspection fields are strictly required before Batch Order can leave Inspection:\n- ${missingFields.join('\n- ')}`
+      );
+    }
+
+    if (quantityDelivered > quantityReceived) {
+      throw new BadRequestError(
+        `Inspection Approval Rejected: Quantity delivered (${quantityDelivered}) cannot exceed quantity received (${quantityReceived}).`
+      );
+    }
+
+    const isHardnessCompliant =
+      dto?.isHardnessCompliant !== undefined
+        ? Boolean(dto.isHardnessCompliant)
+        : measuredAverage >= minHardness && measuredAverage <= maxHardness;
+
+    const targetCaseDepthMinMm =
+      dto?.targetCaseDepthMinMm ??
+      job.execution?.inspectionData?.targetCaseDepthMinMm ??
+      (job.specificationSnapshot?.caseDepth as any)?.minMm ??
+      null;
+
+    const targetCaseDepthMaxMm =
+      dto?.targetCaseDepthMaxMm ??
+      job.execution?.inspectionData?.targetCaseDepthMaxMm ??
+      (job.specificationSnapshot?.caseDepth as any)?.maxMm ??
+      null;
+
+    const isCaseDepthCompliant =
+      dto?.isCaseDepthCompliant !== undefined
+        ? Boolean(dto.isCaseDepthCompliant)
+        : targetCaseDepthMinMm !== null && targetCaseDepthMaxMm !== null
+        ? effectiveCaseDepthMm >= targetCaseDepthMinMm && effectiveCaseDepthMm <= targetCaseDepthMaxMm
+        : true;
+
+    const quantityRejected =
+      dto?.quantityRejected ??
+      job.execution?.inspectionData?.quantityRejected ??
+      (quantityReceived - quantityDelivered);
+
+    const consolidatedData: any = {
+      furnaceId: furnaceId || 'FURNACE-01',
+      furnaceCode: furnaceCode || 'FURNACE-01',
+      equipmentNotes: dto?.equipmentNotes || job.execution?.inspectionData?.equipmentNotes || null,
+      minHardness,
+      maxHardness,
+      scale,
+      specificationNotes: dto?.specificationNotes || job.execution?.inspectionData?.specificationNotes || null,
+      measuredAverage,
+      testPoints: dto?.testPoints || job.execution?.inspectionData?.testPoints || [],
+      isHardnessCompliant,
+      targetCaseDepthMinMm,
+      targetCaseDepthMaxMm,
+      effectiveCaseDepthMm,
+      isCaseDepthCompliant,
+      caseDepthMethod: dto?.caseDepthMethod || job.execution?.inspectionData?.caseDepthMethod || 'MICROHARDNESS_TRAVERSE',
+      quantityReceived,
+      quantityDelivered,
+      quantityRejected,
+      inspectorId: actor.userId,
+      inspectorName: actor.name || actor.email || 'Inspector',
+      inspectedAt: new Date(),
+      disposition: 'APPROVED',
+      notes: dto?.notes || job.execution?.inspectionData?.notes || null
+    };
+
+    const updateData = {
+      $set: {
+        status: 'WAITING_FOR_DISPATCH',
+        waitingForProduction: false,
+        inProduction: false,
+        waitingForInspection: false,
+        inInspection: false,
+        waitingForDispatch: true,
+        dispatched: false,
+        inspection: false,
+        'workflowState.waitingForProduction': false,
+        'workflowState.inProduction': false,
+        'workflowState.waitingForInspection': false,
+        'workflowState.inInspection': false,
+        'workflowState.waitingForDispatch': true,
+        'workflowState.dispatched': false,
+        'workflowState.inspection': false,
+        'execution.inspectionData': consolidatedData,
+        'quantity.completedQuantity': quantityDelivered,
+        'quantity.scrappedQuantity': quantityRejected
+      },
+      $push: {
+        transitionHistory: {
+          fromStatus: 'IN_INSPECTION',
+          toStatus: 'WAITING_FOR_DISPATCH',
+          timestamp: new Date(),
+          performedBy: {
+            userId: actor.userId,
+            email: actor.email,
+            role: actor.role
+          },
+          reason: 'Quality Inspection Approved: Conforming heat-treatment results. BO eligible for Dispatch Phase.',
+          notes: dto?.notes || null
+        }
+      }
+    };
+
+    const updated = await this.repo.atomicApproveForDispatch(tenantId, jobId, updateData);
+    if (!updated) {
+      throw new ConflictError(
+        `Approval Conflict: Batch Order '${job.boNumber || job.jobNumber}' was already moved or is no longer in inspection.`
+      );
+    }
+
+    await auditService.record(tenantId, {
+      actorId: actor.userId,
+      action: 'INSPECTION_APPROVED_FOR_DISPATCH',
+      entityType: 'BatchOrder',
+      entityId: updated.id || (updated as any)._id?.toString(),
+      metadata: {
+        boNumber: updated.boNumber,
+        jobNumber: updated.jobNumber,
+        quantityDelivered,
+        quantityRejected,
+        toStatus: 'WAITING_FOR_DISPATCH'
+      }
+    });
+
+    await this.eventBus.publish({
+      name: DomainEvents.JOB_INSPECTION_APPROVED,
+      tenantId,
+      occurredAt: new Date(),
+      actorId: actor.userId,
+      payload: {
+        jobId: updated.id || (updated as any)._id?.toString(),
+        boNumber: updated.boNumber,
+        jobNumber: updated.jobNumber,
+        quantityDelivered,
+        quantityRejected,
+        toStatus: 'WAITING_FOR_DISPATCH'
+      }
+    });
+
+    return updated;
+  }
+
+  public async failInspection(
+    tenantId: string,
+    jobId: string,
+    dto: any,
+    actor: { userId: string; email?: string; role?: string; name?: string }
+  ): Promise<ProductionJobDocument> {
+    const job = await this.repo.findById(tenantId, jobId);
+    if (!job) {
+      throw new NotFoundError(`Batch Order with identifier '${jobId}' not found.`);
+    }
+
+    const isInInspection = Boolean(
+      job.inInspection ||
+      (job.workflowState as any)?.inInspection ||
+      job.status === 'IN_INSPECTION'
+    );
+
+    if (!isInInspection) {
+      throw new BadRequestError(
+        `Cannot fail inspection: Batch Order '${job.boNumber || job.jobNumber}' is not in active inspection (current status: '${job.status}').`
+      );
+    }
+
+    if (!dto.defectCategory || !dto.defectReason) {
+      throw new BadRequestError('Defect category and defect reason are mandatory for failed inspection disposition.');
+    }
+
+    const consolidatedData: any = {
+      furnaceId: dto.furnaceId || job.execution?.inspectionData?.furnaceId || job.equipmentAssignment?.furnaceId || 'FURNACE-01',
+      furnaceCode: dto.furnaceCode || job.execution?.inspectionData?.furnaceCode || job.equipmentAssignment?.furnaceCode || 'FURNACE-01',
+      minHardness: dto.minHardness ?? job.execution?.inspectionData?.minHardness ?? 0,
+      maxHardness: dto.maxHardness ?? job.execution?.inspectionData?.maxHardness ?? 0,
+      scale: dto.scale || job.execution?.inspectionData?.scale || 'HRC',
+      measuredAverage: dto.measuredAverage ?? job.execution?.inspectionData?.measuredAverage ?? 0,
+      testPoints: dto.testPoints || job.execution?.inspectionData?.testPoints || [],
+      isHardnessCompliant: false,
+      effectiveCaseDepthMm: dto.effectiveCaseDepthMm ?? job.execution?.inspectionData?.effectiveCaseDepthMm ?? 0,
+      isCaseDepthCompliant: false,
+      quantityReceived: dto.quantityReceived ?? job.execution?.inspectionData?.quantityReceived ?? job.quantity?.loadedQuantity ?? 0,
+      quantityDelivered: 0,
+      quantityRejected: dto.quantityRejected ?? job.quantity?.loadedQuantity ?? 0,
+      inspectorId: actor.userId,
+      inspectorName: actor.name || actor.email || 'Inspector',
+      inspectedAt: new Date(),
+      disposition: 'REJECTED',
+      defectCategory: dto.defectCategory,
+      defectReason: dto.defectReason,
+      correctiveAction: dto.correctiveAction || null,
+      notes: dto.notes || null
+    };
+
+    const updateData = {
+      $set: {
+        status: 'INSPECTION',
+        waitingForProduction: false,
+        inProduction: false,
+        waitingForInspection: false,
+        inInspection: false,
+        waitingForDispatch: false,
+        dispatched: false,
+        inspection: true,
+        'workflowState.waitingForProduction': false,
+        'workflowState.inProduction': false,
+        'workflowState.waitingForInspection': false,
+        'workflowState.inInspection': false,
+        'workflowState.waitingForDispatch': false,
+        'workflowState.dispatched': false,
+        'workflowState.inspection': true,
+        'execution.inspectionData': consolidatedData,
+        'quantity.scrappedQuantity': consolidatedData.quantityRejected
+      },
+      $push: {
+        transitionHistory: {
+          fromStatus: 'IN_INSPECTION',
+          toStatus: 'INSPECTION',
+          timestamp: new Date(),
+          performedBy: {
+            userId: actor.userId,
+            email: actor.email,
+            role: actor.role
+          },
+          reason: `Quality Inspection Failed: [${dto.defectCategory}] ${dto.defectReason}`,
+          notes: dto.notes || null
+        }
+      }
+    };
+
+    const updated = await this.repo.atomicFailInspection(tenantId, jobId, updateData);
+    if (!updated) {
+      throw new ConflictError(
+        `Failure Conflict: Batch Order '${job.boNumber || job.jobNumber}' was already moved or is no longer in inspection.`
+      );
+    }
+
+    await auditService.record(tenantId, {
+      actorId: actor.userId,
+      action: 'INSPECTION_FAILED_QUARANTINED',
+      entityType: 'BatchOrder',
+      entityId: updated.id || (updated as any)._id?.toString(),
+      metadata: {
+        boNumber: updated.boNumber,
+        jobNumber: updated.jobNumber,
+        defectCategory: dto.defectCategory,
+        defectReason: dto.defectReason,
+        toStatus: 'INSPECTION'
+      }
+    });
+
+    await this.eventBus.publish({
+      name: DomainEvents.JOB_INSPECTION_FAILED,
+      tenantId,
+      occurredAt: new Date(),
+      actorId: actor.userId,
+      payload: {
+        jobId: updated.id || (updated as any)._id?.toString(),
+        boNumber: updated.boNumber,
+        jobNumber: updated.jobNumber,
+        defectCategory: dto.defectCategory,
+        defectReason: dto.defectReason,
+        toStatus: 'INSPECTION'
+      }
+    });
+
+    return updated;
+  }
+
+  public async getInspectionWorkbenchData(
+    tenantId: string,
+    jobId: string
+  ): Promise<any> {
+    const job = await this.repo.findById(tenantId, jobId);
+    if (!job) {
+      throw new NotFoundError(`Batch Order with identifier '${jobId}' not found.`);
+    }
+
+    // Lineage context
+    const headerContext = {
+      id: job.id || (job as any)._id?.toString(),
+      boNumber: job.boNumber || job.jobNumber,
+      jobNumber: job.jobNumber,
+      poId: job.poId || 'N/A',
+      poNumber: job.poNumber || 'N/A',
+      grnId: job.grnId || 'N/A',
+      grnNumber: job.grnNumber || 'N/A',
+      customer: {
+        customerId: job.customer?.customerId,
+        customerCode: job.customer?.customerCode || 'N/A',
+        customerName: job.customer?.customerName || 'N/A'
+      },
+      part: {
+        itemId: job.item?.itemId || 'N/A',
+        itemCode: job.item?.itemCode || 'N/A',
+        itemName: job.item?.itemName || 'N/A',
+        materialGrade: job.item?.materialGrade || 'N/A',
+        uom: job.item?.uom || 'PCS'
+      },
+      quantity: {
+        targetQuantity: job.quantity?.targetQuantity || 0,
+        loadedQuantity: job.quantity?.loadedQuantity || 0,
+        completedQuantity: job.quantity?.completedQuantity || 0,
+        scrappedQuantity: job.quantity?.scrappedQuantity || 0
+      },
+      equipment: {
+        furnaceId: job.equipmentAssignment?.furnaceId || job.execution?.furnaceCharge?.furnaceId || null,
+        furnaceCode: job.equipmentAssignment?.furnaceCode || job.execution?.furnaceCharge?.furnaceCode || null
+      }
+    };
+
+    // Recipe & Specification Requirements
+    const recipeRequirements = {
+      recipeId: job.recipeSnapshot?.recipeId,
+      recipeCode: job.recipeSnapshot?.recipeCode,
+      recipeName: job.recipeSnapshot?.name,
+      processFamily: job.recipeSnapshot?.processFamily,
+      metallurgicalTargets: job.recipeSnapshot?.metallurgicalTargets || {},
+      surfaceHardnessTarget: (job.specificationSnapshot?.surfaceHardness as any) || {
+        min: (job.recipeSnapshot?.metallurgicalTargets as any)?.minHardness,
+        max: (job.recipeSnapshot?.metallurgicalTargets as any)?.maxHardness,
+        scale: 'HRC'
+      },
+      caseDepthTarget: (job.specificationSnapshot?.caseDepth as any) || {
+        minMm: (job.recipeSnapshot?.metallurgicalTargets as any)?.caseDepthMinMm,
+        maxMm: (job.recipeSnapshot?.metallurgicalTargets as any)?.caseDepthMaxMm
+      }
+    };
+
+    // Existing Execution summary from production
+    const executionSummary = {
+      chargeNumber: job.execution?.furnaceCharge?.chargeNumber || 'N/A',
+      loadedPieces: job.execution?.furnaceCharge?.loadedPieceCount || job.quantity?.loadedQuantity || 0,
+      totalStagesExecuted: job.execution?.stageProgress?.length || 0,
+      furnaceUsed: job.execution?.furnaceCharge?.furnaceCode || job.equipmentAssignment?.furnaceCode || 'N/A'
+    };
+
+    // Current Inspection Data (the six fields)
+    const inspectionData = job.execution?.inspectionData || {
+      furnaceId: headerContext.equipment.furnaceId || '',
+      furnaceCode: headerContext.equipment.furnaceCode || '',
+      equipmentNotes: '',
+      minHardness: recipeRequirements.surfaceHardnessTarget?.min || 58,
+      maxHardness: recipeRequirements.surfaceHardnessTarget?.max || 62,
+      scale: recipeRequirements.surfaceHardnessTarget?.scale || 'HRC',
+      specificationNotes: '',
+      measuredAverage: 0,
+      testPoints: [],
+      isHardnessCompliant: false,
+      targetCaseDepthMinMm: recipeRequirements.caseDepthTarget?.minMm || 0.8,
+      targetCaseDepthMaxMm: recipeRequirements.caseDepthTarget?.maxMm || 1.2,
+      effectiveCaseDepthMm: 0,
+      isCaseDepthCompliant: false,
+      caseDepthMethod: 'MICROHARDNESS_TRAVERSE',
+      quantityReceived: headerContext.quantity.loadedQuantity || headerContext.quantity.targetQuantity || 0,
+      quantityDelivered: headerContext.quantity.loadedQuantity || headerContext.quantity.targetQuantity || 0,
+      quantityRejected: 0,
+      disposition: 'PENDING',
+      notes: ''
+    };
+
+    return {
+      headerContext,
+      recipeRequirements,
+      executionSummary,
+      inspectionData,
+      workflowState: {
+        waitingForInspection: Boolean(job.waitingForInspection || (job.workflowState as any)?.waitingForInspection),
+        inInspection: Boolean(job.inInspection || (job.workflowState as any)?.inInspection),
+        waitingForDispatch: Boolean(job.waitingForDispatch || (job.workflowState as any)?.waitingForDispatch),
+        inspection: Boolean(job.inspection || (job.workflowState as any)?.inspection),
+        status: job.status
+      }
+    };
   }
 }
 

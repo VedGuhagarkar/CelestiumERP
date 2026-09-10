@@ -734,6 +734,145 @@ export class ProductionJobController extends BaseController {
       next(error);
     }
   };
+
+  public getInInspectionQueue = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const jobs = await this.service.getInInspectionQueue(tenantId, req.query);
+      this.sendSuccess(res, jobs, 'In-inspection queue retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public getWaitingForDispatchQueue = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const jobs = await this.service.getWaitingForDispatchQueue(tenantId, req.query);
+      this.sendSuccess(res, jobs, 'Waiting for dispatch queue retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public getInspectionFailedQueue = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const jobs = await this.service.getInspectionFailedQueue(tenantId, req.query);
+      this.sendSuccess(res, jobs, 'Inspection failed queue retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public takeForInspection = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const user = this.getUser(req);
+      const job = await this.service.takeForInspection(
+        tenantId,
+        req.params.id as string,
+        { userId: user.userId, email: user.email, role: user.roles?.[0] },
+        req.body?.notes
+      );
+      this.sendSuccess(res, job, 'Batch Order taken for inspection successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public recordHeatTreatmentInspectionData = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const user = this.getUser(req);
+      const job = await this.service.recordHeatTreatmentInspectionData(
+        tenantId,
+        req.params.id as string,
+        req.body,
+        { userId: user.userId, email: user.email, role: user.roles?.[0], name: (user as any).name }
+      );
+      this.sendSuccess(res, job, 'Heat treatment inspection data recorded successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public approveInspectionForDispatch = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const user = this.getUser(req);
+      const job = await this.service.approveInspectionForDispatch(
+        tenantId,
+        req.params.id as string,
+        req.body,
+        { userId: user.userId, email: user.email, role: user.roles?.[0], name: (user as any).name }
+      );
+      this.sendSuccess(res, job, 'Batch Order approved for dispatch successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public failInspection = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const user = this.getUser(req);
+      const job = await this.service.failInspection(
+        tenantId,
+        req.params.id as string,
+        req.body,
+        { userId: user.userId, email: user.email, role: user.roles?.[0], name: (user as any).name }
+      );
+      this.sendSuccess(res, job, 'Batch Order inspection failed and quarantined successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public getInspectionWorkbenchData = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const data = await this.service.getInspectionWorkbenchData(
+        tenantId,
+        req.params.id as string
+      );
+      this.sendSuccess(res, data, 'Inspection workbench data retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
 }
 
 export const productionJobController = new ProductionJobController();

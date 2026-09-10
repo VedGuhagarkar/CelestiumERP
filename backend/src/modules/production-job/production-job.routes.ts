@@ -32,7 +32,11 @@ import {
   completeJobExecutionSchema,
   transitionToStorageSchema,
   queryJobsSchema,
-  getJobByIdSchema
+  getJobByIdSchema,
+  takeForInspectionSchema,
+  recordHeatTreatmentInspectionSchema,
+  approveInspectionForDispatchSchema,
+  failInspectionSchema
 } from './production-job.validator.js';
 
 export const productionJobRouter = Router();
@@ -178,9 +182,7 @@ productionJobRouter.get(
 productionJobRouter.post(
   [
     '/:id/approve-for-inspection',
-    '/:id/approve-inspection',
-    '/batch-orders/:id/approve-for-inspection',
-    '/batch-orders/:id/approve-inspection'
+    '/batch-orders/:id/approve-for-inspection'
   ],
   authenticateJwt,
   requireAnyPermission(
@@ -191,6 +193,146 @@ productionJobRouter.post(
   ),
   validateRequest(approveForInspectionSchema),
   asyncHandler(productionJobController.approveForInspection)
+);
+
+// --- Authoritative Revised Quality Inspection Phase Endpoints (Prompt 1) ---
+
+// 0p. Get Batch Orders In Inspection (active inspection queue)
+productionJobRouter.get(
+  ['/in-inspection', '/queue/in-inspection'],
+  authenticateJwt,
+  requireAnyPermission(
+    PERMISSIONS.QUALITY_INSPECTION_VIEW,
+    PERMISSIONS.PRODUCTION_JOB_VIEW,
+    PERMISSIONS.BATCH_ORDER_VIEW
+  ),
+  asyncHandler(productionJobController.getInInspectionQueue)
+);
+
+// 0q. Get Batch Orders Waiting for Dispatch (conforming inspection completed queue)
+productionJobRouter.get(
+  ['/waiting-for-dispatch', '/queue/waiting-for-dispatch'],
+  authenticateJwt,
+  requireAnyPermission(
+    PERMISSIONS.QUALITY_INSPECTION_VIEW,
+    PERMISSIONS.DISPATCH_DELIVERY_VIEW,
+    PERMISSIONS.PRODUCTION_JOB_VIEW,
+    PERMISSIONS.BATCH_ORDER_VIEW
+  ),
+  asyncHandler(productionJobController.getWaitingForDispatchQueue)
+);
+
+// 0r. Get Batch Orders Inspection Failed (quarantined / rejected queue)
+productionJobRouter.get(
+  ['/inspection-failed', '/queue/inspection-failed'],
+  authenticateJwt,
+  requireAnyPermission(
+    PERMISSIONS.QUALITY_INSPECTION_VIEW,
+    PERMISSIONS.QUALITY_DISPOSITION_MANAGE
+  ),
+  asyncHandler(productionJobController.getInspectionFailedQueue)
+);
+
+// 0s. Take Batch Order for Quality Inspection (waiting for inspection -> in inspection atomic transition)
+productionJobRouter.post(
+  [
+    '/:id/take-inspection',
+    '/:id/take-for-inspection',
+    '/batch-orders/:id/take-inspection',
+    '/batch-orders/:id/take-for-inspection'
+  ],
+  authenticateJwt,
+  requireAnyPermission(
+    PERMISSIONS.QUALITY_INSPECTION_RECORD,
+    PERMISSIONS.QUALITY_INSPECTION_VERIFY
+  ),
+  validateRequest(takeForInspectionSchema),
+  asyncHandler(productionJobController.takeForInspection)
+);
+
+// 0t. Record Heat-Treatment Inspection Data for In-Inspection Batch Order
+productionJobRouter.post(
+  [
+    '/:id/record-inspection',
+    '/:id/inspection-data',
+    '/batch-orders/:id/record-inspection',
+    '/batch-orders/:id/inspection-data'
+  ],
+  authenticateJwt,
+  requireAnyPermission(
+    PERMISSIONS.QUALITY_INSPECTION_RECORD,
+    PERMISSIONS.QUALITY_INSPECTION_VERIFY
+  ),
+  validateRequest(recordHeatTreatmentInspectionSchema),
+  asyncHandler(productionJobController.recordHeatTreatmentInspectionData)
+);
+productionJobRouter.put(
+  [
+    '/:id/record-inspection',
+    '/:id/inspection-data',
+    '/batch-orders/:id/record-inspection',
+    '/batch-orders/:id/inspection-data'
+  ],
+  authenticateJwt,
+  requireAnyPermission(
+    PERMISSIONS.QUALITY_INSPECTION_RECORD,
+    PERMISSIONS.QUALITY_INSPECTION_VERIFY
+  ),
+  validateRequest(recordHeatTreatmentInspectionSchema),
+  asyncHandler(productionJobController.recordHeatTreatmentInspectionData)
+);
+
+// 0u. Approve Inspection for Dispatch (in inspection -> waiting for dispatch atomic transition)
+productionJobRouter.post(
+  [
+    '/:id/approve-dispatch',
+    '/:id/approve-for-dispatch',
+    '/:id/approve-inspection',
+    '/:id/approve-for-inspection',
+    '/batch-orders/:id/approve-dispatch',
+    '/batch-orders/:id/approve-for-dispatch',
+    '/batch-orders/:id/approve-inspection',
+    '/batch-orders/:id/approve-for-inspection'
+  ],
+  authenticateJwt,
+  requireAnyPermission(
+    PERMISSIONS.QUALITY_INSPECTION_RECORD,
+    PERMISSIONS.QUALITY_INSPECTION_VERIFY,
+    PERMISSIONS.QUALITY_DISPOSITION_MANAGE
+  ),
+  validateRequest(approveInspectionForDispatchSchema),
+  asyncHandler(productionJobController.approveInspectionForDispatch)
+);
+
+// 0v. Fail Inspection (in inspection -> inspection authoritative failure / quarantine state)
+productionJobRouter.post(
+  [
+    '/:id/fail-inspection',
+    '/batch-orders/:id/fail-inspection'
+  ],
+  authenticateJwt,
+  requireAnyPermission(
+    PERMISSIONS.QUALITY_INSPECTION_RECORD,
+    PERMISSIONS.QUALITY_INSPECTION_VERIFY,
+    PERMISSIONS.QUALITY_DISPOSITION_MANAGE
+  ),
+  validateRequest(failInspectionSchema),
+  asyncHandler(productionJobController.failInspection)
+);
+
+// 0w. Get Inspection Workbench Data (lineage, recipe requirements, execution summary, inspection data)
+productionJobRouter.get(
+  [
+    '/:id/inspection-workbench',
+    '/batch-orders/:id/inspection-workbench'
+  ],
+  authenticateJwt,
+  requireAnyPermission(
+    PERMISSIONS.QUALITY_INSPECTION_VIEW,
+    PERMISSIONS.PRODUCTION_JOB_VIEW,
+    PERMISSIONS.BATCH_ORDER_VIEW
+  ),
+  asyncHandler(productionJobController.getInspectionWorkbenchData)
 );
 
 // --- Authoritative Planning Phase & Batch Order Endpoints ---

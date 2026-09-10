@@ -11,6 +11,9 @@ export type JobStatus =
   | 'WAITING_FOR_PRODUCTION'
   | 'IN_PRODUCTION'
   | 'WAITING_FOR_INSPECTION'
+  | 'IN_INSPECTION'
+  | 'WAITING_FOR_DISPATCH'
+  | 'INSPECTION'
   | 'DRAFT'
   | 'PENDING_REVIEW'
   | 'APPROVED'
@@ -78,7 +81,10 @@ export const PRIORITY_WEIGHTS: Record<JobPriority, number> = {
 export const ALLOWED_STATUS_TRANSITIONS: Record<JobStatus, JobStatus[]> = {
   WAITING_FOR_PRODUCTION: ['IN_PRODUCTION', 'IN_PROGRESS', 'SCHEDULED', 'CANCELLED'],
   IN_PRODUCTION: ['WAITING_FOR_INSPECTION', 'PAUSED', 'QUALITY_CHECK', 'IN_PROGRESS', 'CANCELLED'],
-  WAITING_FOR_INSPECTION: ['QUALITY_CHECK'],
+  WAITING_FOR_INSPECTION: ['IN_INSPECTION', 'QUALITY_CHECK', 'CANCELLED'],
+  IN_INSPECTION: ['WAITING_FOR_DISPATCH', 'INSPECTION', 'CANCELLED'],
+  WAITING_FOR_DISPATCH: ['DISPATCHED', 'READY_FOR_DISPATCH', 'CANCELLED'],
+  INSPECTION: ['CANCELLED'],
   DRAFT: ['PENDING_REVIEW', 'CANCELLED'],
   PENDING_REVIEW: ['APPROVED', 'DRAFT', 'CANCELLED'],
   APPROVED: ['SCHEDULED', 'IN_PROGRESS', 'IN_PRODUCTION', 'CANCELLED'],
@@ -177,6 +183,13 @@ export interface IFurnaceCharge {
   chargeNumber: string;
   loadedWeightKg: number;
   loadedPieceCount: number;
+  loadedPieces?: number;
+  furnaceId?: string | null;
+  furnaceCode?: string | null;
+  operatorId?: string | null;
+  shift?: string | null;
+  notes?: string | null;
+  atmosphereType?: string | null;
   fixtureId?: string | null;
   initialFurnaceTempC: number;
   initialAtmosphereLevel?: number | null;
@@ -216,6 +229,7 @@ export interface IJobStageProgress {
     mediumTemperatureC?: number;
     quenchDurationSeconds?: number;
     agitationSpeedPercent?: number;
+    mediaInitialTempC?: number;
   } | null;
   atmosphereLevel?: string | null;
   atmosphereDetails?: {
@@ -224,13 +238,19 @@ export interface IJobStageProgress {
     vacuumPressureMbar?: number;
   } | null;
   operatorNotes?: string | null;
-  recordedBy: {
+  notes?: string | null;
+  loggedAt?: Date;
+  loggedBy?: {
     userId: string;
     email?: string;
     role?: string;
   };
-  timestamp: Date;
-  notes?: string | null;
+  recordedBy?: {
+    userId: string;
+    email?: string;
+    role?: string;
+  };
+  timestamp?: Date;
 }
 
 export interface IJobDowntimeLog {
@@ -286,6 +306,78 @@ export interface IJobStoragePlacement {
   notes?: string | null;
 }
 
+export interface IHardnessTestPoint {
+  pointIdentifier: string;
+  location?: 'SURFACE' | 'CORE' | 'CASE' | 'TRANSITION';
+  measuredValue: number;
+  scale: 'HRC' | 'HRB' | 'HV' | 'HBW';
+  passed: boolean;
+}
+
+export interface IHeatTreatmentInspectionData {
+  furnaceId: string;
+  furnaceCode: string;
+  equipmentNotes?: string | null;
+  minHardness?: number;
+  maxHardness?: number;
+  scale?: string;
+  specificationNotes?: string | null;
+  hardnessSpecification?: {
+    minHardness: number;
+    maxHardness: number;
+    scale: 'HRC' | 'HRB' | 'HV' | 'HBW' | string;
+  };
+  measuredAverage?: number;
+  testPoints?: any[];
+  isHardnessCompliant?: boolean;
+  actualHardness?: {
+    measuredAverage: number;
+    testPoints?: IHardnessTestPoint[];
+    scale: 'HRC' | 'HRB' | 'HV' | 'HBW' | string;
+    isCompliant: boolean;
+  };
+  targetCaseDepthMinMm?: number | null;
+  targetCaseDepthMaxMm?: number | null;
+  effectiveCaseDepthMm?: number;
+  isCaseDepthCompliant?: boolean;
+  caseDepthMethod?: string | null;
+  caseDepth?: {
+    effectiveCaseDepthMm: number;
+    targetMinMm?: number;
+    targetMaxMm?: number;
+    isCompliant: boolean;
+  };
+  quantityReceived: number;
+  quantityDelivered: number;
+  quantityRejected?: number;
+  visualInspection?: {
+    surfaceOxidationAcceptable: boolean;
+    quenchCracksPresent: boolean;
+    dimensionsWithinTolerance: boolean;
+    passed: boolean;
+  };
+  microstructure?: {
+    observedStructure: string;
+    grainSizeAstm?: number;
+    passed: boolean;
+  };
+  inspectorId?: string;
+  inspectorName?: string;
+  inspectedAt?: Date;
+  inspectedBy?: {
+    userId: string;
+    email?: string;
+    role?: string;
+  };
+  inspectorNotes?: string | null;
+  disposition?: 'CONFORMING' | 'NON_CONFORMING' | 'APPROVED' | 'REJECTED' | 'PENDING' | string;
+  failureReason?: string | null;
+  defectCategory?: string | null;
+  defectReason?: string | null;
+  correctiveAction?: string | null;
+  notes?: string | null;
+}
+
 export interface IJobExecution {
   furnaceCharge?: IFurnaceCharge | null;
   cycleTimer?: IJobCycleTimer | null;
@@ -294,6 +386,7 @@ export interface IJobExecution {
   productionLogs: IJobProductionLog[];
   qualityHandoff?: IJobQualityHandoff | null;
   storagePlacement?: IJobStoragePlacement | null;
+  inspectionData?: IHeatTreatmentInspectionData | null;
 }
 
 export interface IBatchOrderGenealogy {
@@ -341,6 +434,8 @@ export interface IBatchOrderWorkflowState {
   inInspection: boolean;
   waitingForDispatch: boolean;
   dispatched: boolean;
+  inspection: boolean;
+  completed?: boolean;
 }
 
 export interface IProductionJob {
@@ -382,6 +477,7 @@ export interface IProductionJob {
   inInspection?: boolean;
   waitingForDispatch?: boolean;
   dispatched?: boolean;
+  inspection?: boolean;
   workflowState?: IBatchOrderWorkflowState;
   priority: JobPriority;
   recipeSnapshot: IJobRecipeSnapshot;
@@ -389,6 +485,10 @@ export interface IProductionJob {
   materialAllocations: IJobMaterialAllocation[];
   equipmentAssignment: IJobEquipmentAssignment;
   operatorAssignment: IJobOperatorAssignment;
+  assignedFurnaceId?: string | null;
+  assignedFurnaceCode?: string | null;
+  assignedOperatorId?: string | null;
+  furnaceId?: string | null;
   timeline: {
     plannedStartDate: Date;
     targetCompletionDate: Date;

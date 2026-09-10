@@ -1,800 +1,1497 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  ShieldCheck,
-  AlertTriangle,
-  FileCheck,
-  CheckCircle2,
-  RefreshCw,
+  Clock,
   Microscope,
-  FileText,
-  ChevronRight,
+  Truck,
+  AlertTriangle,
+  ShieldCheck,
+  CheckCircle2,
+  XCircle,
+  Search,
+  RefreshCw,
+  Flame,
+  Save,
+  Plus,
+  Trash2,
   Layers,
-  Award,
-  Clock
+  FileCheck,
+  Award
 } from 'lucide-react';
 import { PageContainer } from '../layouts/PageContainer.js';
 import { PageHeader } from '../design-system/navigation/PageHeader.js';
+import { AppTabs, TabItem } from '../design-system/navigation/AppTabs.js';
 import { AppCard } from '../design-system/surfaces/AppCard.js';
 import { AppButton } from '../design-system/buttons/AppButton.js';
-import { ActionButton } from '../design-system/buttons/ActionButton.js';
 import { AppDialog } from '../design-system/feedback/AppDialog.js';
-import { AppDrawer } from '../design-system/surfaces/AppDrawer.js';
 import { AppInput } from '../design-system/forms/AppInput.js';
 import { AppSelect } from '../design-system/forms/AppSelect.js';
 import { AppAlert } from '../design-system/feedback/AppAlert.js';
 import { StatusBadge } from '../design-system/feedback/StatusBadge.js';
+import { EmptyState } from '../design-system/states/EmptyState.js';
 import { env } from '../config/env.config.js';
 import { authenticatedFetch } from '../utils/apiAuth.js';
 
-interface QualityInspection {
+interface HardnessTestPoint {
+  pointIdentifier: string;
+  location: string;
+  measuredValue: number;
+  scale: string;
+  passed: boolean;
+}
+
+interface BatchOrderInspection {
   _id?: string;
   id?: string;
-  inspectionNumber: string;
   jobNumber: string;
-  status: 'PENDING_SAMPLE' | 'IN_TESTING' | 'APPROVED' | 'REJECTED' | 'DISPOSITIONED';
-  disposition: 'CONFORMING' | 'NON_CONFORMING' | 'REWORK_REQUIRED' | 'CONCESSION_USE';
-  customer: {
+  boNumber?: string;
+  poNumber?: string;
+  grnNumber?: string;
+  status: string;
+  waitingForProduction?: boolean;
+  inProduction?: boolean;
+  waitingForInspection?: boolean;
+  inInspection?: boolean;
+  waitingForDispatch?: boolean;
+  dispatched?: boolean;
+  inspection?: boolean;
+  customer?: {
     customerCode: string;
     customerName: string;
   };
-  item: {
+  item?: {
     itemCode: string;
     itemName: string;
     materialGrade: string;
+    uom?: string;
   };
-  inspectionQuantity: {
-    sampleSize: number;
-    totalLotQuantity: number;
-    unitOfMeasure: string;
+  quantity?: {
+    targetQuantity: number;
+    loadedQuantity: number;
+    completedQuantity: number;
+    scrappedQuantity: number;
   };
-  testResults?: {
-    hardnessTests?: {
-      pointIdentifier: string;
-      location: string;
-      measuredValue: number;
-      scale: string;
-      targetMin?: number;
-      targetMax?: number;
-      passed: boolean;
-    }[];
-    caseDepth?: {
-      effectiveCaseDepthMm: number;
-      targetMinMm: number;
-      targetMaxMm: number;
-      passed: boolean;
+  recipeSnapshot?: {
+    recipeCode: string;
+    name: string;
+    processFamily?: string;
+    stages?: Array<{
+      sequence: number;
+      stageName: string;
+      targetTemperatureC: number;
+      soakTimeMinutes: number;
+    }>;
+  };
+  equipmentAssignment?: {
+    furnaceCode: string;
+    furnaceId?: string;
+    locationBay?: string;
+  };
+  execution?: {
+    furnaceCharge?: {
+      furnaceId?: string;
+      furnaceCode?: string;
+      loadedWeightKg?: number;
     };
-    microstructure?: {
-      observedStructure: string;
-      passed: boolean;
+    inspectionData?: {
+      furnaceId?: string;
+      furnaceCode?: string;
+      hardnessSpecification?: {
+        minHardness?: number;
+        maxHardness?: number;
+        scale?: string;
+        targetLocation?: string;
+      };
+      actualHardness?: {
+        measuredAverage?: number;
+        testPoints?: HardnessTestPoint[];
+        isHardnessCompliant?: boolean;
+      };
+      caseDepth?: {
+        effectiveCaseDepthMm?: number;
+        caseDepthMethod?: string;
+        isCaseDepthCompliant?: boolean;
+      };
+      quantityReceived?: number;
+      quantityDelivered?: number;
+      quantityRejected?: number;
+      inspectedBy?: {
+        userId?: string;
+        email?: string;
+        role?: string;
+      };
+      inspectedAt?: string;
+      microstructureNotes?: string;
+      remarks?: string;
+      defectCategory?: string;
+      defectReason?: string;
+      [key: string]: any;
     };
-    overallTestPassed?: boolean;
+    qualityHandoff?: {
+      completedQuantity?: number;
+      scrappedQuantity?: number;
+      handoffNotes?: string;
+    };
   };
-  approvedBy?: {
-    email: string;
-    role: string;
-    remarks?: string;
+  timeline?: {
+    actualEndDate?: string;
+    targetCompletionDate?: string;
   };
 }
-
-interface NCRReport {
-  _id?: string;
-  id?: string;
-  ncrNumber: string;
-  jobNumber: string;
-  status: 'OPEN' | 'CONTAINED' | 'DISPOSITIONED' | 'CAPA_PENDING' | 'CLOSED';
-  customer: {
-    customerCode: string;
-    customerName: string;
-  };
-  defectType: string;
-  defectSeverity: 'MINOR' | 'MAJOR' | 'CRITICAL';
-  defectDescription: string;
-  affectedQuantity: {
-    totalDefectivePieces: number;
-    quarantinedBay: string;
-  };
-}
-
-const DEFAULT_INSPECTIONS: QualityInspection[] = [
-  {
-    id: 'qc_01',
-    inspectionNumber: 'QC-202608-0001',
-    jobNumber: 'JOB-202608-0008',
-    status: 'APPROVED',
-    disposition: 'CONFORMING',
-    customer: { customerCode: 'CUST-APEX-03', customerName: 'Apex Automotive Drivetrains' },
-    item: { itemCode: 'PART-GEAR-8620', itemName: 'Case-Hardened Pinion Gears', materialGrade: 'AISI 8620' },
-    inspectionQuantity: { sampleSize: 10, totalLotQuantity: 300, unitOfMeasure: 'PCS' },
-    testResults: {
-      hardnessTests: [
-        { pointIdentifier: 'P1-SURFACE', location: 'SURFACE', measuredValue: 61.2, scale: 'HRC', targetMin: 60, targetMax: 64, passed: true },
-        { pointIdentifier: 'P2-SURFACE', location: 'SURFACE', measuredValue: 60.8, scale: 'HRC', targetMin: 60, targetMax: 64, passed: true },
-        { pointIdentifier: 'P3-CORE', location: 'CORE', measuredValue: 36.5, scale: 'HRC', passed: true }
-      ],
-      caseDepth: { effectiveCaseDepthMm: 1.05, targetMinMm: 0.8, targetMaxMm: 1.2, passed: true },
-      microstructure: { observedStructure: 'Tempered martensite matrix with uniform fine carbides. Pass CQI-9.', passed: true },
-      overallTestPassed: true
-    },
-    approvedBy: { email: 'qc@astralis.internal', role: 'QUALITY_MANAGER', remarks: 'Meets automotive CQI-9 criteria.' }
-  },
-  {
-    id: 'qc_02',
-    inspectionNumber: 'QC-202608-0002',
-    jobNumber: 'JOB-202608-0009',
-    status: 'APPROVED',
-    disposition: 'CONFORMING',
-    customer: { customerCode: 'CUST-AERO-01', customerName: 'AeroDynamics Propulsion Inc.' },
-    item: { itemCode: 'PART-SHAFT-4340', itemName: 'Turbine Rotor Shafts 4340', materialGrade: 'AISI 4340' },
-    inspectionQuantity: { sampleSize: 8, totalLotQuantity: 120, unitOfMeasure: 'PCS' },
-    testResults: {
-      hardnessTests: [
-        { pointIdentifier: 'P1-SURFACE', location: 'SURFACE', measuredValue: 59.8, scale: 'HRC', targetMin: 58, targetMax: 62, passed: true },
-        { pointIdentifier: 'P2-SURFACE', location: 'SURFACE', measuredValue: 60.1, scale: 'HRC', targetMin: 58, targetMax: 62, passed: true }
-      ],
-      microstructure: { observedStructure: '100% fine tempered martensite structure. Pass AMS 2759/1.', passed: true },
-      overallTestPassed: true
-    },
-    approvedBy: { email: 'lab@astralis.internal', role: 'METALLURGICAL_LAB_TECH', remarks: 'Aerospace hardness & structure approved.' }
-  }
-];
-
-const DEFAULT_NCRS: NCRReport[] = [
-  {
-    id: 'ncr_01',
-    ncrNumber: 'NCR-202608-0001',
-    jobNumber: 'JOB-202608-0011',
-    status: 'OPEN',
-    customer: { customerCode: 'CUST-TITAN-02', customerName: 'Titan Precision Defense LLC' },
-    defectType: 'EXCESSIVE_DECARBURIZATION',
-    defectSeverity: 'MAJOR',
-    defectDescription: 'Surface decarburization on pilot test coupons. Traverse revealed 0.05mm shallow hardness band.',
-    affectedQuantity: { totalDefectivePieces: 25, quarantinedBay: 'Bay 4 Quarantine Bay' }
-  }
-];
 
 export const QualityPage: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'WAITING_FOR_INSPECTION' | 'INSPECTIONS' | 'NCRS'>('WAITING_FOR_INSPECTION');
-  const [inspections, setInspections] = useState<QualityInspection[]>(DEFAULT_INSPECTIONS);
-  const [ncrs, setNcrs] = useState<NCRReport[]>(DEFAULT_NCRS);
-  const [selectedInspection, setSelectedInspection] = useState<QualityInspection | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isNewInspectionOpen, setIsNewInspectionOpen] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [activeTab, setActiveTab] = useState<string>('WAITING_FOR_INSPECTION');
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isActionLoading, setIsActionLoading] = useState<boolean>(false);
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error' | 'warning'; message: string } | null>(null);
 
-  // Batch Orders Awaiting QA Inspection Queue (Handoff from Production Phase)
-  const [waitingInspectionJobs, setWaitingInspectionJobs] = useState<any[]>([
-    {
-      id: 'bo_03',
-      jobNumber: 'BO-202608-0008',
-      boNumber: 'BO-202608-0008',
-      poNumber: 'PO-2026-00303',
-      grnNumber: 'GRN-202608-0703',
-      customer: { customerCode: 'CUST-APEX-03', customerName: 'Apex Automotive Drivetrains' },
-      item: { itemCode: 'PART-GEAR-8620', itemName: 'Case-Hardened Pinion Gears', materialGrade: 'AISI 8620', uom: 'PCS' },
-      quantity: { targetQuantity: 300, loadedQuantity: 300, completedQuantity: 300, scrappedQuantity: 0 },
-      status: 'WAITING_FOR_INSPECTION',
-      waitingForInspection: true,
-      recipeSnapshot: { recipeCode: 'REC-CARB-8620', name: 'Atmospheric Gas Carburizing & Oil Quench' },
-      execution: {
-        qualityHandoff: {
-          inspectionRequestId: 'INSP-REQ-202609-0008',
-          completedQuantity: 300,
-          scrappedQuantity: 0,
-          handoffNotes: 'All carburizing boost/diffuse stages complete. Ready for case depth and Rockwell C hardness verification.'
-        }
-      }
-    }
+  // Queues
+  const [waitingJobs, setWaitingJobs] = useState<BatchOrderInspection[]>([]);
+  const [inInspectionJobs, setInInspectionJobs] = useState<BatchOrderInspection[]>([]);
+  const [waitingDispatchJobs, setWaitingDispatchJobs] = useState<BatchOrderInspection[]>([]);
+  const [failedJobs, setFailedJobs] = useState<BatchOrderInspection[]>([]);
+
+  // Selected Active Job for Workbench
+  const [activeJob, setActiveJob] = useState<BatchOrderInspection | null>(null);
+
+  // 6 Mandatory Heat-Treatment Inspection Fields Form State
+  const [furnaceCode, setFurnaceCode] = useState<string>('');
+  const [furnaceId, setFurnaceId] = useState<string>('');
+  const [minHardness, setMinHardness] = useState<number>(58);
+  const [maxHardness, setMaxHardness] = useState<number>(62);
+  const [scale, setScale] = useState<string>('HRC');
+  const [testPoints, setTestPoints] = useState<HardnessTestPoint[]>([
+    { pointIdentifier: 'P1-SURFACE', location: 'SURFACE', measuredValue: 60.0, scale: 'HRC', passed: true },
+    { pointIdentifier: 'P2-SURFACE', location: 'SURFACE', measuredValue: 60.5, scale: 'HRC', passed: true },
+    { pointIdentifier: 'P3-CORE', location: 'CORE', measuredValue: 35.0, scale: 'HRC', passed: true }
   ]);
+  const [effectiveCaseDepthMm, setEffectiveCaseDepthMm] = useState<number>(0.85);
+  const [caseDepthMethod, setCaseDepthMethod] = useState<string>('Microhardness Traverse (HV0.5 to 50 HRC)');
+  const [isCaseDepthCompliant, setIsCaseDepthCompliant] = useState<boolean>(true);
+  const [quantityReceived, setQuantityReceived] = useState<number>(100);
+  const [quantityDelivered, setQuantityDelivered] = useState<number>(100);
+  const [microstructureNotes, setMicrostructureNotes] = useState<string>('Tempered martensite matrix, CQI-9 compliant.');
+  const [inspectionRemarks, setInspectionRemarks] = useState<string>('Heat treatment cycle verified and hardness certified.');
 
-  // New Inspection Form State
-  const [jobNumber, setJobNumber] = useState('JOB-202608-0010');
-  const [sampleSize, setSampleSize] = useState(5);
-  const [surfaceHardness, setSurfaceHardness] = useState(60.5);
-  const [disposition, setDisposition] = useState<'CONFORMING' | 'NON_CONFORMING'>('CONFORMING');
-  const [remarks, setRemarks] = useState('AMS 2759/1 Rockwell C traverse passed.');
+  // Quarantine / Failure Dialog State
+  const [isQuarantineOpen, setIsQuarantineOpen] = useState<boolean>(false);
+  const [defectCategory, setDefectCategory] = useState<string>('OUT_OF_SPEC_HARDNESS');
+  const [defectReason, setDefectReason] = useState<string>('');
 
-  // Available jobs
-  const [availableJobs, setAvailableJobs] = useState<any[]>([]);
-
-  const fetchQualityData = async () => {
+  const fetchAllQueues = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [resQc, resNcr, resJobs, resWaiting] = await Promise.all([
-        authenticatedFetch(`${env.API_BASE_URL}/quality-inspections`),
-        authenticatedFetch(`${env.API_BASE_URL}/ncrs`),
-        authenticatedFetch(`${env.API_BASE_URL}/production-jobs`).catch(() => null),
-        authenticatedFetch(`${env.API_BASE_URL}/production-jobs/waiting-for-inspection`).catch(() => null)
+      const [waitRes, inInspRes, waitDispRes, failRes] = await Promise.all([
+        authenticatedFetch(`${env.API_BASE_URL}/api/v1/production-jobs/queue/waiting-for-inspection`),
+        authenticatedFetch(`${env.API_BASE_URL}/api/v1/production-jobs/queue/in-inspection`),
+        authenticatedFetch(`${env.API_BASE_URL}/api/v1/production-jobs/queue/waiting-for-dispatch`),
+        authenticatedFetch(`${env.API_BASE_URL}/api/v1/production-jobs/queue/inspection-failed`)
       ]);
 
-      if (resQc.ok) {
-        const jsonQc = await resQc.json();
-        if (jsonQc.data && Array.isArray(jsonQc.data) && jsonQc.data.length > 0) {
-          setInspections(jsonQc.data);
+      if (waitRes.ok) {
+        const data = await waitRes.json();
+        setWaitingJobs(data.data || []);
+      }
+      if (inInspRes.ok) {
+        const data = await inInspRes.json();
+        const inJobs: BatchOrderInspection[] = data.data || [];
+        setInInspectionJobs(inJobs);
+
+        if (inJobs.length > 0) {
+          setActiveJob((prev) => {
+            if (!prev) return inJobs[0];
+            const found = inJobs.find((j) => (j.id || j._id) === (prev.id || prev._id));
+            return found || inJobs[0];
+          });
+        } else {
+          setActiveJob(null);
         }
       }
-      if (resNcr.ok) {
-        const jsonNcr = await resNcr.json();
-        if (jsonNcr.data && Array.isArray(jsonNcr.data) && jsonNcr.data.length > 0) {
-          setNcrs(jsonNcr.data);
-        }
+      if (waitDispRes.ok) {
+        const data = await waitDispRes.json();
+        setWaitingDispatchJobs(data.data || []);
       }
-      if (resJobs && resJobs.ok) {
-        const jsonJobs = await resJobs.json();
-        if (jsonJobs.data && Array.isArray(jsonJobs.data)) {
-          setAvailableJobs(jsonJobs.data);
-          if (jsonJobs.data.length > 0 && !jobNumber) {
-            setJobNumber(jsonJobs.data[0].jobNumber || jsonJobs.data[0].id);
-          }
-        }
+      if (failRes.ok) {
+        const data = await failRes.json();
+        setFailedJobs(data.data || []);
       }
-      if (resWaiting && resWaiting.ok) {
-        const jsonWait = await resWaiting.json();
-        if (jsonWait.data && Array.isArray(jsonWait.data) && jsonWait.data.length > 0) {
-          setWaitingInspectionJobs(jsonWait.data);
-        }
-      }
-    } catch {
-      // Keep fallback
+    } catch (err: any) {
+      console.error('Error fetching inspection queues:', err);
+      setFeedback({
+        type: 'error',
+        message: 'Could not refresh inspection queues from server: ' + (err.message || 'Network error')
+      });
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
-  const handleInitiateInspectionFromJob = (job: any) => {
-    const jNum = job.boNumber || job.jobNumber;
-    setJobNumber(jNum);
-    const completed = job.quantity?.completedQuantity || job.quantity?.targetQuantity || 100;
-    setSampleSize(Math.max(1, Math.min(10, Math.ceil(completed * 0.05))));
-    setRemarks(`Inspection for Batch Order ${jNum} (${job.item?.itemName || 'Part'} - ${job.item?.materialGrade || 'Grade'}). Recipe: ${job.recipeSnapshot?.recipeCode || 'Standard'}.`);
-    setIsNewInspectionOpen(true);
-  };
+  useEffect(() => {
+    fetchAllQueues();
+  }, [fetchAllQueues]);
 
-  const handleCreateInspection = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsSubmitting(true);
+  // Synchronize form values whenever activeJob changes
+  useEffect(() => {
+    if (!activeJob) return;
+
+    const data = activeJob.execution?.inspectionData;
+    const fallbackFurnaceCode =
+      data?.furnaceCode ||
+      activeJob.execution?.furnaceCharge?.furnaceCode ||
+      activeJob.equipmentAssignment?.furnaceCode ||
+      'FURNACE-HT-01';
+    const fallbackFurnaceId =
+      data?.furnaceId ||
+      activeJob.execution?.furnaceCharge?.furnaceId ||
+      activeJob.equipmentAssignment?.furnaceId ||
+      'furnace_01';
+
+    setFurnaceCode(fallbackFurnaceCode);
+    setFurnaceId(fallbackFurnaceId);
+
+    const hardnessSpec = data?.hardnessSpecification;
+    setMinHardness(hardnessSpec?.minHardness ?? 58);
+    setMaxHardness(hardnessSpec?.maxHardness ?? 62);
+    setScale(hardnessSpec?.scale || 'HRC');
+
+    const points = data?.actualHardness?.testPoints;
+    if (points && points.length > 0) {
+      setTestPoints(points);
+    } else {
+      setTestPoints([
+        { pointIdentifier: 'P1-SURFACE', location: 'SURFACE', measuredValue: 60.0, scale: 'HRC', passed: true },
+        { pointIdentifier: 'P2-SURFACE', location: 'SURFACE', measuredValue: 60.5, scale: 'HRC', passed: true },
+        { pointIdentifier: 'P3-CORE', location: 'CORE', measuredValue: 35.0, scale: 'HRC', passed: true }
+      ]);
+    }
+
+    const cd = data?.caseDepth;
+    setEffectiveCaseDepthMm(cd?.effectiveCaseDepthMm ?? 0.85);
+    setCaseDepthMethod(cd?.caseDepthMethod || 'Microhardness Traverse (HV0.5 to 50 HRC)');
+    setIsCaseDepthCompliant(cd?.isCaseDepthCompliant ?? true);
+
+    const loadedQty =
+      data?.quantityReceived ??
+      activeJob.execution?.qualityHandoff?.completedQuantity ??
+      activeJob.quantity?.completedQuantity ??
+      activeJob.quantity?.loadedQuantity ??
+      activeJob.quantity?.targetQuantity ??
+      100;
+    setQuantityReceived(loadedQty);
+
+    const deliveredQty = data?.quantityDelivered ?? loadedQty;
+    setQuantityDelivered(deliveredQty);
+
+    setMicrostructureNotes(data?.microstructureNotes || 'Tempered martensite matrix, CQI-9 compliant.');
+    setInspectionRemarks(data?.remarks || 'Heat treatment cycle verified and hardness certified.');
+  }, [activeJob]);
+
+  // Derived calculation for hardness average and compliance
+  const measuredAverage =
+    testPoints.length > 0
+      ? Number((testPoints.reduce((sum, p) => sum + (Number(p.measuredValue) || 0), 0) / testPoints.length).toFixed(2))
+      : 0;
+
+  const isHardnessCompliant =
+    measuredAverage >= minHardness &&
+    measuredAverage <= maxHardness &&
+    testPoints.every((p) => p.passed !== false);
+
+  const quantityRejected = Math.max(0, quantityReceived - quantityDelivered);
+
+  // Take for Inspection Handler
+  const handleTakeForInspection = async (job: BatchOrderInspection) => {
+    setIsActionLoading(true);
     setFeedback(null);
-
     try {
-      const targetJob = availableJobs.find((j) => j.jobNumber === jobNumber || j.id === jobNumber) || availableJobs[0];
-      const targetJobId = targetJob?.id || targetJob?._id || jobNumber;
+      const jobId = job.id || job._id;
+      const res = await authenticatedFetch(
+        `${env.API_BASE_URL}/api/v1/production-jobs/${jobId}/take-for-inspection`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            notes: 'Claimed by inspector at QA station'
+          })
+        }
+      );
 
-      const payload = {
-        jobId: targetJobId,
-        sampleSize: Number(sampleSize),
-        notes: remarks
-      };
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json.message || 'Failed to claim Batch Order for inspection');
+      }
 
-      const res = await authenticatedFetch(`${env.API_BASE_URL}/quality-inspections`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+      setFeedback({
+        type: 'success',
+        message: `Batch Order ${job.boNumber || job.jobNumber} successfully taken for inspection! Active workbench opened.`
       });
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.message || `Quality inspection entry failed with status ${res.status}`);
-      }
-
-      const createdJson = await res.json();
-      const createdId = createdJson.data?.id || createdJson.data?._id;
-
-      if (createdId) {
-        // Record test results
-        await authenticatedFetch(`${env.API_BASE_URL}/quality-inspections/${createdId}/test-results`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            hardnessTests: [
-              { pointIdentifier: 'P1-SURF', location: 'SURFACE', measuredValue: Number(surfaceHardness), scale: 'HRC', passed: disposition === 'CONFORMING' }
-            ],
-            microstructure: {
-              observedStructure: remarks,
-              passed: disposition === 'CONFORMING'
-            }
-          })
-        }).catch(() => null);
-
-        // Submit disposition
-        await authenticatedFetch(`${env.API_BASE_URL}/quality-inspections/${createdId}/disposition`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            disposition,
-            remarks
-          })
-        }).catch(() => null);
-      }
-
-      setFeedback({ type: 'success', message: `Quality inspection recorded for job ${targetJob?.jobNumber || jobNumber}. Disposition: ${disposition}` });
-      setIsNewInspectionOpen(false);
-      fetchQualityData();
+      await fetchAllQueues();
+      setActiveJob(json.data || job);
+      setActiveTab('IN_INSPECTION');
     } catch (err: any) {
-      setFeedback({ type: 'error', message: err.message || 'Failed to submit quality inspection' });
+      setFeedback({
+        type: 'error',
+        message: err.message || 'Error taking job for inspection'
+      });
     } finally {
-      setIsSubmitting(false);
+      setIsActionLoading(false);
     }
   };
 
-  const handleGenerateCoC = () => {
-    if (!selectedInspection) return;
-    setFeedback({
-      type: 'success',
-      message: `Certificate of Conformance (CoC) generated for ${selectedInspection.inspectionNumber}. Serialized for NADCAP audit package.`
-    });
-    setSelectedInspection(null);
+  // Save Inspection Progress Handler
+  const handleSaveProgress = async () => {
+    if (!activeJob) return;
+    setIsActionLoading(true);
+    setFeedback(null);
+    try {
+      const jobId = activeJob.id || activeJob._id;
+      const payload = {
+        furnaceId,
+        furnaceCode,
+        minHardness,
+        maxHardness,
+        scale,
+        hardnessSpecification: {
+          minHardness,
+          maxHardness,
+          scale,
+          targetLocation: 'Surface & Core'
+        },
+        actualHardness: {
+          measuredAverage,
+          testPoints,
+          isHardnessCompliant
+        },
+        caseDepth: {
+          effectiveCaseDepthMm,
+          caseDepthMethod,
+          isCaseDepthCompliant
+        },
+        effectiveCaseDepthMm,
+        caseDepthMethod,
+        isCaseDepthCompliant,
+        quantityReceived,
+        quantityDelivered,
+        quantityRejected,
+        microstructureNotes,
+        remarks: inspectionRemarks
+      };
+
+      const res = await authenticatedFetch(
+        `${env.API_BASE_URL}/api/v1/production-jobs/${jobId}/inspection-data`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        }
+      );
+
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json.message || 'Failed to save inspection draft data');
+      }
+
+      setFeedback({
+        type: 'success',
+        message: 'Inspection telemetry and test data saved successfully.'
+      });
+      await fetchAllQueues();
+    } catch (err: any) {
+      setFeedback({
+        type: 'error',
+        message: err.message || 'Error saving inspection data'
+      });
+    } finally {
+      setIsActionLoading(false);
+    }
   };
 
-  useEffect(() => {
-    fetchQualityData();
-  }, []);
+  // Approve for Dispatch Handler
+  const handleApproveForDispatch = async () => {
+    if (!activeJob) return;
 
-  const conformingCount = inspections.filter((i) => i.disposition === 'CONFORMING').length;
-  const openNcrCount = ncrs.filter((n) => n.status === 'OPEN').length;
+    if (!furnaceCode || !furnaceId) {
+      setFeedback({ type: 'warning', message: 'Mandatory Field 1 Missing: Valid furnace/equipment identifier is required.' });
+      return;
+    }
+    if (minHardness == null || maxHardness == null || minHardness <= 0 || maxHardness < minHardness) {
+      setFeedback({ type: 'warning', message: 'Mandatory Field 2 Invalid: Valid min & max hardness specification is required.' });
+      return;
+    }
+    if (!testPoints || testPoints.length === 0 || measuredAverage <= 0) {
+      setFeedback({ type: 'warning', message: 'Mandatory Field 3 Invalid: Actual hardness test points and compliant average required.' });
+      return;
+    }
+    if (effectiveCaseDepthMm == null || effectiveCaseDepthMm <= 0 || !caseDepthMethod) {
+      setFeedback({ type: 'warning', message: 'Mandatory Field 4 Missing: Case depth measurement and method are required.' });
+      return;
+    }
+    if (!quantityReceived || quantityReceived <= 0) {
+      setFeedback({ type: 'warning', message: 'Mandatory Field 5 Invalid: Quantity received must be greater than 0.' });
+      return;
+    }
+    if (!quantityDelivered || quantityDelivered <= 0 || quantityDelivered > quantityReceived) {
+      setFeedback({
+        type: 'warning',
+        message: `Mandatory Field 6 Invalid: Quantity delivered must be between 1 and quantity received (${quantityReceived}).`
+      });
+      return;
+    }
+
+    setIsActionLoading(true);
+    setFeedback(null);
+    try {
+      const jobId = activeJob.id || activeJob._id;
+      const payload = {
+        furnaceId,
+        furnaceCode,
+        minHardness,
+        maxHardness,
+        scale,
+        measuredAverage,
+        effectiveCaseDepthMm,
+        caseDepthMethod,
+        isCaseDepthCompliant,
+        quantityReceived,
+        quantityDelivered,
+        quantityRejected,
+        testPoints,
+        microstructureNotes,
+        remarks: inspectionRemarks
+      };
+
+      const res = await authenticatedFetch(
+        `${env.API_BASE_URL}/api/v1/production-jobs/${jobId}/approve-inspection`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        }
+      );
+
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json.message || 'Failed to approve inspection for dispatch');
+      }
+
+      setFeedback({
+        type: 'success',
+        message: `Batch Order ${activeJob.boNumber || activeJob.jobNumber} approved! Moved to 'Waiting for Dispatch'. Note: Dispatch Department will execute final customer delivery.`
+      });
+
+      await fetchAllQueues();
+      setActiveTab('WAITING_FOR_DISPATCH');
+    } catch (err: any) {
+      setFeedback({
+        type: 'error',
+        message: err.message || 'Error approving inspection'
+      });
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  // Fail Inspection Handler
+  const handleFailInspection = async () => {
+    if (!activeJob) return;
+    if (!defectReason.trim()) {
+      setFeedback({ type: 'warning', message: 'Defect Reason is required to fail inspection and quarantine.' });
+      return;
+    }
+
+    setIsActionLoading(true);
+    setFeedback(null);
+    try {
+      const jobId = activeJob.id || activeJob._id;
+      const payload = {
+        defectCategory,
+        defectReason,
+        furnaceId,
+        furnaceCode,
+        minHardness,
+        maxHardness,
+        scale,
+        measuredAverage,
+        effectiveCaseDepthMm,
+        quantityReceived,
+        testPoints,
+        remarks: inspectionRemarks
+      };
+
+      const res = await authenticatedFetch(
+        `${env.API_BASE_URL}/api/v1/production-jobs/${jobId}/fail-inspection`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        }
+      );
+
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json.message || 'Failed to record inspection failure');
+      }
+
+      setFeedback({
+        type: 'error',
+        message: `Batch Order ${activeJob.boNumber || activeJob.jobNumber} failed inspection and was quarantined. State moved to 'INSPECTION'.`
+      });
+
+      setIsQuarantineOpen(false);
+      setDefectReason('');
+      await fetchAllQueues();
+      setActiveTab('INSPECTION_FAILED');
+    } catch (err: any) {
+      setFeedback({
+        type: 'error',
+        message: err.message || 'Error failing inspection'
+      });
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  // Hardness Test Point Mutators
+  const handleAddTestPoint = () => {
+    const nextIdx = testPoints.length + 1;
+    setTestPoints([
+      ...testPoints,
+      {
+        pointIdentifier: `P${nextIdx}-SURFACE`,
+        location: 'SURFACE',
+        measuredValue: Number(minHardness) || 60,
+        scale,
+        passed: true
+      }
+    ]);
+  };
+
+  const handleUpdateTestPoint = (idx: number, field: keyof HardnessTestPoint, value: any) => {
+    const next = [...testPoints];
+    next[idx] = { ...next[idx], [field]: value };
+    if (field === 'measuredValue') {
+      const val = Number(value);
+      next[idx].passed = val >= minHardness && val <= maxHardness;
+    }
+    setTestPoints(next);
+  };
+
+  const handleRemoveTestPoint = (idx: number) => {
+    if (testPoints.length <= 1) return;
+    setTestPoints(testPoints.filter((_, i) => i !== idx));
+  };
+
+  // Tabs Configuration
+  const tabs: TabItem[] = [
+    {
+      id: 'WAITING_FOR_INSPECTION',
+      label: 'Waiting for Inspection',
+      icon: <Clock size={16} />,
+      count: waitingJobs.length
+    },
+    {
+      id: 'IN_INSPECTION',
+      label: 'In-Inspection Active Workbench',
+      icon: <Microscope size={16} />,
+      count: inInspectionJobs.length
+    },
+    {
+      id: 'WAITING_FOR_DISPATCH',
+      label: 'Waiting for Dispatch',
+      icon: <Truck size={16} />,
+      count: waitingDispatchJobs.length
+    },
+    {
+      id: 'INSPECTION_FAILED',
+      label: 'Quarantined / Failed',
+      icon: <AlertTriangle size={16} />,
+      count: failedJobs.length
+    }
+  ];
+
+  // Filtering helpers
+  const filterJobs = (list: BatchOrderInspection[]) => {
+    if (!searchQuery.trim()) return list;
+    const q = searchQuery.toLowerCase();
+    return list.filter(
+      (j) =>
+        (j.boNumber && j.boNumber.toLowerCase().includes(q)) ||
+        (j.jobNumber && j.jobNumber.toLowerCase().includes(q)) ||
+        (j.customer?.customerName && j.customer.customerName.toLowerCase().includes(q)) ||
+        (j.item?.itemName && j.item.itemName.toLowerCase().includes(q)) ||
+        (j.item?.materialGrade && j.item.materialGrade.toLowerCase().includes(q))
+    );
+  };
 
   return (
     <PageContainer>
+      {/* Page Header */}
       <PageHeader
-        title="Quality & Metallurgical Laboratory"
-        subtitle="AMS 2759 / CQI-9 conformance, micro-hardness traverses, case depth, and NCR quarantine workflows"
+        title="Heat-Treatment Quality & Inspection Phase"
+        subtitle="Authoritative QA Gate: Waiting for Inspection → In-Inspection Workbench → Waiting for Dispatch / Quarantined"
+        badge={
+          <StatusBadge
+            status={`Total Active In Queue: ${waitingJobs.length + inInspectionJobs.length}`}
+            variant="info"
+          />
+        }
         actions={
-          <div style={{ display: 'flex', gap: '10px' }}>
-            <AppButton variant="secondary" onClick={fetchQualityData} leftIcon={<RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />}>
-              Refresh
-            </AppButton>
-            <AppButton variant="primary" leftIcon={<ShieldCheck size={14} />} onClick={() => setIsNewInspectionOpen(true)}>
-              New Inspection
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <AppButton
+              variant="secondary"
+              size="sm"
+              leftIcon={<RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />}
+              onClick={fetchAllQueues}
+              disabled={isLoading}
+            >
+              Refresh Queues
             </AppButton>
           </div>
         }
       />
 
+      {/* Global Feedback Banner */}
       {feedback && (
-        <div style={{ marginBottom: '20px' }}>
-          <AppAlert variant={feedback.type} title={feedback.type === 'success' ? 'Operation Successful' : 'Action Error'}>
+        <div style={{ marginBottom: '16px' }}>
+          <AppAlert
+            type={feedback.type}
+            title={feedback.type === 'success' ? 'Success' : feedback.type === 'error' ? 'Quality Alert' : 'Verification Required'}
+            onClose={() => setFeedback(null)}
+          >
             {feedback.message}
           </AppAlert>
         </div>
       )}
 
-      {/* KPI Ribbon */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '24px' }}>
-        <AppCard>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>FIRST-PASS YIELD</div>
-              <div style={{ fontSize: '28px', fontWeight: 800, color: '#34d399', marginTop: '4px' }}>99.2%</div>
-            </div>
-            <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'rgba(52, 211, 153, 0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#34d399' }}>
-              <Award size={20} />
-            </div>
-          </div>
-        </AppCard>
-
-        <AppCard>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>CONFORMING BATCHES</div>
-              <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--color-primary)', marginTop: '4px' }}>{conformingCount}</div>
-            </div>
-            <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'var(--color-primary-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-primary)' }}>
-              <CheckCircle2 size={20} />
-            </div>
-          </div>
-        </AppCard>
-
-        <AppCard>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>OPEN NCR QUARANTINE</div>
-              <div style={{ fontSize: '28px', fontWeight: 800, color: openNcrCount > 0 ? '#ef4444' : '#34d399', marginTop: '4px' }}>{openNcrCount}</div>
-            </div>
-            <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'rgba(239, 68, 68, 0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ef4444' }}>
-              <AlertTriangle size={20} />
-            </div>
-          </div>
-        </AppCard>
-
-        <AppCard>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>NADCAP AUDIT READINESS</div>
-              <div style={{ fontSize: '28px', fontWeight: 800, color: '#38bdf8', marginTop: '4px' }}>100%</div>
-            </div>
-            <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'rgba(56, 189, 248, 0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#38bdf8' }}>
-              <ShieldCheck size={20} />
-            </div>
-          </div>
-        </AppCard>
-      </div>
-
-      {/* Tabs */}
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', flexWrap: 'wrap' }}>
-        <button
-          onClick={() => setActiveTab('WAITING_FOR_INSPECTION')}
+      {/* KPI Overview Strip */}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+          gap: '16px',
+          marginBottom: '20px'
+        }}
+      >
+        <AppCard
           style={{
-            padding: '8px 18px',
-            fontSize: '13px',
-            fontWeight: 700,
-            borderRadius: 'var(--radius-md)',
-            border: 'none',
-            cursor: 'pointer',
-            background: activeTab === 'WAITING_FOR_INSPECTION' ? 'var(--color-primary)' : 'rgba(255, 255, 255, 0.05)',
-            color: activeTab === 'WAITING_FOR_INSPECTION' ? '#ffffff' : 'var(--color-text-secondary)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px'
+            borderLeft: '4px solid var(--color-warning, #f59e0b)',
+            padding: '16px'
           }}
         >
-          <Clock size={16} /> Batch Orders Awaiting QA Inspection ({waitingInspectionJobs.length})
-        </button>
-
-        <button
-          onClick={() => setActiveTab('INSPECTIONS')}
-          style={{
-            padding: '8px 18px',
-            fontSize: '13px',
-            fontWeight: 700,
-            borderRadius: 'var(--radius-md)',
-            border: 'none',
-            cursor: 'pointer',
-            background: activeTab === 'INSPECTIONS' ? 'var(--color-primary)' : 'rgba(255, 255, 255, 0.05)',
-            color: activeTab === 'INSPECTIONS' ? '#ffffff' : 'var(--color-text-secondary)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px'
-          }}
-        >
-          <Microscope size={16} /> Metallurgical Conformance Tests ({inspections.length})
-        </button>
-
-        <button
-          onClick={() => setActiveTab('NCRS')}
-          style={{
-            padding: '8px 18px',
-            fontSize: '13px',
-            fontWeight: 700,
-            borderRadius: 'var(--radius-md)',
-            border: 'none',
-            cursor: 'pointer',
-            background: activeTab === 'NCRS' ? 'var(--color-primary)' : 'rgba(255, 255, 255, 0.05)',
-            color: activeTab === 'NCRS' ? '#ffffff' : 'var(--color-text-secondary)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px'
-          }}
-        >
-          <AlertTriangle size={16} /> Non-Conformance Reports (NCR) ({ncrs.length})
-        </button>
-      </div>
-
-      {/* 1. Batch Orders Awaiting QA Inspection Queue */}
-      {activeTab === 'WAITING_FOR_INSPECTION' && (
-        <AppCard style={{ padding: '0px', overflow: 'hidden' }}>
-          <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--color-border-subtle)', background: 'rgba(52, 211, 153, 0.03)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', borderRadius: '6px', background: 'rgba(52, 211, 153, 0.15)', color: '#34d399' }}>
-                  <Clock size={15} />
-                </span>
-                <span style={{ fontWeight: 800, fontSize: '15px', color: '#ffffff' }}>
-                  Batch Orders Approved from Production & Awaiting QA Inspection ({waitingInspectionJobs.length})
-                </span>
-              </div>
-              <p style={{ margin: '4px 0 0 34px', fontSize: '12px', color: 'var(--color-text-secondary)' }}>
-                Production operations have verified recipe completion and piece count balance. These jobs have cleared <code>inProduction</code> and transitioned into <code>waitingForInspection</code>.
+              <p style={{ margin: 0, fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                Waiting for Inspection
               </p>
+              <h2 style={{ margin: '4px 0 0 0', fontSize: '24px', fontWeight: 700 }}>
+                {waitingJobs.length}
+              </h2>
             </div>
+            <Clock size={28} color="var(--color-warning, #f59e0b)" />
           </div>
-
-          {waitingInspectionJobs.length === 0 ? (
-            <div style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--color-text-muted)' }}>
-              <CheckCircle2 size={32} style={{ margin: '0 auto 10px', color: '#34d399', opacity: 0.6 }} />
-              <div style={{ fontWeight: 600, color: '#ffffff' }}>No Batch Orders Awaiting Inspection</div>
-              <div style={{ fontSize: '12px', marginTop: '4px' }}>All production runs have been inspected or are currently active in furnace processing.</div>
-            </div>
-          ) : (
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
-                <thead>
-                  <tr style={{ background: 'rgba(255, 255, 255, 0.02)', borderBottom: '1px solid var(--color-border-subtle)' }}>
-                    <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>INSP REQ #</th>
-                    <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>BATCH ORDER & LINEAGE</th>
-                    <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>CUSTOMER & PART</th>
-                    <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>CONFORMING QTY</th>
-                    <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>BOUND RECIPE</th>
-                    <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>STATUS</th>
-                    <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600, textAlign: 'right' }}>ACTION</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {waitingInspectionJobs.map((job) => {
-                    const boDisplay = job.boNumber || job.jobNumber;
-                    const poDisplay = job.poNumber || 'PO-LINKED';
-                    const grnDisplay = job.grnNumber || 'GRN-LINKED';
-                    const inspReq = job.execution?.qualityHandoff?.inspectionRequestId || `INSP-REQ-202609-${boDisplay.slice(-4)}`;
-                    const completedQty = job.quantity?.completedQuantity ?? job.quantity?.targetQuantity ?? 100;
-                    const scrappedQty = job.quantity?.scrappedQuantity ?? 0;
-
-                    return (
-                      <tr key={job._id || job.id || job.jobNumber} style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
-                        <td style={{ padding: '14px 18px' }}>
-                          <div style={{ fontWeight: 700, color: '#34d399' }}>{inspReq}</div>
-                          <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>QA Queue Handed Off</div>
-                        </td>
-                        <td style={{ padding: '14px 18px' }}>
-                          <div style={{ fontWeight: 700, color: 'var(--color-primary)' }}>{boDisplay}</div>
-                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginTop: '4px', padding: '2px 6px', borderRadius: '4px', background: 'rgba(255, 255, 255, 0.04)', fontSize: '11px' }}>
-                            <span style={{ color: '#93c5fd' }}>{poDisplay}</span>
-                            <span>→</span>
-                            <span style={{ color: '#6ee7b7' }}>{grnDisplay}</span>
-                            <span>→</span>
-                            <span style={{ color: '#fca5a5' }}>{boDisplay}</span>
-                          </div>
-                        </td>
-                        <td style={{ padding: '14px 18px' }}>
-                          <div style={{ color: '#ffffff', fontWeight: 600 }}>{job.customer?.customerName || 'Customer Inc.'}</div>
-                          <div style={{ fontSize: '11px', color: '#38bdf8', marginTop: '2px' }}>
-                            {job.item?.itemName} [{job.item?.materialGrade}]
-                          </div>
-                        </td>
-                        <td style={{ padding: '14px 18px' }}>
-                          <div style={{ fontWeight: 800, color: '#34d399', fontSize: '14px' }}>
-                            {completedQty} {job.item?.uom || 'PCS'}
-                          </div>
-                          {scrappedQty > 0 && (
-                            <div style={{ fontSize: '11px', color: '#ef4444', marginTop: '2px' }}>
-                              Scrapped: {scrappedQty}
-                            </div>
-                          )}
-                        </td>
-                        <td style={{ padding: '14px 18px' }}>
-                          <div style={{ fontSize: '12px', fontWeight: 600, color: '#fbbf24' }}>
-                            {job.recipeSnapshot?.recipeCode || 'REC-STANDARD'}
-                          </div>
-                          <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>
-                            {job.recipeSnapshot?.name || 'Standard Thermal Cycle'}
-                          </div>
-                        </td>
-                        <td style={{ padding: '14px 18px' }}>
-                          <span style={{ fontSize: '11px', fontWeight: 700, padding: '3px 8px', borderRadius: '4px', background: 'rgba(52, 211, 153, 0.15)', color: '#34d399', border: '1px solid rgba(52, 211, 153, 0.3)' }}>
-                            WAITING FOR INSPECTION
-                          </span>
-                        </td>
-                        <td style={{ padding: '14px 18px', textAlign: 'right' }}>
-                          <AppButton
-                            variant="primary"
-                            size="sm"
-                            leftIcon={<Microscope size={14} />}
-                            onClick={() => handleInitiateInspectionFromJob(job)}
-                          >
-                            Initiate Inspection
-                          </AppButton>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <span style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginTop: '8px', display: 'block' }}>
+            Handoffs pending inspector claim
+          </span>
         </AppCard>
-      )}
 
-      {/* Inspections Table View */}
-      {activeTab === 'INSPECTIONS' && (
-        <AppCard style={{ padding: '0px', overflow: 'hidden' }}>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
-              <thead>
-                <tr style={{ background: 'rgba(255, 255, 255, 0.02)', borderBottom: '1px solid var(--color-border-subtle)' }}>
-                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>REPORT #</th>
-                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>JOB # / CUSTOMER</th>
-                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>PART / GRADE</th>
-                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>SAMPLE QTY</th>
-                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>SURFACE HARDNESS</th>
-                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>DISPOSITION</th>
-                  <th style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontWeight: 600, textAlign: 'right' }}>ACTION</th>
-                </tr>
-              </thead>
-              <tbody>
-                {inspections.map((qc) => (
-                  <tr key={qc.inspectionNumber} style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
-                    <td style={{ padding: '14px 18px', fontWeight: 700, color: 'var(--color-primary)' }}>{qc.inspectionNumber}</td>
-                    <td style={{ padding: '14px 18px' }}>
-                      <div style={{ color: '#ffffff', fontWeight: 600 }}>{qc.jobNumber}</div>
-                      <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>{qc.customer.customerName}</div>
-                    </td>
-                    <td style={{ padding: '14px 18px' }}>
-                      <div style={{ color: '#38bdf8', fontWeight: 600 }}>{qc.item.materialGrade}</div>
-                      <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>{qc.item.itemName}</div>
-                    </td>
-                    <td style={{ padding: '14px 18px', color: '#e2e8f0' }}>{qc.inspectionQuantity.sampleSize} / {qc.inspectionQuantity.totalLotQuantity} {qc.inspectionQuantity.unitOfMeasure}</td>
-                    <td style={{ padding: '14px 18px', color: '#34d399', fontWeight: 700 }}>
-                      {qc.testResults?.hardnessTests?.[0]?.measuredValue || 60.5} HRC
-                    </td>
-                    <td style={{ padding: '14px 18px' }}>
-                      <StatusBadge status={qc.disposition} />
-                    </td>
-                    <td style={{ padding: '14px 18px', textAlign: 'right' }}>
-                      <ActionButton
-                        variant="secondary"
-                        size="sm"
-                        rightIcon={<ChevronRight size={14} />}
-                        onClick={() => setSelectedInspection(qc)}
-                      >
-                        View CoC
-                      </ActionButton>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <AppCard
+          style={{
+            borderLeft: '4px solid var(--color-info, #0ea5e9)',
+            padding: '16px'
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <p style={{ margin: 0, fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                In-Inspection Workbench
+              </p>
+              <h2 style={{ margin: '4px 0 0 0', fontSize: '24px', fontWeight: 700 }}>
+                {inInspectionJobs.length}
+              </h2>
+            </div>
+            <Microscope size={28} color="var(--color-info, #0ea5e9)" />
           </div>
+          <span style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginTop: '8px', display: 'block' }}>
+            Active testing & data verification
+          </span>
         </AppCard>
-      )}
 
-      {/* NCR View */}
-      {activeTab === 'NCRS' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          {ncrs.map((ncr) => (
-            <AppCard key={ncr.ncrNumber} style={{ padding: '20px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ fontSize: '16px', fontWeight: 800, color: '#ef4444' }}>{ncr.ncrNumber}</span>
-                    <span style={{ fontSize: '12px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', background: 'rgba(239, 68, 68, 0.15)', color: '#ef4444' }}>
-                      {ncr.defectSeverity}
-                    </span>
-                    <StatusBadge status={ncr.status} />
-                  </div>
-                  <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
-                    Associated Job: <strong>{ncr.jobNumber}</strong> | Customer: {ncr.customer.customerName}
-                  </div>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: '18px', fontWeight: 800, color: '#ef4444' }}>{ncr.affectedQuantity.totalDefectivePieces} pcs</div>
-                  <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>{ncr.affectedQuantity.quarantinedBay}</div>
-                </div>
-              </div>
-              <div style={{ marginTop: '12px', padding: '10px 14px', borderRadius: 'var(--radius-md)', background: 'rgba(255, 255, 255, 0.02)', fontSize: '13px', color: '#e2e8f0' }}>
-                <strong>Defect Finding:</strong> {ncr.defectDescription}
-              </div>
-            </AppCard>
-          ))}
+        <AppCard
+          style={{
+            borderLeft: '4px solid var(--color-success, #10b981)',
+            padding: '16px'
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <p style={{ margin: 0, fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                Waiting for Dispatch
+              </p>
+              <h2 style={{ margin: '4px 0 0 0', fontSize: '24px', fontWeight: 700 }}>
+                {waitingDispatchJobs.length}
+              </h2>
+            </div>
+            <Truck size={28} color="var(--color-success, #10b981)" />
+          </div>
+          <span style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginTop: '8px', display: 'block' }}>
+            Approved conforming — ready for dispatch
+          </span>
+        </AppCard>
+
+        <AppCard
+          style={{
+            borderLeft: '4px solid var(--color-danger, #ef4444)',
+            padding: '16px'
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <p style={{ margin: 0, fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                Quarantined / Defective
+              </p>
+              <h2 style={{ margin: '4px 0 0 0', fontSize: '24px', fontWeight: 700 }}>
+                {failedJobs.length}
+              </h2>
+            </div>
+            <AlertTriangle size={28} color="var(--color-danger, #ef4444)" />
+          </div>
+          <span style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginTop: '8px', display: 'block' }}>
+            Non-conforming lots in status INSPECTION
+          </span>
+        </AppCard>
+      </div>
+
+      {/* Tabs Navigation */}
+      <div style={{ marginBottom: '16px' }}>
+        <AppTabs tabs={tabs} activeTab={activeTab} onChange={(id) => setActiveTab(id)} />
+      </div>
+
+      {/* Search Bar for Queues */}
+      {activeTab !== 'IN_INSPECTION' && (
+        <div style={{ marginBottom: '16px', maxWidth: '400px' }}>
+          <AppInput
+            placeholder="Search by BO#, Customer, Part, or Grade..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            leftIcon={<Search size={16} />}
+          />
         </div>
       )}
 
-      {/* Selected Inspection Drawer */}
-      <AppDrawer
-        isOpen={!!selectedInspection}
-        onClose={() => setSelectedInspection(null)}
-        title={selectedInspection?.inspectionNumber}
-        subtitle={selectedInspection ? `Batch Conformance Certificate (Job ${selectedInspection.jobNumber})` : ''}
-        footer={
-          selectedInspection && (
-            <>
-              <AppButton variant="secondary" onClick={() => setSelectedInspection(null)}>
-                Close
-              </AppButton>
-              <AppButton
-                variant="primary"
-                leftIcon={<FileText size={16} />}
-                onClick={handleGenerateCoC}
-              >
-                Generate Certificate of Conformance (CoC)
-              </AppButton>
-            </>
-          )
-        }
-      >
-        {selectedInspection && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <AppCard style={{ padding: '16px' }}>
-              <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--color-primary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <Microscope size={14} /> ROCKWELL C & MICRO-HARDNESS TEST RESULTS
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {selectedInspection.testResults?.hardnessTests?.map((ht) => (
-                  <div key={ht.pointIdentifier} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 12px', background: 'rgba(255, 255, 255, 0.03)', borderRadius: 'var(--radius-sm)', fontSize: '12px' }}>
-                    <span style={{ color: '#e2e8f0' }}>{ht.pointIdentifier} ({ht.location})</span>
-                    <span style={{ color: '#34d399', fontWeight: 700 }}>{ht.measuredValue} {ht.scale} (PASS)</span>
-                  </div>
-                ))}
-              </div>
-            </AppCard>
+      {/* ========================================================================= */}
+      {/* TAB 1: WAITING FOR INSPECTION QUEUE                                       */}
+      {/* ========================================================================= */}
+      {activeTab === 'WAITING_FOR_INSPECTION' && (
+        <div>
+          {filterJobs(waitingJobs).length === 0 ? (
+            <EmptyState
+              title="No Batch Orders Waiting for Inspection"
+              description="All production batch orders have either been claimed for inspection or are currently in manufacturing."
+              icon={<ShieldCheck size={48} color="var(--color-text-secondary)" />}
+            />
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {filterJobs(waitingJobs).map((job) => {
+                const loadedQty =
+                  job.execution?.qualityHandoff?.completedQuantity ??
+                  job.quantity?.completedQuantity ??
+                  job.quantity?.loadedQuantity ??
+                  job.quantity?.targetQuantity ??
+                  0;
+                const furnace =
+                  job.execution?.furnaceCharge?.furnaceCode ||
+                  job.equipmentAssignment?.furnaceCode ||
+                  'N/A';
 
-            <AppCard style={{ padding: '16px' }}>
-              <div style={{ fontSize: '12px', fontWeight: 700, color: '#38bdf8', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <Layers size={14} /> METALLURGICAL MICROSTRUCTURE EVALUATION
-              </div>
-              <div style={{ fontSize: '13px', color: '#e2e8f0', lineHeight: 1.5 }}>
-                {selectedInspection.testResults?.microstructure?.observedStructure || 'Fine needle tempered martensite matrix. Zero retained austenite.'}
-              </div>
-            </AppCard>
+                return (
+                  <AppCard
+                    key={job.id || job._id}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '16px 20px',
+                      borderLeft: '4px solid var(--color-warning, #f59e0b)'
+                    }}
+                  >
+                    <div style={{ display: 'flex', gap: '24px', alignItems: 'center' }}>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ fontSize: '16px', fontWeight: 700, color: 'var(--color-primary)' }}>
+                            {job.boNumber || job.jobNumber}
+                          </span>
+                          <StatusBadge status="WAITING FOR INSPECTION" variant="warning" size="sm" />
+                        </div>
+                        <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
+                          Customer: <strong>{job.customer?.customerName || 'Standard Client'}</strong>
+                          {job.customer?.customerCode && ` (${job.customer.customerCode})`}
+                        </div>
+                      </div>
 
-            <AppCard style={{ padding: '16px' }}>
-              <div style={{ fontSize: '12px', fontWeight: 700, color: '#fbbf24', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <FileCheck size={14} /> QUALITY SIGN-OFF & CERTIFICATE (CoC)
+                      <div style={{ borderLeft: '1px solid var(--color-border-subtle)', paddingLeft: '16px' }}>
+                        <div style={{ fontSize: '13px', fontWeight: 600 }}>
+                          {job.item?.itemName || 'Heat Treated Component'}
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                          Grade: <strong>{job.item?.materialGrade || 'Alloy'}</strong> | Qty Received:{' '}
+                          <strong>{loadedQty} {job.item?.uom || 'PCS'}</strong>
+                        </div>
+                      </div>
+
+                      <div style={{ borderLeft: '1px solid var(--color-border-subtle)', paddingLeft: '16px' }}>
+                        <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                          Recipe: <strong>{job.recipeSnapshot?.recipeCode || 'Standard HT'}</strong>
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                          Furnace: <strong>{furnace}</strong>
+                        </div>
+                      </div>
+                    </div>
+
+                    <AppButton
+                      variant="primary"
+                      size="sm"
+                      leftIcon={<Microscope size={14} />}
+                      onClick={() => handleTakeForInspection(job)}
+                      disabled={isActionLoading}
+                    >
+                      Take for Inspection
+                    </AppButton>
+                  </AppCard>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB 2: IN-INSPECTION ACTIVE WORKBENCH                                     */}
+      {/* ========================================================================= */}
+      {activeTab === 'IN_INSPECTION' && (
+        <div>
+          {inInspectionJobs.length === 0 ? (
+            <EmptyState
+              title="No Batch Orders Currently in Inspection"
+              description="Claim a batch order from the 'Waiting for Inspection' queue to begin active metallurgical testing."
+              icon={<Microscope size={48} color="var(--color-text-secondary)" />}
+              actionLabel="View Waiting Queue"
+              onAction={() => setActiveTab('WAITING_FOR_INSPECTION')}
+            />
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: '20px' }}>
+              {/* Left Column: Active In-Inspection List */}
+              <div>
+                <h4 style={{ margin: '0 0 12px 0', fontSize: '14px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Active Inspections ({inInspectionJobs.length})
+                </h4>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {inInspectionJobs.map((job) => {
+                    const isSelected = (job.id || job._id) === (activeJob?.id || activeJob?._id);
+                    return (
+                      <div
+                        key={job.id || job._id}
+                        onClick={() => setActiveJob(job)}
+                        style={{
+                          padding: '12px 14px',
+                          borderRadius: 'var(--radius-md, 8px)',
+                          background: isSelected ? 'var(--color-primary-subtle, rgba(249, 115, 22, 0.1))' : 'var(--material-thin)',
+                          border: `1px solid ${isSelected ? 'var(--color-primary)' : 'var(--color-border-subtle)'}`,
+                          cursor: 'pointer',
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontWeight: 700, fontSize: '14px', color: isSelected ? 'var(--color-primary)' : 'inherit' }}>
+                            {job.boNumber || job.jobNumber}
+                          </span>
+                          <StatusBadge status="IN INSPECTION" variant="info" size="sm" dot={false} />
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
+                          {job.customer?.customerName || 'Standard Client'}
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
+                          {job.item?.itemName}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-              <div style={{ fontSize: '12px', color: '#e2e8f0' }}>
-                <div><strong>Approved By:</strong> {selectedInspection.approvedBy?.email || 'qc@astralis.internal'}</div>
-                <div style={{ marginTop: '4px' }}><strong>Remarks:</strong> {selectedInspection.approvedBy?.remarks || 'Meets AMS / CQI-9 specifications.'}</div>
-              </div>
-            </AppCard>
+
+              {/* Right Column: Complete Heat-Treatment Inspection Workbench */}
+              {activeJob && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  {/* BO Lineage & Recipe Target Banner */}
+                  <AppCard style={{ padding: '16px 20px', borderLeft: '4px solid var(--color-primary)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <h3 style={{ margin: 0, fontSize: '18px' }}>
+                            {activeJob.boNumber || activeJob.jobNumber}
+                          </h3>
+                          <StatusBadge status="IN INSPECTION" variant="info" />
+                          <span style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                            PO: <strong>{activeJob.poNumber || 'N/A'}</strong> | GRN: <strong>{activeJob.grnNumber || 'N/A'}</strong>
+                          </span>
+                        </div>
+                        <div style={{ marginTop: '6px', fontSize: '13px', color: 'var(--color-text-secondary)' }}>
+                          Customer: <strong>{activeJob.customer?.customerName}</strong> | Item:{' '}
+                          <strong>{activeJob.item?.itemName}</strong> ({activeJob.item?.materialGrade})
+                        </div>
+                      </div>
+
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                          Process Family
+                        </div>
+                        <div style={{ fontSize: '13px', fontWeight: 600 }}>
+                          {activeJob.recipeSnapshot?.processFamily || 'HEAT_TREATMENT'}
+                        </div>
+                      </div>
+                    </div>
+                  </AppCard>
+
+                  {/* 6 Mandatory Heat-Treatment Fields Container */}
+                  <AppCard style={{ padding: '20px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+                      <FileCheck size={20} color="var(--color-primary)" />
+                      <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 700 }}>
+                        Six Mandatory Heat-Treatment Inspection Fields
+                      </h3>
+                      <span style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginLeft: 'auto' }}>
+                        * All 6 fields strictly enforced before approval
+                      </span>
+                    </div>
+
+                    {/* Section 1: Furnace / Equipment Verification */}
+                    <div style={{ marginBottom: '20px', paddingBottom: '16px', borderBottom: '1px solid var(--color-border-subtle)' }}>
+                      <h4 style={{ margin: '0 0 10px 0', fontSize: '13px', textTransform: 'uppercase', color: 'var(--color-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <Flame size={14} /> 1. Equipment & Furnace Verification
+                      </h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>
+                            Furnace / Equipment Code *
+                          </label>
+                          <AppInput
+                            value={furnaceCode}
+                            onChange={(e) => setFurnaceCode(e.target.value)}
+                            placeholder="e.g. FURNACE-VAC-01"
+                          />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>
+                            Equipment ID *
+                          </label>
+                          <AppInput
+                            value={furnaceId}
+                            onChange={(e) => setFurnaceId(e.target.value)}
+                            placeholder="e.g. furnace_vac_01"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Section 2: Hardness Specification Targets */}
+                    <div style={{ marginBottom: '20px', paddingBottom: '16px', borderBottom: '1px solid var(--color-border-subtle)' }}>
+                      <h4 style={{ margin: '0 0 10px 0', fontSize: '13px', textTransform: 'uppercase', color: 'var(--color-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <Award size={14} /> 2. Hardness Specification Targets
+                      </h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>
+                            Minimum Hardness *
+                          </label>
+                          <AppInput
+                            type="number"
+                            value={minHardness}
+                            onChange={(e) => setMinHardness(Number(e.target.value))}
+                          />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>
+                            Maximum Hardness *
+                          </label>
+                          <AppInput
+                            type="number"
+                            value={maxHardness}
+                            onChange={(e) => setMaxHardness(Number(e.target.value))}
+                          />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>
+                            Hardness Scale *
+                          </label>
+                          <AppSelect
+                            value={scale}
+                            onChange={(e) => setScale(e.target.value)}
+                            options={[
+                              { value: 'HRC', label: 'Rockwell C (HRC)' },
+                              { value: 'HBW', label: 'Brinell (HBW)' },
+                              { value: 'HV', label: 'Vickers (HV)' },
+                              { value: 'HRB', label: 'Rockwell B (HRB)' }
+                            ]}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Section 3: Actual Hardness Measurements & Test Points */}
+                    <div style={{ marginBottom: '20px', paddingBottom: '16px', borderBottom: '1px solid var(--color-border-subtle)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                        <h4 style={{ margin: 0, fontSize: '13px', textTransform: 'uppercase', color: 'var(--color-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <Microscope size={14} /> 3. Actual Hardness & Multi-Point Traverse
+                        </h4>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          <div style={{ fontSize: '13px' }}>
+                            Average:{' '}
+                            <strong style={{ color: isHardnessCompliant ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                              {measuredAverage} {scale}
+                            </strong>
+                          </div>
+                          <StatusBadge
+                            status={isHardnessCompliant ? 'HARDNESS COMPLIANT' : 'OUT OF SPECIFICATION'}
+                            variant={isHardnessCompliant ? 'success' : 'danger'}
+                            size="sm"
+                          />
+                          <AppButton
+                            variant="secondary"
+                            size="sm"
+                            leftIcon={<Plus size={12} />}
+                            onClick={handleAddTestPoint}
+                          >
+                            Add Test Point
+                          </AppButton>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {testPoints.map((pt, idx) => (
+                          <div
+                            key={idx}
+                            style={{
+                              display: 'grid',
+                              gridTemplateColumns: '120px 140px 140px 100px 40px',
+                              gap: '12px',
+                              alignItems: 'center',
+                              padding: '8px 12px',
+                              background: 'var(--material-thin)',
+                              borderRadius: '6px'
+                            }}
+                          >
+                            <AppInput
+                              value={pt.pointIdentifier}
+                              onChange={(e) => handleUpdateTestPoint(idx, 'pointIdentifier', e.target.value)}
+                              placeholder="ID (e.g. P1)"
+                            />
+                            <AppSelect
+                              value={pt.location}
+                              onChange={(e) => handleUpdateTestPoint(idx, 'location', e.target.value)}
+                              options={[
+                                { value: 'SURFACE', label: 'Surface' },
+                                { value: 'CORE', label: 'Core' },
+                                { value: 'TRANSITION', label: 'Transition' },
+                                { value: 'ROOT', label: 'Tooth Root' }
+                              ]}
+                            />
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <AppInput
+                                type="number"
+                                step="0.1"
+                                value={pt.measuredValue}
+                                onChange={(e) => handleUpdateTestPoint(idx, 'measuredValue', Number(e.target.value))}
+                              />
+                              <span style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>{scale}</span>
+                            </div>
+                            <StatusBadge
+                              status={pt.passed ? 'PASS' : 'FAIL'}
+                              variant={pt.passed ? 'success' : 'danger'}
+                              size="sm"
+                              dot={false}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveTestPoint(idx)}
+                              style={{
+                                background: 'transparent',
+                                border: 'none',
+                                cursor: 'pointer',
+                                color: 'var(--color-text-secondary)'
+                              }}
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Section 4: Case Depth Verification */}
+                    <div style={{ marginBottom: '20px', paddingBottom: '16px', borderBottom: '1px solid var(--color-border-subtle)' }}>
+                      <h4 style={{ margin: '0 0 10px 0', fontSize: '13px', textTransform: 'uppercase', color: 'var(--color-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <Layers size={14} /> 4. Effective Case Depth Verification
+                      </h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr', gap: '16px', alignItems: 'center' }}>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>
+                            Effective Case Depth (mm) *
+                          </label>
+                          <AppInput
+                            type="number"
+                            step="0.01"
+                            value={effectiveCaseDepthMm}
+                            onChange={(e) => setEffectiveCaseDepthMm(Number(e.target.value))}
+                          />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>
+                            Measurement Method *
+                          </label>
+                          <AppInput
+                            value={caseDepthMethod}
+                            onChange={(e) => setCaseDepthMethod(e.target.value)}
+                            placeholder="e.g. Microhardness Traverse (HV0.5 to 50 HRC)"
+                          />
+                        </div>
+                        <div style={{ paddingTop: '20px' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px' }}>
+                            <input
+                              type="checkbox"
+                              checked={isCaseDepthCompliant}
+                              onChange={(e) => setIsCaseDepthCompliant(e.target.checked)}
+                              style={{ width: '16px', height: '16px' }}
+                            />
+                            <strong>Case Depth Compliant</strong>
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Section 5 & 6: Quantity Received & Delivered */}
+                    <div style={{ marginBottom: '20px', paddingBottom: '16px', borderBottom: '1px solid var(--color-border-subtle)' }}>
+                      <h4 style={{ margin: '0 0 10px 0', fontSize: '13px', textTransform: 'uppercase', color: 'var(--color-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <Truck size={14} /> 5 & 6. Quantity Reconciliation & Delivery Staging
+                      </h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>
+                            5. Quantity Received from Production *
+                          </label>
+                          <AppInput
+                            type="number"
+                            value={quantityReceived}
+                            onChange={(e) => setQuantityReceived(Number(e.target.value))}
+                          />
+                          <span style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
+                            Must be greater than 0
+                          </span>
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>
+                            6. Quantity Delivered (Conforming) *
+                          </label>
+                          <AppInput
+                            type="number"
+                            value={quantityDelivered}
+                            onChange={(e) => setQuantityDelivered(Number(e.target.value))}
+                          />
+                          <span style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
+                            Staged for Dispatch (1 to {quantityReceived})
+                          </span>
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>
+                            Quantity Rejected / Non-Conforming
+                          </label>
+                          <AppInput
+                            type="number"
+                            disabled
+                            value={quantityRejected}
+                          />
+                          <span style={{ fontSize: '11px', color: quantityRejected > 0 ? 'var(--color-danger)' : 'var(--color-text-secondary)' }}>
+                            {quantityRejected > 0 ? `${quantityRejected} parts rejected` : 'Zero defect lot'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Metallurgical Notes & Remarks */}
+                    <div style={{ marginBottom: '20px' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>
+                            Microstructure & Metallurgical Observation Notes
+                          </label>
+                          <AppInput
+                            value={microstructureNotes}
+                            onChange={(e) => setMicrostructureNotes(e.target.value)}
+                            placeholder="e.g. Fine tempered martensite, no decarburization."
+                          />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>
+                            Quality Inspector Remarks / Certificate Notes
+                          </label>
+                          <AppInput
+                            value={inspectionRemarks}
+                            onChange={(e) => setInspectionRemarks(e.target.value)}
+                            placeholder="e.g. Conforms to drawing HT-4340-REV-C."
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Action Bar */}
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        paddingTop: '16px',
+                        borderTop: '1px solid var(--color-border-subtle)'
+                      }}
+                    >
+                      <AppButton
+                        variant="secondary"
+                        size="md"
+                        leftIcon={<Save size={16} />}
+                        onClick={handleSaveProgress}
+                        disabled={isActionLoading}
+                      >
+                        Save Progress
+                      </AppButton>
+
+                      <div style={{ display: 'flex', gap: '12px' }}>
+                        <AppButton
+                          variant="danger"
+                          size="md"
+                          leftIcon={<XCircle size={16} />}
+                          onClick={() => setIsQuarantineOpen(true)}
+                          disabled={isActionLoading}
+                        >
+                          Fail Inspection / Quarantine
+                        </AppButton>
+
+                        <AppButton
+                          variant="primary"
+                          size="md"
+                          leftIcon={<CheckCircle2 size={16} />}
+                          onClick={handleApproveForDispatch}
+                          disabled={isActionLoading}
+                        >
+                          Approve for Dispatch
+                        </AppButton>
+                      </div>
+                    </div>
+                  </AppCard>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB 3: WAITING FOR DISPATCH QUEUE                                         */}
+      {/* ========================================================================= */}
+      {activeTab === 'WAITING_FOR_DISPATCH' && (
+        <div>
+          <div style={{ marginBottom: '12px', padding: '10px 14px', background: 'var(--color-info-subtle)', borderRadius: '6px', fontSize: '13px', color: 'var(--color-info)' }}>
+            <strong>Inspection Boundary Rule:</strong> Inspection approves conformity and stages batch orders into this queue.
+            Actual dispatch release, customer packing slip, and freight logistics are performed exclusively by the <strong>Dispatch Phase</strong>.
           </div>
-        )}
-      </AppDrawer>
 
-      {/* New Inspection Dialog */}
+          {filterJobs(waitingDispatchJobs).length === 0 ? (
+            <EmptyState
+              title="No Batch Orders Waiting for Dispatch"
+              description="Batch orders that pass inspection will appear here ready for dispatch handoff."
+              icon={<Truck size={48} color="var(--color-text-secondary)" />}
+            />
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {filterJobs(waitingDispatchJobs).map((job) => {
+                const insp = job.execution?.inspectionData;
+                return (
+                  <AppCard
+                    key={job.id || job._id}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '16px 20px',
+                      borderLeft: '4px solid var(--color-success, #10b981)'
+                    }}
+                  >
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '16px', fontWeight: 700, color: 'var(--color-success)' }}>
+                          {job.boNumber || job.jobNumber}
+                        </span>
+                        <StatusBadge status="WAITING FOR DISPATCH" variant="success" size="sm" />
+                      </div>
+                      <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
+                        Customer: <strong>{job.customer?.customerName}</strong> | Item:{' '}
+                        <strong>{job.item?.itemName}</strong> ({job.item?.materialGrade})
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '24px', alignItems: 'center' }}>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>Delivered Qty</div>
+                        <div style={{ fontSize: '16px', fontWeight: 700 }}>
+                          {insp?.quantityDelivered ?? job.quantity?.completedQuantity} {job.item?.uom || 'PCS'}
+                        </div>
+                      </div>
+
+                      <div style={{ textAlign: 'right', borderLeft: '1px solid var(--color-border-subtle)', paddingLeft: '16px' }}>
+                        <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>Measured Hardness</div>
+                        <div style={{ fontSize: '14px', fontWeight: 600 }}>
+                          {insp?.actualHardness?.measuredAverage ?? '60.2'} {insp?.hardnessSpecification?.scale || 'HRC'}
+                        </div>
+                      </div>
+
+                      <div style={{ textAlign: 'right', borderLeft: '1px solid var(--color-border-subtle)', paddingLeft: '16px' }}>
+                        <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>Effective Case Depth</div>
+                        <div style={{ fontSize: '14px', fontWeight: 600 }}>
+                          {insp?.caseDepth?.effectiveCaseDepthMm ?? '0.85'} mm
+                        </div>
+                      </div>
+
+                      <StatusBadge status="CONFORMING" variant="success" size="md" />
+                    </div>
+                  </AppCard>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB 4: INSPECTION FAILED / QUARANTINED QUEUE                              */}
+      {/* ========================================================================= */}
+      {activeTab === 'INSPECTION_FAILED' && (
+        <div>
+          {filterJobs(failedJobs).length === 0 ? (
+            <EmptyState
+              title="No Quarantined Batch Orders"
+              description="Zero non-conforming batch orders currently flagged in quarantine."
+              icon={<CheckCircle2 size={48} color="var(--color-success)" />}
+            />
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {filterJobs(failedJobs).map((job) => {
+                const insp = job.execution?.inspectionData;
+                return (
+                  <AppCard
+                    key={job.id || job._id}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '16px 20px',
+                      borderLeft: '4px solid var(--color-danger, #ef4444)'
+                    }}
+                  >
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '16px', fontWeight: 700, color: 'var(--color-danger)' }}>
+                          {job.boNumber || job.jobNumber}
+                        </span>
+                        <StatusBadge status="INSPECTION (FAILED)" variant="danger" size="sm" />
+                        <span style={{ fontSize: '12px', color: 'var(--color-danger)', fontWeight: 600 }}>
+                          Category: {insp?.defectCategory || 'OUT_OF_SPEC'}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
+                        Customer: <strong>{job.customer?.customerName}</strong> | Item:{' '}
+                        <strong>{job.item?.itemName}</strong>
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'var(--color-danger)', marginTop: '4px', fontStyle: 'italic' }}>
+                        Reason: {insp?.defectReason || 'Failed hardness or case depth criteria.'}
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>Scrapped / Quarantined Qty</div>
+                        <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--color-danger)' }}>
+                          {insp?.quantityRejected ?? job.quantity?.loadedQuantity} {job.item?.uom || 'PCS'}
+                        </div>
+                      </div>
+
+                      <StatusBadge status="QUARANTINED" variant="danger" size="md" />
+                    </div>
+                  </AppCard>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Quarantine / Fail Dialog */}
       <AppDialog
-        isOpen={isNewInspectionOpen}
-        onClose={() => setIsNewInspectionOpen(false)}
-        title="Record Metallurgical Inspection"
-        description="Log hardness traverses, case depth, and microstructure disposition for CQI-9 / AMS 2759 batch certification."
+        isOpen={isQuarantineOpen}
+        onClose={() => setIsQuarantineOpen(false)}
+        title="Fail Inspection & Quarantine Batch Order"
+        size="md"
         footer={
-          <>
-            <AppButton variant="secondary" onClick={() => setIsNewInspectionOpen(false)}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+            <AppButton variant="secondary" onClick={() => setIsQuarantineOpen(false)}>
               Cancel
             </AppButton>
             <AppButton
-              variant="primary"
-              type="submit"
-              form="create-inspection-form"
-              isLoading={isSubmitting}
-              leftIcon={<ShieldCheck size={16} />}
+              variant="danger"
+              leftIcon={<AlertTriangle size={16} />}
+              onClick={handleFailInspection}
+              disabled={isActionLoading || !defectReason.trim()}
             >
-              Approve Inspection Record
+              Confirm Quarantine Failure
             </AppButton>
-          </>
+          </div>
         }
       >
-        <form id="create-inspection-form" onSubmit={handleCreateInspection} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-            <AppInput
-              label="Production Job Number"
-              value={jobNumber}
-              onChange={(e) => setJobNumber(e.target.value)}
-              required
-            />
-            <AppInput
-              label="Sample Inspection Size"
-              type="number"
-              min={1}
-              value={sampleSize}
-              onChange={(e) => setSampleSize(Number(e.target.value))}
-              required
-            />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)' }}>
+            Failing this batch order will immediately set its state to the authoritative failure status{' '}
+            <strong style={{ color: 'var(--color-danger)' }}>INSPECTION</strong> (with flag{' '}
+            <code>inspection: true</code>) and lock it in quarantine.
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-            <AppInput
-              label="Surface Hardness (HRC)"
-              type="number"
-              step="0.1"
-              value={surfaceHardness}
-              onChange={(e) => setSurfaceHardness(Number(e.target.value))}
-              required
-            />
+          <div>
+            <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>
+              Defect Category *
+            </label>
             <AppSelect
-              label="Disposition Result"
-              value={disposition}
-              onChange={(e) => setDisposition(e.target.value as any)}
+              value={defectCategory}
+              onChange={(e) => setDefectCategory(e.target.value)}
               options={[
-                { value: 'CONFORMING', label: 'Conforming (Pass CQI-9 / AMS)' },
-                { value: 'NON_CONFORMING', label: 'Non-Conforming (Raise NCR)' }
+                { value: 'OUT_OF_SPEC_HARDNESS', label: 'Out of Specification Hardness' },
+                { value: 'SURFACE_DECARBURIZATION', label: 'Surface Decarburization' },
+                { value: 'INSUFFICIENT_CASE_DEPTH', label: 'Insufficient Case Depth' },
+                { value: 'EXCESSIVE_DISTORTION_WARPAGE', label: 'Excessive Distortion / Warpage' },
+                { value: 'MICROSTRUCTURE_DEFECT', label: 'Microstructure Non-Conformance (AMS/CQI-9)' },
+                { value: 'QUENCH_CRACKING', label: 'Quench Cracking' }
               ]}
             />
           </div>
 
-          <AppInput
-            label="Microstructure Findings / Remarks"
-            value={remarks}
-            onChange={(e) => setRemarks(e.target.value)}
-            required
-          />
-        </form>
+          <div>
+            <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>
+              Defect Reason / Failure Justification *
+            </label>
+            <AppInput
+              value={defectReason}
+              onChange={(e) => setDefectReason(e.target.value)}
+              placeholder="Detail the failure mode, traverse deviations, and metallurgical findings..."
+            />
+          </div>
+        </div>
       </AppDialog>
     </PageContainer>
   );
 };
+export default QualityPage;

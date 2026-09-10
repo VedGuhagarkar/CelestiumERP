@@ -29,12 +29,30 @@ export interface IProductionJobRepository {
   findWaitingForProductionQueue(tenantId: string, filters?: any): Promise<ProductionJobDocument[]>;
   findInProductionQueue(tenantId: string, filters?: any): Promise<ProductionJobDocument[]>;
   findWaitingForInspectionQueue(tenantId: string, filters?: any): Promise<ProductionJobDocument[]>;
+  findInInspectionQueue(tenantId: string, filters?: any): Promise<ProductionJobDocument[]>;
+  findWaitingForDispatchQueue(tenantId: string, filters?: any): Promise<ProductionJobDocument[]>;
+  findInspectionFailedQueue(tenantId: string, filters?: any): Promise<ProductionJobDocument[]>;
   atomicTakeForProduction(
     tenantId: string,
     jobId: string,
     updateData: any
   ): Promise<ProductionJobDocument | null>;
   atomicApproveForInspection(
+    tenantId: string,
+    jobId: string,
+    updateData: any
+  ): Promise<ProductionJobDocument | null>;
+  atomicTakeForInspection(
+    tenantId: string,
+    jobId: string,
+    updateData: any
+  ): Promise<ProductionJobDocument | null>;
+  atomicApproveForDispatch(
+    tenantId: string,
+    jobId: string,
+    updateData: any
+  ): Promise<ProductionJobDocument | null>;
+  atomicFailInspection(
     tenantId: string,
     jobId: string,
     updateData: any
@@ -132,8 +150,20 @@ export class ProductionJobRepository
         (existing.workflowState as any)?.waitingForInspection ||
         existing.inInspection ||
         (existing.workflowState as any)?.inInspection ||
+        existing.waitingForDispatch ||
+        (existing.workflowState as any)?.waitingForDispatch ||
+        existing.dispatched ||
+        (existing.workflowState as any)?.dispatched ||
+        existing.inspection ||
+        (existing.workflowState as any)?.inspection ||
         existing.status === 'WAITING_FOR_INSPECTION' ||
+        existing.status === 'IN_INSPECTION' ||
+        existing.status === 'WAITING_FOR_DISPATCH' ||
+        existing.status === 'INSPECTION' ||
         existing.status === 'QUALITY_CHECK' ||
+        existing.status === 'STORAGE' ||
+        existing.status === 'READY_FOR_DISPATCH' ||
+        existing.status === 'DISPATCHED' ||
         existing.status === 'COMPLETED';
 
       if (isPostProduction) {
@@ -168,7 +198,7 @@ export class ProductionJobRepository
         ];
         const isAttemptingPostProdField = postProdForbiddenFields.some((field) =>
           updateKeys.includes(field) ||
-          (field.includes('.') && updateKeys.some((k) => k.startsWith(field.split('.')[0])))
+          updateKeys.some((k) => k === field || k.startsWith(field + '.'))
         );
         if (isAttemptingPostProdField) {
           throw new BadRequestError(
@@ -527,6 +557,157 @@ export class ProductionJobRepository
             { 'workflowState.inProduction': true },
             { status: 'IN_PRODUCTION' },
             { status: 'IN_PROGRESS' }
+          ]
+        }
+      ]
+    };
+
+    return this.model.findOneAndUpdate(filter, updateData, { new: true }).exec();
+  }
+
+  public async findInInspectionQueue(
+    tenantId: string,
+    filters: any = {}
+  ): Promise<ProductionJobDocument[]> {
+    const query: any = {
+      tenantId,
+      $or: [
+        { inInspection: true },
+        { 'workflowState.inInspection': true },
+        { status: 'IN_INSPECTION' }
+      ],
+      isDeleted: false
+    };
+
+    if (filters.furnaceId) query['equipmentAssignment.furnaceId'] = filters.furnaceId;
+
+    return this.model
+      .find(query)
+      .sort({ updatedAt: -1 })
+      .exec();
+  }
+
+  public async findWaitingForDispatchQueue(
+    tenantId: string,
+    filters: any = {}
+  ): Promise<ProductionJobDocument[]> {
+    const query: any = {
+      tenantId,
+      $or: [
+        { waitingForDispatch: true },
+        { 'workflowState.waitingForDispatch': true },
+        { status: 'WAITING_FOR_DISPATCH' },
+        { status: 'STORAGE' },
+        { status: 'READY_FOR_DISPATCH' }
+      ],
+      isDeleted: false
+    };
+
+    return this.model
+      .find(query)
+      .sort({ updatedAt: -1 })
+      .exec();
+  }
+
+  public async findInspectionFailedQueue(
+    tenantId: string,
+    filters: any = {}
+  ): Promise<ProductionJobDocument[]> {
+    const query: any = {
+      tenantId,
+      $or: [
+        { inspection: true },
+        { 'workflowState.inspection': true },
+        { status: 'INSPECTION' }
+      ],
+      isDeleted: false
+    };
+
+    return this.model
+      .find(query)
+      .sort({ updatedAt: -1 })
+      .exec();
+  }
+
+  public async atomicTakeForInspection(
+    tenantId: string,
+    jobId: string,
+    updateData: any
+  ): Promise<ProductionJobDocument | null> {
+    const identifierMatches: any[] = [{ jobNumber: jobId.toUpperCase() }, { boNumber: jobId.toUpperCase() }];
+    if (mongoose.isValidObjectId(jobId)) {
+      identifierMatches.unshift({ _id: jobId });
+    }
+
+    const filter: any = {
+      tenantId,
+      $or: identifierMatches,
+      isDeleted: false,
+      $and: [
+        {
+          $or: [
+            { waitingForInspection: true },
+            { 'workflowState.waitingForInspection': true },
+            { status: 'WAITING_FOR_INSPECTION' },
+            { status: 'QUALITY_CHECK' }
+          ]
+        }
+      ],
+      inInspection: { $ne: true },
+      'workflowState.inInspection': { $ne: true }
+    };
+
+    return this.model.findOneAndUpdate(filter, updateData, { new: true }).exec();
+  }
+
+  public async atomicApproveForDispatch(
+    tenantId: string,
+    jobId: string,
+    updateData: any
+  ): Promise<ProductionJobDocument | null> {
+    const identifierMatches: any[] = [{ jobNumber: jobId.toUpperCase() }, { boNumber: jobId.toUpperCase() }];
+    if (mongoose.isValidObjectId(jobId)) {
+      identifierMatches.unshift({ _id: jobId });
+    }
+
+    const filter: any = {
+      tenantId,
+      $or: identifierMatches,
+      isDeleted: false,
+      $and: [
+        {
+          $or: [
+            { inInspection: true },
+            { 'workflowState.inInspection': true },
+            { status: 'IN_INSPECTION' }
+          ]
+        }
+      ]
+    };
+
+    return this.model.findOneAndUpdate(filter, updateData, { new: true }).exec();
+  }
+
+  public async atomicFailInspection(
+    tenantId: string,
+    jobId: string,
+    updateData: any
+  ): Promise<ProductionJobDocument | null> {
+    const identifierMatches: any[] = [{ jobNumber: jobId.toUpperCase() }, { boNumber: jobId.toUpperCase() }];
+    if (mongoose.isValidObjectId(jobId)) {
+      identifierMatches.unshift({ _id: jobId });
+    }
+
+    const filter: any = {
+      tenantId,
+      $or: identifierMatches,
+      isDeleted: false,
+      $and: [
+        {
+          $or: [
+            { inInspection: true },
+            { 'workflowState.inInspection': true },
+            { status: 'IN_INSPECTION' }
           ]
         }
       ]

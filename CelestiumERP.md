@@ -279,6 +279,8 @@ The in-memory `DomainEventBus` manages 91 strongly typed domain events across 11
 | **Jobs** | `Job.Created` | New production job work order is drafted. | Audit logging, notification dispatch. |
 | **Jobs** | `Job.InProduction` | Batch order atomically taken into production (`waiting_for_production` -> `in_production`). | Clears prior flags, establishes single active flag `inProduction = true`, locks from unrelated modifications. |
 | **Jobs** | `Job.ApprovedForInspection` | Production execution completed and approved for inspection (`in_production` -> `waiting_for_inspection`). | Clears prior flags, activates `waitingForInspection = true`, surfaces BO in Quality Inspection queue. |
+| **Jobs** | `Job.InspectionApproved` | Batch order heat-treatment inspection passed and approved for dispatch (`in_inspection` -> `waiting_for_dispatch`). | Clears prior flags, activates `waitingForDispatch = true`, transitions BO to dispatch staging queue (without auto-dispatching). |
+| **Jobs** | `Job.InspectionFailed` | Batch order heat-treatment inspection rejected and quarantined (`in_inspection` -> `inspection`). | Clears prior flags, activates `inspection = true` failure/quarantine flag, logs non-conformance reason. |
 | **Jobs** | `Job.Scheduled` | Job assigned to furnace time slot. | Machine calendar update, operator notification. |
 | **Jobs** | `Job.Started` | Furnace charge entry, heating cycle timer started. | Machine status `RUNNING`, live telemetry streaming. |
 | **Jobs** | `Job.Paused` | Thermal cycle temporarily paused. | Machine status `IDLE`, downtime timer started. |
@@ -980,11 +982,24 @@ _No direct HTTP routes mounted for this internal domain service._
   - `IProcessDetailRow`: 15-position process details row (`position: 1..15`, `stageName`, `targetTemp`, `targetDurationMinutes`, `quenchMedium`, `atmosphere`, `tolerance`, `operatorNotes`, `isCompleted`).
   - `IBatchOrderGenealogy`: Immutable source lineage (`purchaseOrderId`, `purchaseOrderNumber`, `grnId`, `grnNumber`, `itemId`, `itemPartNumber`, `materialName`, `recipeId`, `recipeCode`, `isImmutable: true`).
   - `IBatchOrderProductionReadiness`: 10-point readiness check payload (`isProductionReady`, `reasons`, `checks`, `evaluatedAt`).
-  - `IJobWorkflowState`: Single-active boolean state flags with invariant $\sum \text{flag}_i = 1$ (`waitingForProduction`, `inProduction`, `waitingForInspection`, `scheduled`, `inProgress`, `completed`, `cancelled`, `onHold`).
+  - `IBatchOrderWorkflowState`: Single-active boolean state flags with invariant $\sum \text{flag}_i = 1$ across `{ waitingForProduction, inProduction, waitingForInspection, inInspection, waitingForDispatch, dispatched, inspection }`.
+  - `IJobWorkflowState`: Legacy interface backward-compatible with `IBatchOrderWorkflowState`.
+  - `IHeatTreatmentInspectionData`: Authoritative sub-document capturing the Six Mandatory Heat-Treatment Fields:
+    1. Furnace/equipment identification (`furnaceId`, `furnaceCode`).
+    2. Hardness specification (`minHardness`, `maxHardness`, `scale`: `HRC` | `HBW` | `HV` | `HRB`).
+    3. Actual hardness test points and compliant average (`measuredAverage`, `testPoints: [{ pointIdentifier, measuredValue, location }]`, `isHardnessCompliant`).
+    4. Case depth (`effectiveCaseDepthMm`, `isCaseDepthCompliant`, `caseDepthMethod`, `totalCaseDepthMm`).
+    5. Quantity received (`quantityReceived > 0`).
+    6. Quantity delivered (`0 < quantityDelivered <= quantityReceived`, with `quantityRejected = quantityReceived - quantityDelivered`).
+    - Quality sign-off metadata: `microstructure`, `visualInspection`, `inspectorId`, `inspectorName`, `inspectedAt`, `concessionReason`, `rejectionReason`, `defectCategory`.
   - `IProductionExecution`: Reconstructed execution state tracking furnace, operator, shift, loaded piece count, loaded weight, completed piece count, scrapped piece count, furnace charge parameters (`furnaceCharge`), recipe stage progress logs (`IJobStageProgress[]`), and approval metadata.
   - `RecordFurnaceChargeDto`: Authoritative furnace charge input payload (`furnaceId`, `shiftId`, `loadNumber`, `loadedPieces`, `loadedWeightKg`, `setpointTempC`, `atmosphereType`, `notes`).
   - `SaveProductionDataDto`: Partial production execution payload allowing incremental saves of furnace charge, stage progress actuals, and operator thermal notes without triggering workflow state transitions.
   - `ApproveForInspectionDto`: Authoritative approval payload (`completedQuantity`, `scrappedQuantity`, `notes`, `concessionApproved`, `concessionReason`).
+  - `TakeForInspectionDto`: Inspector assignment payload (`inspectorId`, `notes`).
+  - `RecordHeatTreatmentInspectionDto`: Quality inspection intermediate data entry payload.
+  - `ApproveInspectionForDispatchDto`: Complete payload fulfilling all 6 mandatory heat-treatment fields to release BO to dispatch staging.
+  - `FailInspectionDto`: Quality rejection payload recording defect category and failure explanation.
   - `IJobStageProgress`: Authoritative Recipe execution progress telemetry: `stageName`, `sequence`, `targetTemperatureC`, `actualTemperatureC`, `targetDurationMinutes`, `actualDurationMinutes`, `temperatureDeviationC`, `durationDeviationMinutes`, `isCompliant`, `deviationWarning`, `quenchMedium`, `quenchParameters` (`medium`, `agitationSpeedRpm`, `mediaInitialTempC`, `mediaFinalTempC`), `atmosphereLevel`, `atmosphereDetails`, `operatorNotes`, `loggedAt`, `loggedBy`.
   - `IProductionExecutionReadiness`: Execution readiness audit evaluating all recipe stages completed, piece count balance ($Q_{\text{completed}} + Q_{\text{scrapped}} = Q_{\text{loaded}}$), furnace equipment assigned, and operator assigned.
   - `IJobStageLog`, `IJobDowntimeLog`, `IJobTransitionLog`: Telemetry and lifecycle logs.
@@ -992,9 +1007,16 @@ _No direct HTTP routes mounted for this internal domain service._
 #### Repositories
 - **`ProductionJobRepository`** (`production-job.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
   - Production Phase Methods: `findWaitingForProductionQueue()`, `findInProductionQueue()`, `findWaitingForInspectionQueue()`, `atomicTakeForProduction()`, `atomicApproveForInspection()`, `findInProductionJobsForPo(tenantId, poId)`, `findInProductionJobsForGrn(tenantId, grnId)`.
+  - Inspection Phase Methods:
+    - `findInInspectionQueue(tenantId)`: Returns batch orders actively in inspection (`workflowState.inInspection: true`).
+    - `findWaitingForDispatchQueue(tenantId)`: Returns batch orders approved by quality inspection waiting for dispatch staging (`workflowState.waitingForDispatch: true`).
+    - `findInspectionFailedQueue(tenantId)`: Returns batch orders rejected/quarantined by quality inspection (`workflowState.inspection: true`).
+    - `atomicTakeForInspection(tenantId, id, update)`: Atomically transitions BO from `waitingForInspection` to `inInspection`, enforcing single-winner concurrency lock (`409 Conflict` on race).
+    - `atomicApproveForDispatch(tenantId, id, update)`: Atomically transitions BO from `inInspection` to `waitingForDispatch`, persisting complete inspection sub-document and locking post-production execution data.
+    - `atomicFailInspection(tenantId, id, update)`: Atomically transitions BO from `inInspection` to `inspection` (quarantine state) with rejection disposition notes.
   - Concurrency & Lock Enforcement:
     - `updateById()` strictly intercepts update attempts on in-production jobs, preventing mutation of processDetails, timeline, quantity, items, recipe snapshots, and source genealogy.
-    - Post-Production Lock & Recipe Protection: `updateById()` permanently protects `recipeSnapshot` against substitution (`Recipe Protection Violation`), and intercepts updates on completed jobs in `waitingForInspection`, `inInspection`, `QUALITY_CHECK`, or `COMPLETED`, rejecting modifications to furnace charges, stage progress actuals, process details, customer, item, PO/GRN references, quantities, and furnace/operator assignments with `Post-Production Lock Violation`.
+    - Post-Production Lock & Recipe Protection: `updateById()` permanently protects `recipeSnapshot` against substitution (`Recipe Protection Violation`), and intercepts updates on completed jobs in `waitingForInspection`, `inInspection`, `waitingForDispatch`, `dispatched`, or `inspection`, rejecting modifications to furnace charges, stage progress actuals, process details, customer, item, PO/GRN references, quantities, and furnace/operator assignments with `Post-Production Lock Violation`.
     - `atomicApproveForInspection()` asserts `status: 'IN_PRODUCTION' | 'IN_PROGRESS'` or `workflowState.inProduction: true`, preventing race conditions and multiple approvals (`409 Conflict`).
   - Planning Phase Methods: `generateNextJobNumber()`, `findJobByNumber()`, `findByPlanId()`, `findJobsByPlanId()`, `findByIdempotencyKey()`, `queryJobs()`, `findActiveQueueJobs()` (strictly delegates to `findWaitingForProductionQueue()`), `findConflictingJobs()`, `findEligiblePOs()`, `findEligibleGRNsForPO()`, `findEligiblePartsForGRN()`, `findActiveAllocationsForGRN()`.
 
@@ -1053,15 +1075,25 @@ _No direct HTTP routes mounted for this internal domain service._
       - **Furnace Charge State:** Surfaces active charge number, assigned furnace, shift, loaded piece count, loaded weight (kg), initial furnace temperature, and operator setup notes.
       - **Live Execution Readiness:** Verifies operational readiness (stages completed, piece count balance, equipment and operator assignment).
       - **State Awareness & Stale Protection:** Surfaces actionable execution permissions when `inProduction = true`, while enforcing read-only lock banners and disabled controls for historical/completed BOs.
+  - *Authoritative Inspection Phase Methods (Prompt 1 Reconstruction):*
+    - `getInInspectionQueue(tenantId)`: Surfaces batch orders actively undergoing inspection (`inInspection: true`).
+    - `getWaitingForDispatchQueue(tenantId)`: Surfaces batch orders approved by inspection awaiting dispatch release (`waitingForDispatch: true`).
+    - `getInspectionFailedQueue(tenantId)`: Surfaces batch orders rejected/quarantined by inspection (`inspection: true`).
+    - `getInspectionWorkbenchData(tenantId, id)`: Compiles comprehensive heat-treatment inspection workbench data: complete unbroken genealogy (`PO -> GRN -> BO`), recipe target limits, furnace charge parameters, execution telemetry, and current inspection sub-document.
+    - `takeForInspection(tenantId, id, actorId, dto)`: Atomically transitions BO from `waitingForInspection` to `inInspection`, establishes single active flag (`inInspection: true`), rejects concurrent claims with `409 Conflict`, assigns inspector identity, logs audit diff, and publishes domain event.
+    - `recordHeatTreatmentInspectionData(tenantId, id, actorId, dto)`: Validates active inspection status (`inInspection: true`), validates intermediate test readings against recipe limits, and saves partial inspection actuals without advancing state.
+    - `approveInspectionForDispatch(tenantId, id, actorId, dto)`: Validates all Six Mandatory Heat-Treatment Inspection Fields (furnace identification, specification limits, actual hardness readings with compliance flag, case depth evaluation, quantity received, quantity delivered), validates quantity balance ($Q_{\text{del}} \le Q_{\text{rec}}$, $Q_{\text{rej}} = Q_{\text{rec}} - Q_{\text{del}}$), atomically transitions to `waitingForDispatch: true` ($\sum \text{flag}_i = 1$), stages BO for dispatch without auto-dispatching, and publishes `Job.InspectionApproved`.
+    - `failInspection(tenantId, id, actorId, dto)`: Atomically transitions BO to quarantined failure state `inspection: true` ($\sum \text{flag}_i = 1$), records defect category, rejection reason, and inspector notes, and publishes `Job.InspectionFailed`.
   - *Planning Phase Methods:* `getEligiblePOs()`, `getEligibleGRNsForPO()`, `getEligiblePartsForGRN()`, `createBatchOrder()`, `getProcessDetails()`, `updateProcessDetails()`, `getBatchOrderGenealogy()`, `getBatchOrderProductionReadiness()`.
   - *Cleaned Up / Disabled:* `createDirectJob()` permanently disabled with `BadRequestError` to prevent un-genealogized work order bypass; legacy duplicate queue queries unified under `findWaitingForProductionQueue()`.
 
 #### Controllers
-- **`ProductionJobController`** (`production-job.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping for Batch Orders and Production Phase operations (including `getOperatorWorkspace`).
+- **`ProductionJobController`** (`production-job.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping for Batch Orders, Production Phase operations (including `getOperatorWorkspace`), and Quality Inspection Phase workflows (`takeForInspection`, `recordHeatTreatmentInspectionData`, `approveInspectionForDispatch`, `failInspection`, and inspection queue queries).
 
 #### Validators (Zod Schemas)
 - **`production-job.validator.ts`**: Exported Zod validation schemas:
   - Reconstructed Production Phase: `takeForProductionSchema`, `recordRecipeStageProgressSchema`, `recordFurnaceChargeSchema`, `saveProductionDataSchema` (with custom `superRefine` boundary rejection quarantining laboratory inspection fields: `surfaceHardness`, `coreHardness`, `caseDepth`, `surfaceHardnessHRC`, `coreHardnessHRC`, `caseDepthMm`, `microstructure`, `mechanical`, `pyrometryCertification`), `approveForInspectionSchema` (with custom `superRefine` inspection boundary rejection and conditional `concessionReason` validation).
+  - Reconstructed Inspection Phase: `takeForInspectionSchema`, `recordHeatTreatmentInspectionSchema`, `approveInspectionForDispatchSchema` (strictly enforcing all 6 mandatory heat-treatment inspection fields, positive quantities, and delivered $\le$ received), `failInspectionSchema` (requiring non-empty `rejectionReason` and `defectCategory`), `hardnessTestPointValidatorSchema` (supports flexible `pointIdentifier` and `measuredValue`).
   - Planning Phase: `createBatchOrderSchema`, `updateProcessDetailsSchema`, `getProcessDetailsSchema`, `getBatchOrderGenealogySchema`, `getBatchOrderProductionReadinessSchema`, `convertPlanToJobSchema`, `queryJobsSchema`, `getJobByIdSchema`, `updateJobSchema`.
 
 #### API Endpoints & Routes
@@ -1076,8 +1108,17 @@ _No direct HTTP routes mounted for this internal domain service._
   - `POST /api/v1/production-jobs/:id/save-production-data` (aliases `PUT /:id/production-data`) — Atomically saves partial production execution data without advancing the workflow state from `inProduction`. Protected with `requireAnyPermission(PRODUCTION_JOB_UPDATE, MACHINES_FURNACE_OPERATE)`.
   - `POST /api/v1/production-jobs/:id/recipe-progress` (aliases `POST /:id/recipe-stage-progress`, `POST /batch-orders/:id/recipe-progress`) — Records recipe stage milestone progress against the bound Recipe snapshot with strict process sequencing, planned vs actual thermal tracking, and non-silent deviation detection.
   - `GET /api/v1/production-jobs/:id/execution-readiness` — Evaluates recipe stage completeness and piece balance before QA handoff.
-  - `POST /api/v1/production-jobs/:id/approve-for-inspection` (aliases `POST /:id/approve-inspection`, `POST /batch-orders/:id/approve-for-inspection`) — Validates complete execution, evaluates tolerance excursions, enforces concession gating, sets `waitingForInspection = true`, removes from active production jobs, and hands off to Quality. Protected with `requireAnyPermission(PRODUCTION_JOB_COMPLETE, PRODUCTION_JOB_TRANSITION, PRODUCTION_JOB_UPDATE, MACHINES_FURNACE_OPERATE)`.
+  - `POST /api/v1/production-jobs/:id/approve-for-inspection` (alias `POST /batch-orders/:id/approve-for-inspection`) — Validates complete execution, evaluates tolerance excursions, enforces concession gating, sets `waitingForInspection = true`, removes from active production jobs, and hands off to Quality. Protected with `requireAnyPermission(PRODUCTION_JOB_COMPLETE, PRODUCTION_JOB_TRANSITION, PRODUCTION_JOB_UPDATE, MACHINES_FURNACE_OPERATE)`.
   - `GET /api/v1/production-jobs/:id/operator-workspace` (alias `GET /api/v1/batch-orders/:id/operator-workspace`) — Surfaces complete authoritative shop-floor operator workspace compilation (header context, read-only recipe specs, progress stepper, live furnace charge, execution readiness, and state awareness). Protected with `requireAnyPermission(PRODUCTION_JOB_VIEW, BATCH_ORDER_VIEW, MACHINES_FURNACE_OPERATE)`.
+- **Reconstructed Quality Inspection Phase Endpoints:**
+  - `GET /api/v1/production-jobs/in-inspection` — Returns batch orders actively undergoing heat-treatment inspection (`inInspection: true`). Protected with `requireAnyPermission(QC_INSPECT, QUALITY_INSPECTION_VIEW, PRODUCTION_JOB_VIEW)`.
+  - `GET /api/v1/production-jobs/waiting-for-dispatch` — Returns batch orders approved by QA and staged for dispatch (`waitingForDispatch: true`). Protected with `requireAnyPermission(QC_APPROVE, QUALITY_INSPECTION_VIEW, PRODUCTION_JOB_VIEW, DISPATCH_VIEW)`.
+  - `GET /api/v1/production-jobs/inspection-failed` — Returns batch orders rejected by QA and quarantined (`inspection: true`). Protected with `requireAnyPermission(QC_INSPECT, QUALITY_INSPECTION_VIEW, PRODUCTION_JOB_VIEW)`.
+  - `GET /api/v1/production-jobs/:id/inspection-workbench` — Returns unified inspection workbench data package (BO identity, genealogy, recipe specification limits, furnace charge actuals, stage execution logs, and inspection form actuals). Protected with `requireAnyPermission(QC_INSPECT, QUALITY_INSPECTION_VIEW, PRODUCTION_JOB_VIEW)`.
+  - `POST /api/v1/production-jobs/:id/take-for-inspection` (alias `POST /:id/take-inspection`) — Atomically takes BO into inspection (`waitingForInspection` -> `inInspection`), enforcing single-winner concurrency (`409 Conflict` on race) and single active flag ($\sum \text{flag}_i = 1$). Protected with `requireAnyPermission(QC_INSPECT, QUALITY_INSPECTION_UPDATE, PRODUCTION_JOB_UPDATE)`.
+  - `POST /api/v1/production-jobs/:id/inspection-data` — Saves intermediate heat-treatment inspection actuals without advancing state. Protected with `requireAnyPermission(QC_INSPECT, QUALITY_INSPECTION_UPDATE, PRODUCTION_JOB_UPDATE)`.
+  - `POST /api/v1/production-jobs/:id/approve-inspection` (alias `POST /:id/approve-dispatch`) — Validates all 6 mandatory heat-treatment inspection fields, validates quantity delivered vs received, atomically transitions BO to `waitingForDispatch: true` ($\sum \text{flags} = 1$), stages for dispatch without direct dispatching, and publishes `Job.InspectionApproved`. Protected with `requireAnyPermission(QC_APPROVE, QUALITY_INSPECTION_APPROVE, PRODUCTION_JOB_COMPLETE)`.
+  - `POST /api/v1/production-jobs/:id/fail-inspection` (alias `POST /:id/reject-inspection`) — Atomically transitions BO to failure/quarantine state `inspection: true` ($\sum \text{flags} = 1$), captures defect category and reason, and publishes `Job.InspectionFailed`. Protected with `requireAnyPermission(QC_REJECT, QUALITY_INSPECTION_REJECT, PRODUCTION_JOB_UPDATE)`.
 - **Planning Phase & Batch Order Endpoints:**
   - `GET /api/v1/production-jobs/eligible-pos` (also `/planning/eligible-pos`) — Returns POs with completed GRNs available for planning.
   - `GET /api/v1/production-jobs/pos/:poId/grns` (also `/planning/pos/:poId/grns`) — Returns eligible GRNs strictly linked to the specified PO.
@@ -1121,37 +1162,69 @@ _No direct HTTP routes mounted for this internal domain service._
 - `GET /api/v1/production-schedules` — Handled by `ProductionScheduleController`.
 - `GET /api/v1/production-schedules/:id` — Handled by `ProductionScheduleController`.
 
-### 5.20 Quality Inspection & In-Process Testing (`modules/quality-inspection`)
+### 5.20 Quality Inspection & Heat-Treatment Quality Phase (`modules/quality-inspection`)
 
-> **Business Purpose:** Orchestrates the 5-tier quality inspection lifecycle, certified inspector assignments, test recording, pass/fail dispositioning, and reinspection requests.
+> **Business Purpose:** Orchestrates the authoritative Heat-Treatment Inspection Phase (`waiting for inspection` $\longrightarrow$ `in inspection` $\longrightarrow$ `waiting for dispatch` OR `inspection` [quarantine]) and certified laboratory testing, enforcing the Six Mandatory Heat-Treatment Inspection Fields, atomic single-winner concurrency, recipe limit compliance, and strict dispatch staging boundaries.
 
 #### Models & Schemas
-- **`quality-inspection.model.ts`** — Mongoose model: ``. Exported interfaces: ``. Encapsulates schema definitions, compound tenant indexes, and data validation rules.
+- **`quality-inspection.model.ts`** — Mongoose model: `QualityInspection`. Encapsulates schema definitions, compound tenant indexes, and standalone inspection test data.
+- **`production-job.model.ts` (`IHeatTreatmentInspectionData`)** — Authoritative sub-document embedded on Batch Orders capturing:
+  1. Furnace identification (`furnaceId`, `furnaceCode`).
+  2. Hardness specification (`minHardness`, `maxHardness`, `scale`: HRC/HBW/HV/HRB).
+  3. Actual hardness test points (`testPoints: [{ pointIdentifier, measuredValue, location }]`, `measuredAverage`, `isHardnessCompliant`).
+  4. Case depth (`effectiveCaseDepthMm`, `isCaseDepthCompliant`, `caseDepthMethod`, `totalCaseDepthMm`).
+  5. Quantity received (`quantityReceived > 0`).
+  6. Quantity delivered (`0 < quantityDelivered <= quantityReceived`, `quantityRejected = quantityReceived - quantityDelivered`).
+  - Microstructure evaluation, visual inspection, inspector ID, sign-off timestamp, and rejection reason.
 
 #### Repositories
-- **`QualityInspectionRepository`** (`quality-inspection.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
-  - Methods: `create()`, `findById()`, `findByInspectionNumber()`, `findByJobId()`, `find()`, `queryInspections()`, `generateNextInspectionNumber()`.
+- **`QualityInspectionRepository`** (`quality-inspection.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated standalone inspection queries.
+- **`ProductionJobRepository`** (`production-job.repository.ts`): Powers the authoritative Batch Order Inspection Phase queues and atomic state transitions:
+  - `findWaitingForInspectionQueue()`, `findInInspectionQueue()`, `findWaitingForDispatchQueue()`, `findInspectionFailedQueue()`.
+  - `atomicTakeForInspection()`, `atomicApproveForDispatch()`, `atomicFailInspection()`.
 
 #### Services
-- **`QualityInspectionService`** (`quality-inspection.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
-  - Methods: `createInspection()`, `getInspections()`, `getInspectionById()`, `getInspectionByJobId()`, `assignInspector()`, `recordTestResults()`, `approveInspection()`, `rejectInspection()`, `requestReinspection()`.
+- **`QualityInspectionService`** (`quality-inspection.service.ts`): Manages standalone inspection records, inspector assignment, test results, and NCR escalation.
+- **`ProductionJobService`** (`production-job.service.ts`): Executes authoritative Batch Order Inspection Phase operations:
+  - `getWaitingForInspectionQueue()`, `getInInspectionQueue()`, `getWaitingForDispatchQueue()`, `getInspectionFailedQueue()`, `getInspectionWorkbenchData()`.
+  - `takeForInspection()`, `recordHeatTreatmentInspectionData()`, `approveInspectionForDispatch()`, `failInspection()`.
 
 #### Controllers
-- **`QualityInspectionController`** (`quality-inspection.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
+- **`QualityInspectionController`** (`quality-inspection.controller.ts`): Handles standalone quality inspection records and auxiliary testing endpoints.
+- **`ProductionJobController`** (`production-job.controller.ts`): Authoritatively executes Batch Order Inspection Phase state transitions and workbench payloads.
 
 #### Validators (Zod Schemas)
-- **`quality-inspection.validator.ts`**: Exported Zod validation schemas: `createQualityInspectionSchema`, `assignInspectorSchema`, `recordTestResultsSchema`, `approveInspectionSchema`, `rejectInspectionSchema`, `requestReinspectionSchema`, `queryQualityInspectionsSchema`.
+- **`production-job.validator.ts`**:
+  - `takeForInspectionSchema`: Inspector assignment and optional intake notes.
+  - `recordHeatTreatmentInspectionSchema`: Partial inspection actuals entry.
+  - `approveInspectionForDispatchSchema`: Strictly enforces all 6 mandatory heat-treatment fields, valid hardness scale, and positive quantities ($0 < Q_{\text{del}} \le Q_{\text{rec}}$).
+  - `failInspectionSchema`: Validates mandatory non-empty `rejectionReason` and `defectCategory`.
+  - `hardnessTestPointValidatorSchema`: Validates multi-point hardness readings.
+- **`quality-inspection.validator.ts`**: Standalone inspection schemas (`createQualityInspectionSchema`, `assignInspectorSchema`, `recordTestResultsSchema`, `approveInspectionSchema`, `rejectInspectionSchema`, `requestReinspectionSchema`, `queryQualityInspectionsSchema`).
 
 #### API Endpoints & Routes
-- `POST /api/v1/quality-inspections` — Handled by `QualityInspectionController`.
-- `GET /api/v1/quality-inspections` — Handled by `QualityInspectionController`.
-- `GET /api/v1/quality-inspections/by-job/:jobId` — Handled by `QualityInspectionController`.
-- `GET /api/v1/quality-inspections/:id` — Handled by `QualityInspectionController`.
-- `POST /api/v1/quality-inspections/:id/assign` — Handled by `QualityInspectionController`.
-- `POST /api/v1/quality-inspections/:id/test-results` — Handled by `QualityInspectionController`.
-- `POST /api/v1/quality-inspections/:id/approve` — Handled by `QualityInspectionController`.
-- `POST /api/v1/quality-inspections/:id/reject` — Handled by `QualityInspectionController`.
-- `POST /api/v1/quality-inspections/:id/reinspection` — Handled by `QualityInspectionController`.
+*Mounted at `/api/v1/quality-inspections` in Express routing.*
+
+- **Authoritative Batch Order Inspection Phase Lifecycle:**
+  - `GET /api/v1/quality-inspections/waiting-for-inspection` (alias `/queue/waiting-for-inspection`) — Queue of completed production jobs awaiting inspection intake (`waitingForInspection: true`).
+  - `GET /api/v1/quality-inspections/in-inspection` (alias `/queue/in-inspection`) — Queue of batch orders actively being inspected by QC metallurgists (`inInspection: true`).
+  - `GET /api/v1/quality-inspections/waiting-for-dispatch` (alias `/queue/waiting-for-dispatch`) — Staging queue of conforming inspected batch orders waiting for release by dispatch logistics (`waitingForDispatch: true`).
+  - `GET /api/v1/quality-inspections/inspection-failed` (alias `/queue/inspection-failed`) — Quarantined batch orders rejected during inspection (`inspection: true`).
+  - `GET /api/v1/quality-inspections/:id/workbench` (alias `/:id/inspection-workbench`) — Comprehensive workbench compilation (lineage `PO -> GRN -> BO`, recipe target limits, furnace charge actuals, stage execution logs, and inspection form data).
+  - `POST /api/v1/quality-inspections/:id/take-for-inspection` (alias `/:id/take-inspection`) — Atomically takes BO into active inspection (`waitingForInspection` -> `inInspection`) with `409 Conflict` race protection.
+  - `POST /api/v1/quality-inspections/:id/record-inspection` (alias `/:id/inspection-data`) — Records intermediate inspection actuals without state advance.
+  - `POST /api/v1/quality-inspections/:id/approve-dispatch` (aliases `/:id/approve-for-dispatch`, `/:id/approve-inspection`, `/:id/approve-for-inspection`) — Validates all 6 mandatory heat-treatment fields, atomically transitions to `waitingForDispatch = true`, preserves dispatch boundary (no auto-dispatch), and emits `Job.InspectionApproved`.
+  - `POST /api/v1/quality-inspections/:id/fail-inspection` — Atomically transitions to failure state `inspection = true` and emits `Job.InspectionFailed`.
+- **Standalone Quality Inspection Endpoints:**
+  - `POST /api/v1/quality-inspections` — Creates standalone inspection record.
+  - `GET /api/v1/quality-inspections` — Query standalone inspections.
+  - `GET /api/v1/quality-inspections/by-job/:jobId` — Standalone inspections by job ID.
+  - `GET /api/v1/quality-inspections/:id` — Standalone inspection details.
+  - `POST /api/v1/quality-inspections/:id/assign` — Assign inspector to standalone record.
+  - `POST /api/v1/quality-inspections/:id/test-results` — Log test results on standalone record.
+  - `POST /api/v1/quality-inspections/:id/approve` — Approve standalone record.
+  - `POST /api/v1/quality-inspections/:id/reject` — Reject standalone record.
+  - `POST /api/v1/quality-inspections/:id/reinspection` — Request reinspection on standalone record.
 
 ### 5.21 Metallurgical Lab Subsystem & Physical Testing (`modules/metallurgical-lab`)
 
@@ -1879,19 +1952,38 @@ The frontend is built with React 19, Redux Toolkit, React Router 7, and a custom
     - 15-position Process Details table editable while in `WAITING_FOR_PRODUCTION`.
     - 10-point production readiness evaluation card.
 
-#### 3. Quality Control Workbench (`QualityPage.tsx`, 32.8 KB)
-- **Role:** ISO 17025 / AMS 2750G metallurgical inspection, non-conformance disposition, and Production-to-Quality handoff intake workbench.
-- **State & Sub-Views:** `activeTab` ('Inspections', 'WAITING_FOR_INSPECTION', 'NCRs & CAPAs', 'Analytics'), `inspections`, `ncrs`, `waitingJobs`, and `selectedInspection`.
-- **Key Capabilities:**
-  - **Batch Orders Awaiting QA Inspection Queue:**
-    - Directly queries `/api/v1/production-jobs/waiting-for-inspection` to surface completed production batch orders.
-    - Renders detailed cards showing Job Number, Part Number, Material Grade, Customer Name, Unbroken Lineage (`PO -> GRN -> BO`), Completed / Scrapped Pieces, and Bound Recipe.
-    - Direct "Initiate Inspection" intake action connecting production handoff directly to quality inspection workflows.
-  - **Inspection Worklist & Data Entry:**
-    - Hardness surveys: Rockwell (HRC), Vickers (HV), Brinell (HBW) across sample locations.
-    - Traverse Case Depth Curve: Visual hardness vs. depth graph verifying Effective Case Depth (ECD).
-    - Digital sign-off generating Certificate of Conformance (CoC), or formal rejection raising an NCR.
-  - **NCR & CAPA Tracker:** Root cause investigations (5-Why), containment actions, and corrective preventive actions.
+#### 3. Quality Control Workbench (`QualityPage.tsx`, 38.5 KB)
+- **Role:** Authoritative ISO 17025 / AMS 2750G Heat-Treatment Inspection Suite and Quality Phase Workbench (`waiting for inspection` $\longrightarrow$ `in inspection` $\longrightarrow$ `waiting for dispatch` OR `inspection` [Quarantined]).
+- **State & Sub-Views:** `activeTab` ('WAITING_FOR_INSPECTION', 'IN_INSPECTION', 'WAITING_FOR_DISPATCH', 'INSPECTION_FAILED'), `waitingJobs`, `inInspectionJobs`, `waitingDispatchJobs`, `failedJobs`, `selectedJob`, `workbenchData`, and inspection dialog forms.
+- **Key Capabilities & Reconstructed Tabs (Prompt 1 Reconstruction):**
+  - **Tab 1: Waiting for Inspection Queue:**
+    - Directly queries `/api/v1/production-jobs/waiting-for-inspection` (or `/api/v1/quality-inspections/waiting-for-inspection`) to surface completed production batch orders.
+    - Renders detailed inspection cards showing Job Number, Part Number, Material Grade, Customer Name, Unbroken Lineage (`PO -> GRN -> BO`), Completed / Scrapped Pieces, and Bound Recipe revision.
+    - **"Take for Inspection" Modal Dialog (`AppDialog`):** Allows certified QC inspectors to assign themselves or select an inspector, input intake notes, and atomically transition the BO to `inInspection = true`.
+    - **Single-Winner Concurrency:** Gracefully handles `409 Conflict` if another inspector claims the BO simultaneously, refreshing queue data immediately.
+  - **Tab 2: In-Inspection Active Workbench & 6 Mandatory Heat-Treatment Fields:**
+    - Dedicated full-featured inspection workbench for batch orders actively undergoing evaluation:
+      - **Authoritative Lineage Header Context:** BO identity (`boNumber`, `jobNumber`), PO lineage, GRN lineage, Part specs (`itemCode`, `itemName`, `materialGrade`), target and completed quantities, and bound Recipe code/revision badge (`REV ${revisionNumber}`).
+      - **Recipe Specification Target Card:** Read-only master specification limits for surface hardness, core hardness, and case depth targets for immediate visual comparison.
+      - **The Six Mandatory Heat-Treatment Inspection Fields Editor:**
+        1. *Furnace / Equipment Identification:* Selects and verifies operating furnace (`furnaceCode`, `furnaceId`) against production charge logs.
+        2. *Hardness Specification:* Configures hardness limits (`minHardness`, `maxHardness`) and scale (`HRC`, `HBW`, `HV`, `HRB`).
+        3. *Actual Hardness Readings:* Records multi-point hardness readings with point identifiers and locations (`testPoints`), computes measured average, and evaluates compliance flag (`isHardnessCompliant`).
+        4. *Case Depth Evaluation:* Records Effective Case Depth (`effectiveCaseDepthMm`), Total Case Depth (`totalCaseDepthMm`), test method (`MICROHARDNESS_TRAVERSE`, `MACRO_ETCH`), and compliance verification (`isCaseDepthCompliant`).
+        5. *Quantity Received:* Verified received piece count ($Q_{\text{received}} > 0$).
+        6. *Quantity Delivered & Scrapped Balance:* Delivered piece count ($0 < Q_{\text{delivered}} \le Q_{\text{received}}$) with automatic real-time calculation of rejected/quarantined quantity ($Q_{\text{rejected}} = Q_{\text{received}} - Q_{\text{delivered}}$).
+      - **Additional Metallurgical Evaluations:** Microstructure observation (ASTM grain size, martensite structure, retained austenite), visual inspection checks, and concession sign-off notes.
+      - **Actions:**
+        - "Save Progress" (`POST /api/v1/production-jobs/:id/inspection-data`): Persists intermediate readings without state mutation.
+        - "Approve & Stage for Dispatch" (`POST /api/v1/production-jobs/:id/approve-inspection`): Validates all 6 mandatory fields, transitions BO to `waitingForDispatch = true`, and emits `Job.InspectionApproved`.
+        - "Fail / Quarantine" (`POST /api/v1/production-jobs/:id/fail-inspection`): Launches rejection dialog, captures defect category (Hardness Out of Spec, Decarb Excursion, Cracking/Distortion, Visual Defect) and mandatory rejection reason, transitions BO to quarantine state `inspection = true`, and emits `Job.InspectionFailed`.
+  - **Tab 3: Waiting for Dispatch Queue (Strict Read-Only Staging):**
+    - Displays batch orders that have passed heat-treatment inspection and are staged awaiting outbound logistics dispatch (`waitingForDispatch: true`).
+    - Surfaces inspected piece counts, conforming hardness averages, verified case depth, and inspector approval stamps.
+    - **Strict Phase Boundary Enforcement:** Strictly read-only staging view. Does not contain dispatch execution or shipping release buttons, strictly enforcing the boundary that Quality Inspection releases to dispatch staging, while physical shipping and carrier gate clearance are exclusively owned by the Dispatch module (`DispatchPage.tsx`).
+  - **Tab 4: Inspection Failed / Quarantined Queue:**
+    - Displays batch orders rejected by Quality Inspection in `inspection = true`.
+    - Surfaces defect category, inspector rejection notes, failure timestamp, and quarantined inventory hold indicator, integrating with NCR/CAPA workflows.
 
 #### 4. Machinery & Equipment Workbench (`MachinesPage.tsx`, 28.5 KB)
 - **Role:** Asset management for furnaces, CNC machinery, and quench tanks.
@@ -2231,14 +2323,102 @@ $$\mathbf{PO} \longrightarrow \mathbf{GRN} \longrightarrow \mathbf{BO} \longrigh
 
 ---
 
-### 7.3 Metallurgical Quality Inspection & CoC Generation Workflow
+### 7.3 Authoritative Heat-Treatment Inspection Phase Workflow (waiting for inspection -> in inspection -> waiting for dispatch OR inspection [quarantined])
 
-1. **Inspection Work Order Creation (`POST /api/v1/quality-inspections`):** Spawns automatically upon job completion or raw material delivery. Generates `QC-YYYYMM-XXXX`. Status is `PENDING`.
-2. **Inspector Assignment (`POST /api/v1/quality-inspections/:id/assign`):** Assigns a certified QC metallurgist. Status moves to `IN_PROGRESS`.
-3. **Physical Lab Testing (`POST /api/v1/metallurgical-lab/:id/hardness`, `POST /.../traverse`):** Metallurgist performs hardness tests across Rockwell, Vickers, or Brinell scales, and records cross-sectional microhardness traverse curves to determine Effective Case Depth (ECD).
-4. **Microstructural Evaluation (`POST /api/v1/metallurgical-lab/:id/microstructure`):** Records grain size numbers (ASTM E112), retained austenite percentage (%), and surface decarburization depth.
-5. **Quality Manager Sign-Off (`POST /api/v1/quality-inspections/:id/approve`):** If all readings meet engineering specification limits, QA Manager approves the inspection.
-6. **Certificate of Conformance (CoC) Issuance (`POST /api/v1/quality-documents`):** Compiles hardness surveys and test results into an ISO 17025 / AMS 2750G compliant CoC with digital signatures and a QR verification code. Emits `Quality.CocIssued`.
+```mermaid
+stateDiagram-v2
+    [*] --> WAITING_FOR_INSPECTION: Production Approved (All Stages Logged & Pieces Balanced)
+    WAITING_FOR_INSPECTION --> IN_INSPECTION: Atomic Take for Inspection (QC Inspector)
+    note right of IN_INSPECTION
+      - Previous workflow flags cleared
+      - inInspection = true is sole active flag (sum flags = 1)
+      - Single-winner concurrency lock (409 Conflict on race)
+      - Post-production execution parameters frozen
+      - Inspector identity and intake timestamp bound
+    end note
+    IN_INSPECTION --> WAITING_FOR_DISPATCH: Approve Inspection (6 Mandatory Fields Satisfied & Conforming)
+    note right of WAITING_FOR_DISPATCH
+      - inInspection = false
+      - waitingForDispatch = true (sum flags = 1)
+      - Status updated to WAITING_FOR_DISPATCH
+      - Emits Job.InspectionApproved
+      - Staged for Dispatch (NO direct dispatching)
+    end note
+    IN_INSPECTION --> INSPECTION_FAILED: Fail Inspection (Non-conformance Logged & Quarantined)
+    note right of INSPECTION_FAILED
+      - inInspection = false
+      - inspection = true (sum flags = 1)
+      - Status updated to INSPECTION
+      - Emits Job.InspectionFailed
+      - Quarantined holding; triggers NCR/CAPA
+    end note
+    WAITING_FOR_DISPATCH --> [*]: Handed off to Outbound Dispatch Logistics
+```
+
+The Heat-Treatment Inspection Phase establishes the authoritative quality assurance and metallurgical release gate:
+$$\mathbf{Production\ Completion} \longrightarrow \mathbf{Waiting\ for\ Inspection} \longrightarrow \mathbf{In\ Inspection\ Workbench} \longrightarrow \mathbf{Waiting\ for\ Dispatch}\ (\text{or}\ \mathbf{Quarantine})$$
+
+1. **Phase Inception & Inspection Intake (`waiting for inspection`):**
+   - The Inspection Phase strictly begins when an in-production Batch Order completes all recipe stages, balances loaded piece counts ($Q_{\text{completed}} + Q_{\text{scrapped}} = Q_{\text{loaded}}$), and is approved for quality handoff (`workflowState.waitingForInspection: true`, $\sum \text{flags} = 1$).
+   - **Queue Isolation & Eligibility:**
+     - Surfaces in `GET /api/v1/production-jobs/waiting-for-inspection` and `GET /api/v1/quality-inspections/waiting-for-inspection`.
+     - Displays complete unbroken source genealogy (`PO -> GRN -> BO`), Part specifications, Material Grade, bound Recipe revision, and completed vs scrapped piece counts.
+   - **Access Control:** Requires explicit Quality Inspection permissions (`QC_INSPECT`, `QUALITY_INSPECTION_VIEW`, or `PRODUCTION_JOB_VIEW`). Unauthorized attempts return `403 Forbidden`.
+
+2. **Atomic Inspection Ingestion (`waiting for inspection` $\longrightarrow$ `in inspection`):**
+   - A certified QC inspector claims the BO via `POST /api/v1/production-jobs/:id/take-for-inspection` (or `POST /api/v1/quality-inspections/:id/take-for-inspection`), providing `inspectorId` and optional intake notes.
+   - **State Verification at Moment of Execution:** Verifies that the BO is currently in `waitingForInspection = true`.
+   - **Atomic State Mutation:**
+     - Atomically clears previous workflow flags.
+     - Sets `workflowState.waitingForInspection = false` and `workflowState.inInspection = true` (enforcing $\sum \text{flag}_i = 1$).
+     - Sets status to `IN_INSPECTION` (or `QUALITY_CHECK`), records inspector identity and start timestamp.
+   - **Concurrency Collision Protection (Single-Winner Guarantee):**
+     - Uses conditional atomic query matching `{ _id: id, 'workflowState.waitingForInspection': true, 'workflowState.inInspection': { $ne: true } }`.
+     - If two inspectors attempt to claim the same BO simultaneously, exactly one succeeds; the second receives `409 Conflict`, and the client immediately refreshes the queue.
+   - **Active Session Isolation:** The BO is immediately removed from the waiting-for-inspection queue and surfaces in the In-Inspection Active Workbench.
+
+3. **Post-Production Lock & Execution History Immutability:**
+   - Once a Batch Order enters inspection or subsequent downstream states (`waitingForInspection`, `inInspection`, `waitingForDispatch`, `dispatched`, `inspection`), all historical production execution data is permanently frozen.
+   - Mongoose document `pre('save')` hooks and repository interceptors reject any modifications to furnace charge actuals, stage progress telemetry, initial loaded piece counts, or recipe snapshots with `Post-Production Lock Violation`.
+   - Inspection operations are restricted strictly to the `inspectionData` sub-document, preserving absolute regulatory auditability (AMS 2750G / ISO 17025).
+
+4. **The Six Mandatory Heat-Treatment Inspection Fields:**
+   Before any Batch Order can be approved for dispatch release, the inspection engine strictly verifies and enforces all six mandatory heat-treatment parameters:
+   1. **Furnace / Equipment Identification:** Validates `furnaceId` and `furnaceCode`. Must reference a valid operational furnace matching or linked to the production charge.
+   2. **Hardness Specification Limits:** Configures allowable drawing limits: `minHardness`, `maxHardness`, and measurement scale (`HRC`, `HBW`, `HV`, `HRB`).
+   3. **Actual Hardness Test Readings:** Records discrete multi-point hardness readings with point identifiers and locations (`testPoints: [{ pointIdentifier, measuredValue, location }]`), calculates verified average (`measuredAverage`), and confirms compliance flag (`isHardnessCompliant: true`).
+   4. **Case Depth Evaluation:** Records Effective Case Depth (`effectiveCaseDepthMm`), Total Case Depth (`totalCaseDepthMm`), test method (`MICROHARDNESS_TRAVERSE`, `MACRO_ETCH`), and compliance verification (`isCaseDepthCompliant: true`).
+   5. **Quantity Received:** Verified piece count received into the inspection bay ($Q_{\text{received}} > 0$).
+   6. **Quantity Delivered & Scrapped Balance:** Conforming piece count cleared for delivery ($0 < Q_{\text{delivered}} \le Q_{\text{received}}$). The system automatically computes rejected pieces:
+      $$Q_{\text{rejected}} = Q_{\text{received}} - Q_{\text{delivered}}$$
+      Submitting $Q_{\text{delivered}} > Q_{\text{received}}$ or $Q_{\text{delivered}} \le 0$ is rejected with `BadRequestError`.
+
+5. **Intermediate Progress Persistence (`POST /:id/inspection-data`):**
+   - Inspectors can record partial laboratory test readings (e.g. initial surface hardness or partial traverse points) incrementally via `POST /api/v1/production-jobs/:id/inspection-data`.
+   - Persists intermediate test values without advancing the workflow state, keeping `inInspection = true`.
+
+6. **Conforming Approval & Dispatch Staging (`in inspection` $\longrightarrow$ `waiting for dispatch`):**
+   - Upon satisfying all Six Mandatory Fields and compliance verifications, the inspector submits approval via `POST /api/v1/production-jobs/:id/approve-inspection` (or `POST /api/v1/quality-inspections/:id/approve-dispatch`).
+   - **Atomic State Mutation:**
+     - Sets `workflowState.inInspection = false`.
+     - Sets `workflowState.waitingForDispatch = true` ($\sum \text{flag}_i = 1$).
+     - Sets status to `WAITING_FOR_DISPATCH`.
+     - Seals `inspectionData` sub-document with inspector approval stamp, completion timestamp, and conforming certification.
+     - Publishes domain event `Job.InspectionApproved`.
+   - **Strict Quality-to-Dispatch Boundary Enforcement:**
+     - Quality Inspection **NEVER** directly dispatches a batch order or creates a shipping manifest.
+     - Approval strictly places the BO into the `waitingForDispatch` staging queue (`GET /api/v1/production-jobs/waiting-for-dispatch`).
+     - Physical consignment packaging, carrier assignment, gate clearance, and final delivery transition (`dispatched = true`) are exclusively owned and executed by the Outbound Dispatch Phase (`modules/dispatch`).
+
+7. **Non-Conformance, Rejection & Quarantine (`in inspection` $\longrightarrow$ `inspection`):**
+   - If test readings indicate metallurgical failure (e.g., hardness out of tolerance, decarburization excursion, quench cracks), the inspector rejects the BO via `POST /api/v1/production-jobs/:id/fail-inspection`.
+   - **Rejection Validation:** Requires mandatory `defectCategory` (Hardness Out of Spec, Decarb Excursion, Cracking/Distortion, Visual Defect) and non-empty `rejectionReason`.
+   - **Atomic Quarantine Transition:**
+     - Sets `workflowState.inInspection = false`.
+     - Sets `workflowState.inspection = true` as the sole active failure flag ($\sum \text{flag}_i = 1$).
+     - Sets status to `INSPECTION` (quarantined).
+     - Records failure disposition metadata and publishes domain event `Job.InspectionFailed`.
+     - Automatically flags the material for Non-Conformance Review (NCR/MRB) and isolates inventory from any dispatch staging.
 
 ---
 
@@ -2750,8 +2930,29 @@ The codebase features comprehensive test suites validating layer boundaries, dat
   - Invariant 18 (Idempotent Request Replay): Safely returns cached responses on duplicate idempotent submissions.
   - Invariant 19 (Historical Post-Handoff Lock): Permanently locks production records once the BO enters `WAITING_FOR_INSPECTION`.
   - Invariant 20 (Cross-Phase Boundary Strictness): Guarantees strict isolation of Production strictly bounded between `WAITING_FOR_PRODUCTION` and `WAITING_FOR_INSPECTION`.
+- `backend/tests/inspection-phase-audit-reconstruction.spec.ts` (20 tests — Inspection Phase Reconstruction):
+  - Invariant 1 (Strict Role Authorization on Inspection Take): Grants access to `QC_INSPECT` / `QUALITY_INSPECTION_RECORD` and rejects unauthorized users with `403 Forbidden`.
+  - Invariant 2 (State Precondition Guard on Take): Strictly rejects taking BOs that are not in `waitingForInspection = true` (`State Transition Authority Violation`).
+  - Invariant 3 (Atomic Inspection Ingestion State Mutation): Atomically transitions BO to `inInspection = true`, sets status to `IN_INSPECTION`, and records inspector identity and intake timestamp.
+  - Invariant 4 (Single Active Workflow Flag Invariant on Take): Asserts exactly one active flag ($\sum \text{flag}_i = 1$) across `{ waitingForProduction, inProduction, waitingForInspection, inInspection, waitingForDispatch, dispatched, inspection }`.
+  - Invariant 5 (Atomic Concurrency & Single-Winner Lock on Take): Two concurrent inspectors attempting to claim the same BO -> exactly one succeeds, the other receives `409 Conflict`.
+  - Invariant 6 (Post-Production Historical Record Freeze): Strictly rejects attempts to modify furnace charge, stage progress actuals, or recipe snapshots during inspection (`Post-Production Lock Violation`).
+  - Invariant 7 (Mandatory Hardness Limits & Actuals Verification): Rejects dispatch approval if hardness specification or measured actuals are missing or non-compliant.
+  - Invariant 8 (Mandatory Case Depth Evaluation): Rejects dispatch approval if effective case depth or case depth compliance flag is missing.
+  - Invariant 9 (Mandatory Quantity Received Gate): Rejects dispatch approval if `quantityReceived <= 0`.
+  - Invariant 10 (Mandatory Delivered vs Received Balance): Rejects dispatch approval if `quantityDelivered <= 0` or `quantityDelivered > quantityReceived`; validates exact balance $Q_{\text{rejected}} = Q_{\text{received}} - Q_{\text{delivered}}$.
+  - Invariant 11 (Mandatory Furnace / Equipment Identification): Rejects dispatch approval if operating furnace code or ID is absent.
+  - Invariant 12 (Six Mandatory Fields Comprehensive Verification): Confirms successful dispatch staging when all Six Mandatory Heat-Treatment Fields are satisfied.
+  - Invariant 13 (Conforming Approval State Transition): Atomically transitions BO from `inInspection` to `waitingForDispatch = true` with status `WAITING_FOR_DISPATCH`.
+  - Invariant 14 (Conforming Approval Domain Event Publication): Publishes `Job.InspectionApproved` with complete inspection payload on the domain event bus.
+  - Invariant 15 (Strict Quality-to-Dispatch Boundary Enforcement): Asserts that inspection approval stages BO into `waitingForDispatch = true` without auto-dispatching (`dispatched: false`).
+  - Invariant 16 (Authoritative Quarantine State Transition on Rejection): Atomically transitions rejected BO to `inspection = true` (quarantine state) with status `INSPECTION`.
+  - Invariant 17 (Mandatory Defect Classification on Rejection): Rejects rejection attempts lacking non-empty `rejectionReason` or valid `defectCategory`.
+  - Invariant 18 (Rejection Domain Event Publication): Publishes `Job.InspectionFailed` with defect category and failure explanation on the event bus.
+  - Invariant 19 (Multi-Point Hardness Traverse Validation): Validates discrete point identifiers, measured values, locations, and average hardness calculation.
+  - Invariant 20 (Single Active Workflow Flag Invariant on Quarantine): Verifies $\sum \text{flag}_i = 1$ in the failure quarantine state (`inspection: true`).
 
-#### 4. Domain Integration Suites (47 Core Specs in `backend/tests/`)
+#### 4. Domain Integration Suites (48 Core Specs in `backend/tests/`)
 - Production Execution & Lifecycle: `production-job.spec.ts`, `production-execution-workflow.spec.ts`, `production-scheduling.spec.ts`, `plan-to-job-handoff.spec.ts`.
 - Metallurgical Lab & Quality: `quality-inspection.spec.ts`, `metallurgical-lab.spec.ts`, `ncr-capa.spec.ts`, `quality-documentation.spec.ts`, `pyrometry.spec.ts`.
 - Machine & Maintenance: `machine.spec.ts`, `maintenance.spec.ts`, `furnace-capacity.spec.ts`.

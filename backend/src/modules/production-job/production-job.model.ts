@@ -9,7 +9,8 @@ const workflowStateSchema = new Schema<IBatchOrderWorkflowState>(
     waitingForInspection: { type: Boolean, default: false },
     inInspection: { type: Boolean, default: false },
     waitingForDispatch: { type: Boolean, default: false },
-    dispatched: { type: Boolean, default: false }
+    dispatched: { type: Boolean, default: false },
+    inspection: { type: Boolean, default: false }
   },
   { _id: false }
 );
@@ -341,6 +342,51 @@ const storagePlacementSchema = new Schema(
   { _id: false }
 );
 
+const hardnessTestPointSchema = new Schema(
+  {
+    pointNumber: { type: Number, required: true },
+    location: { type: String, default: null },
+    value: { type: Number, required: true }
+  },
+  { _id: false }
+);
+
+const heatTreatmentInspectionDataSchema = new Schema(
+  {
+    furnaceId: { type: String, required: true },
+    furnaceCode: { type: String, required: true, uppercase: true },
+    equipmentNotes: { type: String, default: null },
+    minHardness: { type: Number, required: true },
+    maxHardness: { type: Number, required: true },
+    scale: { type: String, required: true, default: 'HRC' },
+    specificationNotes: { type: String, default: null },
+    measuredAverage: { type: Number, required: true },
+    testPoints: { type: [hardnessTestPointSchema], default: [] },
+    isHardnessCompliant: { type: Boolean, required: true },
+    targetCaseDepthMinMm: { type: Number, default: null },
+    targetCaseDepthMaxMm: { type: Number, default: null },
+    effectiveCaseDepthMm: { type: Number, required: true },
+    isCaseDepthCompliant: { type: Boolean, required: true },
+    caseDepthMethod: { type: String, default: null },
+    quantityReceived: { type: Number, required: true, min: 0.001 },
+    quantityDelivered: { type: Number, required: true, min: 0.001 },
+    quantityRejected: { type: Number, default: 0, min: 0 },
+    inspectorId: { type: String, required: true },
+    inspectorName: { type: String, required: true },
+    inspectedAt: { type: Date, default: Date.now },
+    disposition: {
+      type: String,
+      enum: ['APPROVED', 'REJECTED', 'PENDING'],
+      default: 'PENDING'
+    },
+    defectCategory: { type: String, default: null },
+    defectReason: { type: String, default: null },
+    correctiveAction: { type: String, default: null },
+    notes: { type: String, default: null }
+  },
+  { _id: false }
+);
+
 const jobExecutionSchema = new Schema(
   {
     furnaceCharge: { type: furnaceChargeSchema, default: null },
@@ -349,7 +395,8 @@ const jobExecutionSchema = new Schema(
     downtimeLog: { type: [downtimeLogSchema], default: [] },
     productionLogs: { type: [productionLogSchema], default: [] },
     qualityHandoff: { type: qualityHandoffSchema, default: null },
-    storagePlacement: { type: storagePlacementSchema, default: null }
+    storagePlacement: { type: storagePlacementSchema, default: null },
+    inspectionData: { type: heatTreatmentInspectionDataSchema, default: null }
   },
   { _id: false }
 );
@@ -416,6 +463,9 @@ const productionJobSchema = createBaseSchema<ProductionJobDocument>({
       'WAITING_FOR_PRODUCTION',
       'IN_PRODUCTION',
       'WAITING_FOR_INSPECTION',
+      'IN_INSPECTION',
+      'WAITING_FOR_DISPATCH',
+      'INSPECTION',
       'DRAFT',
       'PENDING_REVIEW',
       'APPROVED',
@@ -437,6 +487,7 @@ const productionJobSchema = createBaseSchema<ProductionJobDocument>({
   inInspection: { type: Boolean, default: false },
   waitingForDispatch: { type: Boolean, default: false },
   dispatched: { type: Boolean, default: false },
+  inspection: { type: Boolean, default: false },
   workflowState: {
     type: workflowStateSchema,
     default: () => ({
@@ -445,7 +496,8 @@ const productionJobSchema = createBaseSchema<ProductionJobDocument>({
       waitingForInspection: false,
       inInspection: false,
       waitingForDispatch: false,
-      dispatched: false
+      dispatched: false,
+      inspection: false
     })
   },
   priority: {
@@ -478,6 +530,7 @@ productionJobSchema.pre('save', function (next) {
     this.isModified('inInspection') ||
     this.isModified('waitingForDispatch') ||
     this.isModified('dispatched') ||
+    this.isModified('inspection') ||
     this.isModified('workflowState');
 
   if (this.isModified('status') && !anyFlagModified) {
@@ -488,6 +541,7 @@ productionJobSchema.pre('save', function (next) {
     this.inInspection = false;
     this.waitingForDispatch = false;
     this.dispatched = false;
+    this.inspection = false;
 
     if (s === 'WAITING_FOR_PRODUCTION' || s === 'DRAFT' || s === 'PENDING_REVIEW') {
       this.waitingForProduction = true;
@@ -495,10 +549,14 @@ productionJobSchema.pre('save', function (next) {
       this.inProduction = true;
     } else if (s === 'WAITING_FOR_INSPECTION' || s === 'QUALITY_CHECK') {
       this.waitingForInspection = true;
-    } else if (s === 'STORAGE' || s === 'READY_FOR_DISPATCH') {
+    } else if (s === 'IN_INSPECTION') {
+      this.inInspection = true;
+    } else if (s === 'WAITING_FOR_DISPATCH' || s === 'STORAGE' || s === 'READY_FOR_DISPATCH') {
       this.waitingForDispatch = true;
     } else if (s === 'DISPATCHED' || s === 'COMPLETED' || s === 'CANCELLED') {
       this.dispatched = true;
+    } else if (s === 'INSPECTION') {
+      this.inspection = true;
     } else {
       this.waitingForProduction = true;
     }
@@ -513,6 +571,7 @@ productionJobSchema.pre('save', function (next) {
       this.inInspection = !!this.workflowState.inInspection;
       this.waitingForDispatch = !!this.workflowState.waitingForDispatch;
       this.dispatched = !!this.workflowState.dispatched;
+      this.inspection = !!this.workflowState.inspection;
     } else {
       this.workflowState.waitingForProduction = !!this.waitingForProduction;
       this.workflowState.inProduction = !!this.inProduction;
@@ -520,6 +579,7 @@ productionJobSchema.pre('save', function (next) {
       this.workflowState.inInspection = !!this.inInspection;
       this.workflowState.waitingForDispatch = !!this.waitingForDispatch;
       this.workflowState.dispatched = !!this.dispatched;
+      this.workflowState.inspection = !!this.inspection;
     }
   }
 
@@ -530,7 +590,8 @@ productionJobSchema.pre('save', function (next) {
     this.waitingForInspection,
     this.inInspection,
     this.waitingForDispatch,
-    this.dispatched
+    this.dispatched,
+    this.inspection
   ].filter(Boolean).length;
 
   if (activeFlags !== 1) {
@@ -590,7 +651,12 @@ productionJobSchema.pre('save', function (next) {
       (this.workflowState && this.workflowState.waitingForDispatch) ||
       this.dispatched ||
       (this.workflowState && this.workflowState.dispatched) ||
+      this.inspection ||
+      (this.workflowState && this.workflowState.inspection) ||
       this.status === 'WAITING_FOR_INSPECTION' ||
+      this.status === 'IN_INSPECTION' ||
+      this.status === 'WAITING_FOR_DISPATCH' ||
+      this.status === 'INSPECTION' ||
       this.status === 'QUALITY_CHECK' ||
       this.status === 'STORAGE' ||
       this.status === 'READY_FOR_DISPATCH' ||

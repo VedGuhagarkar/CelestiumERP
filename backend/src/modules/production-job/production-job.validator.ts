@@ -5,6 +5,9 @@ const jobStatusEnum = z.enum([
   'WAITING_FOR_PRODUCTION',
   'IN_PRODUCTION',
   'WAITING_FOR_INSPECTION',
+  'IN_INSPECTION',
+  'WAITING_FOR_DISPATCH',
+  'INSPECTION',
   'DRAFT',
   'PENDING_REVIEW',
   'APPROVED',
@@ -919,3 +922,110 @@ export const saveProductionDataSchema: ValidationSchema = {
       }
     })
 };
+
+export const hardnessTestPointValidatorSchema = z.object({
+  pointNumber: z.number().int().min(1).optional(),
+  pointIdentifier: z.string().trim().optional(),
+  location: z.string().trim().nullable().optional(),
+  value: z.number().min(0, 'Hardness value must be non-negative').optional(),
+  measuredValue: z.number().min(0, 'Hardness value must be non-negative').optional(),
+  scale: z.string().trim().optional(),
+  passed: z.boolean().optional()
+});
+
+export const takeForInspectionSchema: ValidationSchema = {
+  params: z.object({
+    id: z.string().trim().min(1, 'Job ID is required')
+  }),
+  body: z
+    .object({
+      notes: z.string().trim().max(1000).optional()
+    })
+    .optional()
+};
+
+export const recordHeatTreatmentInspectionSchema: ValidationSchema = {
+  params: z.object({
+    id: z.string().trim().min(1, 'Job ID is required')
+  }),
+  body: z
+    .object({
+      furnaceId: z.string().trim().min(1).optional(),
+      furnaceCode: z.string().trim().min(1).toUpperCase().optional(),
+      equipmentNotes: z.string().trim().max(1000).nullable().optional(),
+      minHardness: z.number().min(0).optional(),
+      maxHardness: z.number().min(0).optional(),
+      scale: z.string().trim().min(1).default('HRC').optional(),
+      specificationNotes: z.string().trim().max(1000).nullable().optional(),
+      measuredAverage: z.number().min(0).optional(),
+      testPoints: z.array(hardnessTestPointValidatorSchema).optional(),
+      isHardnessCompliant: z.boolean().optional(),
+      targetCaseDepthMinMm: z.number().min(0).nullable().optional(),
+      targetCaseDepthMaxMm: z.number().min(0).nullable().optional(),
+      effectiveCaseDepthMm: z.number().min(0).optional(),
+      isCaseDepthCompliant: z.boolean().optional(),
+      caseDepthMethod: z.string().trim().nullable().optional(),
+      quantityReceived: z.number().optional(),
+      quantityDelivered: z.number().optional(),
+      quantityRejected: z.number().min(0).optional(),
+      disposition: z.enum(['APPROVED', 'REJECTED', 'PENDING']).optional(),
+      defectCategory: z.string().trim().nullable().optional(),
+      defectReason: z.string().trim().nullable().optional(),
+      correctiveAction: z.string().trim().nullable().optional(),
+      notes: z.string().trim().max(1000).nullable().optional(),
+      remarks: z.string().trim().max(1000).nullable().optional(),
+      microstructureNotes: z.string().trim().max(1000).nullable().optional()
+    })
+    .passthrough()
+    .optional()
+};
+
+export const approveInspectionForDispatchSchema: ValidationSchema = {
+  params: z.object({
+    id: z.string().trim().min(1, 'Job ID is required')
+  }),
+  body: z
+    .object({
+      furnaceId: z.string().trim().min(1).optional(),
+      furnaceCode: z.string().trim().min(1).toUpperCase().optional(),
+      equipmentNotes: z.string().trim().max(1000).nullable().optional(),
+      minHardness: z.number().min(0).optional(),
+      maxHardness: z.number().min(0).optional(),
+      scale: z.string().trim().min(1).default('HRC').optional(),
+      specificationNotes: z.string().trim().max(1000).nullable().optional(),
+      measuredAverage: z.number().min(0).optional(),
+      testPoints: z.array(hardnessTestPointValidatorSchema).optional(),
+      isHardnessCompliant: z.boolean().optional(),
+      effectiveCaseDepthMm: z.number().min(0).optional(),
+      isCaseDepthCompliant: z.boolean().optional(),
+      targetCaseDepthMinMm: z.number().min(0).nullable().optional(),
+      targetCaseDepthMaxMm: z.number().min(0).nullable().optional(),
+      caseDepthMethod: z.string().trim().nullable().optional(),
+      quantityReceived: z.number().optional(),
+      quantityDelivered: z.number().optional(),
+      quantityRejected: z.number().min(0).optional(),
+      notes: z.string().trim().max(1000).nullable().optional(),
+      remarks: z.string().trim().max(1000).nullable().optional(),
+      microstructureNotes: z.string().trim().max(1000).nullable().optional()
+    })
+    .passthrough()
+    .optional()
+};
+
+export const failInspectionSchema: ValidationSchema = {
+  params: z.object({
+    id: z.string().trim().min(1, 'Job ID is required')
+  }),
+  body: z.object({
+    defectCategory: z.string().trim().min(1, 'Defect category is required'),
+    defectReason: z.string().trim().min(1, 'Defect reason is required'),
+    correctiveAction: z.string().trim().max(1000).nullable().optional(),
+    quantityRejected: z.number().min(0).optional(),
+    notes: z.string().trim().max(1000).nullable().optional(),
+    furnaceId: z.string().trim().optional(),
+    furnaceCode: z.string().trim().optional(),
+    measuredAverage: z.number().optional(),
+    effectiveCaseDepthMm: z.number().optional()
+  })
+};
+
