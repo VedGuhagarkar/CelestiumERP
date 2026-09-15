@@ -100,7 +100,7 @@ export const createOutwardChallanSchema = z.object({
   destinationAddress: z.string().optional(),
   packageDetails: PackageDetailsSchema.optional(),
   notes: z.string().optional()
-});
+}).passthrough();
 
 export const queryDispatchesSchema = z.object({
   status: DispatchStatusEnum.optional(),

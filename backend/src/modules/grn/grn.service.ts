@@ -809,6 +809,14 @@ export class GRNService extends BaseService {
         grnDate,
         printCount: 0,
         remarks: dto.remarks?.trim(),
+        customerName: dto.customerName || authoritativeSupplierName,
+        customerCode: dto.customerCode || authoritativeSupplierCode,
+        customerId: dto.customerId,
+        address: dto.address || dto.deliveryAddress || dto.destinationAddress || (po as any).vendorAddress,
+        deliveryAddress: dto.deliveryAddress || dto.address || dto.destinationAddress || (po as any).vendorAddress,
+        destinationAddress: dto.destinationAddress || dto.deliveryAddress || dto.address || (po as any).vendorAddress,
+        gstin: dto.gstin || (po as any).taxDetails?.gstin || (po as any).gstin,
+        contactEmail: dto.contactEmail !== undefined ? dto.contactEmail : ((po as any).contactEmail || null),
         isDeleted: false
       });
     } catch (err: any) {

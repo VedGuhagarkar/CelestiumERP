@@ -1568,13 +1568,16 @@ _No direct HTTP routes mounted for this internal domain service._
 > **Business Purpose:** Manages the 6-stage dispatch lifecycle, grouping finished jobs into consignments, quality gate verification, carrier scheduling, departure, delivery confirmation, and the authoritative Outward Challan (OC) workflow strictly preserving the unbroken $\text{PO} \longrightarrow \text{GRN} \longrightarrow \text{BO} \longrightarrow \text{OC}$ hierarchy.
 
 #### Models & Schemas
-- **`dispatch.model.ts`** — Mongoose model: `DispatchConsignment`. Exported interfaces: `IDispatchConsignment`, `IOutwardChallanHierarchy`. Encapsulates schema definitions, compound tenant indexes (`{ tenantId: 1, outwardChallanNumber: 1 }`, `{ tenantId: 1, batchOrderId: 1 }`, `{ tenantId: 1, grnId: 1 }`, `{ tenantId: 1, poId: 1 }`), and data validation rules.
+- **`dispatch.model.ts`** — Mongoose model: `DispatchConsignment`. Exported interfaces: `IDispatchConsignment`, `IOutwardChallanHierarchy`, `IOutwardChallanItem`, `IOutwardChallanHeatTreatment`, `IDispatchDeliveryInformation`, `IDispatchLine`. Encapsulates schema definitions, compound tenant indexes (`{ tenantId: 1, outwardChallanNumber: 1 }`, `{ tenantId: 1, batchOrderId: 1 }`, `{ tenantId: 1, grnId: 1 }`, `{ tenantId: 1, poId: 1 }`), and data validation rules.
+  - `IOutwardChallanItem`: Encapsulates the 8 authoritative item fields: `serialNumber` (number), `partName` (string), `partDescription` (string), `partNumber` (string), `materialGrade` (string), `heatTreatmentProcess` (string), `batchLotNumber` (string), `quantity` (number), `unitOfMeasure` (string).
+  - `IOutwardChallanHeatTreatment`: Encapsulates the 6 required metallurgical inspection parameters: `furnaceEquipment` (string), `furnaceCode` (string), `hardnessSpecification` (string), `actualHardness` (string), `caseDepth` (string), `quantityReceived` (number), `quantityDelivered` (number).
+  - `IDispatchDeliveryInformation`: Encapsulates authoritative delivery recipient data: `customerCode`, `customerName`, `deliveryAddress`, `gstNumber`, `contactPerson`, `contactPhone`.
 
 #### Repositories
 - **`DispatchRepository`** (`dispatch.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
   - Methods: `create()`, `findById()`, `findByDispatchNumber()`, `findByDeliveryChallanNumber()`, `findByOutwardChallanNumber()`, `findByBatchOrderId()`, `update()`, `query()`, `generateNextDispatchNumber()`, `generateNextDeliveryChallanNumber()`, `generateNextGatePassNumber()`, `generateNextOutwardChallanNumber()` (atomic monotonic counter `$inc`).
 - **`ProductionJobRepository`** (`production-job.repository.ts`):
-  - Methods: `atomicLinkOutwardChallan(tenantId, batchOrderId, outwardChallanNumber)` (two-phase atomic reservation under `waitingForDispatch = true`), `atomicUnlinkOutwardChallan(tenantId, batchOrderId, outwardChallanNumber)` (concurrency rollback protection).
+  - Methods: `atomicLinkOutwardChallan(tenantId, batchOrderId, outwardChallanNumber)` (two-phase atomic reservation under `waitingForDispatch = true`), `atomicUnlinkOutwardChallan(tenantId, batchOrderId, outwardChallanNumber)` (concurrency rollback protection supporting both ObjectId and string identifiers safely).
 
 #### Services
 - **`DispatchService`** (`dispatch.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
@@ -1585,8 +1588,13 @@ _No direct HTTP routes mounted for this internal domain service._
     3. *PO Derivation:* The PO is authoritatively derived from the corresponding GRN (`poId === grn.poId`). Independent client submission of an unrelated PO is rejected.
     4. *Automatic OC Number:* Monotonically generated (`OC-YYYYMM-XXXX`) using `CounterModel` atomic `$inc`. Client custom numbers are ignored.
     5. *Authoritative OC Date:* Derived strictly from the corresponding GRN (`grn.grnDate || grn.createdAt`). Client override is ignored.
-    6. *Collision & Concurrency Protection:* Two-phase atomic claiming on `jobRepo.atomicLinkOutwardChallan` ensures exactly one winner in race conditions, returning `409 Conflict` on concurrent requests.
-    7. *Dispatch Boundary:* Creating an OC does *not* prematurely mark the BO as dispatched (`dispatched = false`); the BO remains staged until physical factory gate departure.
+    6. *Authoritative GRN-Derived Delivery Information (Prompt 4):* Delivery customer recipient details (`customerCode`, `customerName`, `deliveryAddress`, `gstNumber`, `contactPerson`, `contactPhone`) are populated authoritatively from the GRN / Customer master. Arbitrary client overrides are ignored or prohibited.
+    7. *Authoritative BO-Derived Items (Prompt 5):* The OC items array is strictly generated from the corresponding BO. The 8 required fields (`serialNumber`, `partName`, `partDescription`, `partNumber`, `materialGrade`, `heatTreatmentProcess`, `batchLotNumber`, `quantity`, `unitOfMeasure`) are populated from `job.item`, `job.recipeSnapshot`, `heatLotNumber`, and `authoritativeQuantity`. Dispatch users cannot manually create arbitrary items; client-supplied item arrays are ignored or rejected.
+    8. *Authoritative BO-Derived Heat-Treatment Parameters (Prompt 5):* All 6 heat-treatment parameters (`furnaceEquipment`, `hardnessSpecification`, `actualHardness`, `caseDepth`, `quantityReceived`, `quantityDelivered`) are strictly derived from the BO's inspection records (`job.execution.inspectionData`). Re-entry is prohibited. If the BO lacks required heat-treatment inspection data, OC creation is rejected with `400 Bad Request`.
+    9. *Historical & Quantity Integrity (Prompt 5):* The OC preserves historical Production and Inspection data exactly as represented by the authoritative BO at dispatch time. Production logs, inspection records, and recipe snapshots remain unaltered. The OC quantity must match the BO completed/delivered quantity; client attempts to manipulate or partially dispatch quantity (`dto.quantity`, `dto.dispatchedQuantity`) are strictly rejected with `400 Bad Request`.
+    10. *Recipe Mismatch Protection (Prompt 5):* Client attempts to submit mismatched recipe IDs or codes are strictly rejected with `400 Bad Request`.
+    11. *Collision & Concurrency Protection:* Two-phase atomic claiming on `jobRepo.atomicLinkOutwardChallan` ensures exactly one winner in race conditions, returning `409 Conflict` on concurrent requests.
+    12. *Dispatch Boundary:* Creating an OC does *not* prematurely mark the BO as dispatched (`dispatched = false`); the BO remains staged until physical factory gate departure.
   - **Dispatch Protection & Inspection Clearance Invariant:** `createDispatch()` and `verifyQualityRelease()` strictly inspect linked Batch Orders. Any attempt to dispatch a job in quarantined `INSPECTION` (`workflowState.inspection: true`) or lacking quality approval is strictly rejected with `400 Bad Request` (`Dispatch Protection Violation`).
 
 #### Controllers
@@ -2669,6 +2677,11 @@ $$\mathbf{Production\ Completion} \longrightarrow \mathbf{Waiting\ for\ Inspecti
    - **PO Derivation:** The PO is authoritatively derived from the GRN (`poId === grn.poId`). User cannot independently provide an unrelated PO.
    - **Automatic OC Number:** Generates unique, immutable, system-assigned challan number (`OC-YYYYMM-XXXX`) using monotonic sequence counter.
    - **Authoritative OC Date:** The OC date is strictly derived from the corresponding GRN date (`grn.grnDate || grn.createdAt`).
+   - **Authoritative GRN-Derived Delivery Information (Prompt 4):** Populates recipient details (`customerCode`, `customerName`, `deliveryAddress`, `gstNumber`, `contactPerson`, `contactPhone`) directly from the referenced GRN/Customer master. Manual client delivery override is prevented.
+   - **Authoritative BO-Derived OC Items (Prompt 5):** Populates all 8 required item fields (`serialNumber`, `partName`, `partDescription`, `partNumber`, `materialGrade`, `heatTreatmentProcess`, `batchLotNumber`, `quantity`, `unitOfMeasure`) directly from the corresponding BO. Arbitrary client item entries are rejected or ignored.
+   - **Authoritative BO-Derived Heat-Treatment Parameters (Prompt 5):** Populates all 6 mandatory metallurgical parameters (`furnaceEquipment`, `hardnessSpecification`, `actualHardness`, `caseDepth`, `quantityReceived`, `quantityDelivered`) from the BO's inspection records (`job.execution.inspectionData`). If inspection data is missing or incomplete, OC creation is rejected with `400 Bad Request`.
+   - **Historical & Quantity Integrity (Prompt 5):** Preserves historical production and inspection records unchanged. Enforces that OC quantity strictly equals the BO delivered quantity. Client attempts to modify quantity or partially dispatch throw `400 Bad Request`.
+   - **Recipe Mismatch Protection (Prompt 5):** Client attempts to supply mismatched recipe IDs or codes throw `400 Bad Request`.
    - **Atomic Concurrency Protection:** Two-phase atomic claiming on the Batch Order (`jobRepo.atomicLinkOutwardChallan`) ensures race conditions result in exactly one winner and `409 Conflict` for competing requests.
    - **Dispatch Boundary:** Creating the OC does *not* mark the BO as dispatched (`dispatched: false`); the BO remains in dispatch staging until physical factory gate departure.
 3. **Consignment Drafting (`POST /api/v1/dispatches`):** Logistics coordinator can alternatively create a multi-line dispatch order selecting customer and destination. Generates `DISP-YYYYMM-XXXX`. Status is `DRAFT`.
@@ -3382,6 +3395,26 @@ The codebase features comprehensive test suites validating layer boundaries, dat
   - Section 8 (Direct API Manipulation & Authoritative OC Date - 1 test): Ignores client-supplied date and authoritatively derives OC date strictly from the GRN date (`grn.grnDate || grn.createdAt`).
   - Section 9 (Dispatch Boundary Enforcement - 1 test): Verifies that creating the OC does NOT mark the Batch Order as dispatched (`dispatched = false`).
   - Section 10 (Dedicated Dispatch Queue - 1 test): Verifies that `/api/v1/dispatches/queue` returns only BOs with `waitingForDispatch = true` enriched with full PO, GRN, Part, Recipe, and Inspection clearance.
+- `dispatch-grn-delivery.spec.ts` (9 tests — Prompt 4: Authoritative GRN-Derived Delivery Information & Route Aliasing):
+  - Invariant 1: Automatically populates authoritative customer delivery recipient details from referenced GRN.
+  - Invariant 2: Ignores client-submitted independent delivery customer data in favor of authoritative GRN customer data.
+  - Invariant 3: Verifies PO relationship strictly matching the corresponding GRN.
+  - Invariant 4: Strictly rejects pairing an unrelated GRN with the BO (`400 Bad Request`).
+  - Invariant 5: Ignores client-provided custom OC numbers and auto-generates monotonic IDs.
+  - Invariant 6: Strictly derives OC date from corresponding GRN date.
+  - Invariant 7: Verifies route alias parity between `/api/v1/dispatches/outward-challan` and `/api/v1/dispatch/outward-challan`.
+  - Invariant 8: Verifies queue alias parity across `/api/v1/dispatches/queue`, `/api/v1/dispatch/queue`, and `/waiting-for-dispatch`.
+  - Invariant 9: Enforces that OC creation leaves BO in `waitingForDispatch = true` until physical gate departure.
+- `dispatch-bo-items.spec.ts` (9 tests — Prompt 5: BO-Derived OC Items and Heat-Treatment Information):
+  - Invariant 1: Populates all 8 required OC item fields (`serialNumber`, `partName`, `partDescription`, `partNumber`, `materialGrade`, `heatTreatmentProcess`, `batchLotNumber`, `quantity`, `unitOfMeasure`) authoritatively from the corresponding BO.
+  - Invariant 2: Ignores client-submitted independent item entries in favor of authoritative BO data.
+  - Invariant 3: Strictly rejects an unrelated BO whose `grnId` does not match the referenced GRN (`400 Bad Request`).
+  - Invariant 4: Populates all 6 mandatory heat-treatment parameters (`furnaceEquipment`, `hardnessSpecification`, `actualHardness`, `caseDepth`, `quantityReceived`, `quantityDelivered`) authoritatively from BO inspection records.
+  - Invariant 5: Strictly rejects client attempts to manipulate dispatched quantity (`dto.quantity`, `dto.dispatchedQuantity`) with `400 Bad Request`.
+  - Invariant 6: Strictly rejects client attempts to supply a mismatched recipe (`dto.recipeId`) with `400 Bad Request`.
+  - Invariant 7: Strictly rejects OC creation if required heat-treatment data is missing in the BO (`400 Bad Request`).
+  - Invariant 8: Formally verifies that OC creation preserves historical production logs, inspection records, and recipe snapshots unaltered.
+  - Invariant 9: Enforces that the dedicated dispatch queue (`/api/v1/dispatches/queue`) projects complete BO items and heat-treatment parameters.
 - Metallurgical Lab & Quality: `quality-inspection.spec.ts`, `metallurgical-lab.spec.ts`, `ncr-capa.spec.ts`, `quality-documentation.spec.ts`, `pyrometry.spec.ts`.
 - Machine & Maintenance: `machine.spec.ts`, `maintenance.spec.ts`, `furnace-capacity.spec.ts`.
 - Traceability & Inventory: `heat-lot-traceability.spec.ts`, `inventory-ledger.spec.ts`, `warehouse.spec.ts`, `finished-goods.spec.ts`, `quarantine.spec.ts`.
@@ -3390,12 +3423,12 @@ The codebase features comprehensive test suites validating layer boundaries, dat
 - Platform Core & Security: `auth.spec.ts`, `rbac.spec.ts`, `tenant-isolation.spec.ts`, `audit-logging.spec.ts`, `error-handling.spec.ts`, `database.spec.ts`, `health.spec.ts`.
 
 #### 5. Frontend Integration Suites (`frontend/src/`)
-- `dispatch-page.test.tsx` (5 tests — Outward Challan Workflow & Traceability UI):
+- `dispatch-page.test.tsx` (5 tests — Outward Challan Workflow, BO Items & Heat-Treatment UI):
   - Renders Dispatch workspace with Dispatch Queue, Active Consignments, and Unified Workbench views.
   - Displays eligible Batch Orders in the queue with unbroken $\text{PO} \longrightarrow \text{GRN} \longrightarrow \text{BO}$ hierarchy badges and CoC approval.
-  - Opens Create Outward Challan modal with read-only authoritative derived fields (PO, GRN, BO, auto OC number, GRN date).
+  - Opens Create Outward Challan modal with read-only authoritative derived fields: PO, GRN, BO, auto OC number, GRN date, all 8 BO item fields, and all 6 heat-treatment parameters with no manual editing inputs.
   - Submits OC creation request with `batchOrderId` and updates UI upon success.
-  - Allows switching to Active Consignments tab and displays hierarchy badges.
+  - Allows switching to Active Consignments tab and displays hierarchy badges, drawer BO-derived items card, and metallurgical heat-treatment details.
 - `e2e-workflows.test.tsx` (36 tests):
   - Multi-step Batch Order creation wizard (PO -> GRN -> Part -> BO).
   - Interactive BO drawer with hierarchy banner and 8-card source genealogy grid.

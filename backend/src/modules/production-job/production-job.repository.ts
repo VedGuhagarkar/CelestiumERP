@@ -861,9 +861,13 @@ export class ProductionJobRepository
   }
 
   public async atomicUnlinkOutwardChallan(tenantId: string, jobId: string): Promise<void> {
+    if (mongoose.connection.readyState === 0) return;
+    const filter: any = mongoose.isValidObjectId(jobId)
+      ? { _id: jobId, tenantId }
+      : { $or: [{ jobNumber: jobId }, { boNumber: jobId }, { id: jobId }], tenantId };
     await this.model
       .updateOne(
-        { _id: jobId, tenantId },
+        filter,
         {
           $set: {
             outwardChallanId: null,

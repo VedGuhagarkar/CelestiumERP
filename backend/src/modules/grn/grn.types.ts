@@ -130,6 +130,15 @@ export interface IGRN {
   printedBy?: string;
   printCount: number;
   remarks?: string;
+  // Authoritative Customer Delivery Information
+  customerName?: string;
+  customerCode?: string;
+  customerId?: string;
+  address?: string;
+  deliveryAddress?: string;
+  destinationAddress?: string;
+  gstin?: string;
+  contactEmail?: string | null;
   isDeleted: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -238,6 +247,14 @@ export interface CreateGrnDto {
   approvedBy?: string;
   remarks?: string;
   unitGenerationMode?: 'BY_PCS' | 'BY_LOT';
+  customerName?: string;
+  customerCode?: string;
+  customerId?: string;
+  address?: string;
+  deliveryAddress?: string;
+  destinationAddress?: string;
+  gstin?: string;
+  contactEmail?: string | null;
 }
 
 export interface QueryGrnDto {

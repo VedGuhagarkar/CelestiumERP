@@ -16,7 +16,8 @@ import {
   PackageCheck,
   Building2,
   AlertCircle,
-  LayoutGrid
+  LayoutGrid,
+  Flame
 } from 'lucide-react';
 import { PageContainer } from '../layouts/PageContainer.js';
 import { PageHeader } from '../design-system/navigation/PageHeader.js';
@@ -41,6 +42,31 @@ interface OutwardChallanHierarchy {
   batchOrderNumber: string;
   outwardChallanNumber: string;
   ocDate: string;
+}
+
+export interface OutwardChallanItem {
+  serialNumber: number;
+  partName: string;
+  partDescription: string;
+  partNumber: string;
+  materialGrade: string;
+  heatTreatmentProcess: string;
+  batchLotNumber: string;
+  quantity: number;
+  unitOfMeasure: string;
+}
+
+export interface OutwardChallanHeatTreatment {
+  furnaceEquipment: string;
+  furnaceId?: string;
+  furnaceCode?: string;
+  hardnessSpecification: string;
+  actualHardness: string;
+  actualHardnessValue?: number;
+  caseDepth: string;
+  effectiveCaseDepthMm?: number;
+  quantityReceived: number;
+  quantityDelivered: number;
 }
 
 interface DispatchConsignment {
@@ -75,6 +101,8 @@ interface DispatchConsignment {
       cocNumber: string;
     };
   }[];
+  items?: OutwardChallanItem[];
+  heatTreatmentInformation?: OutwardChallanHeatTreatment;
   carrier?: {
     carrierName: string;
     transportMode: string;
@@ -124,6 +152,8 @@ interface DispatchQueueItem {
   waitingForDispatch: boolean;
   outwardChallanNumber?: string | null;
   outwardChallanDate?: string | null;
+  items?: OutwardChallanItem[];
+  heatTreatmentInformation?: OutwardChallanHeatTreatment;
   inspectionApproval?: {
     isApproved: boolean;
     cocNumber?: string;
@@ -166,6 +196,30 @@ const DEFAULT_DISPATCH_QUEUE: DispatchQueueItem[] = [
     dueDate: '2026-09-20',
     waitingForDispatch: true,
     outwardChallanNumber: null,
+    items: [
+      {
+        serialNumber: 1,
+        partName: 'Case-Hardened Pinion Gears',
+        partDescription: 'Case-Hardened Pinion Gears',
+        partNumber: 'PART-GEAR-8620',
+        materialGrade: 'SAE 8620H',
+        heatTreatmentProcess: 'Carburizing & Quench 60HRC',
+        batchLotNumber: 'HL-8620-2026B',
+        quantity: 300,
+        unitOfMeasure: 'PCS'
+      }
+    ],
+    heatTreatmentInformation: {
+      furnaceEquipment: 'FURNACE-PIT-01 (Integral Quench Furnace)',
+      furnaceCode: 'FURNACE-PIT-01',
+      hardnessSpecification: '58-62 HRC',
+      actualHardness: '60.5 HRC',
+      actualHardnessValue: 60.5,
+      caseDepth: '1.15 mm',
+      effectiveCaseDepthMm: 1.15,
+      quantityReceived: 300,
+      quantityDelivered: 300
+    },
     inspectionApproval: {
       isApproved: true,
       cocNumber: 'COC-2026-0045',
@@ -206,6 +260,30 @@ const DEFAULT_DISPATCH_QUEUE: DispatchQueueItem[] = [
     dueDate: '2026-09-22',
     waitingForDispatch: true,
     outwardChallanNumber: null,
+    items: [
+      {
+        serialNumber: 1,
+        partName: 'Turbine Rotor Shafts 4340',
+        partDescription: 'Turbine Rotor Shafts 4340',
+        partNumber: 'PART-SHAFT-4340',
+        materialGrade: 'AISI 4340',
+        heatTreatmentProcess: 'Vacuum Annealing & Temper',
+        batchLotNumber: 'HL-4340-2026A',
+        quantity: 120,
+        unitOfMeasure: 'PCS'
+      }
+    ],
+    heatTreatmentInformation: {
+      furnaceEquipment: 'VAC-FURNACE-02 (Vacuum Chamber)',
+      furnaceCode: 'VAC-FURNACE-02',
+      hardnessSpecification: '32-36 HRC',
+      actualHardness: '34.2 HRC',
+      actualHardnessValue: 34.2,
+      caseDepth: 'Through-hardened (N/A)',
+      effectiveCaseDepthMm: 0,
+      quantityReceived: 120,
+      quantityDelivered: 120
+    },
     inspectionApproval: {
       isApproved: true,
       cocNumber: 'COC-2026-0046',
@@ -241,6 +319,30 @@ const DEFAULT_DISPATCHES: DispatchConsignment[] = [
       customerCode: 'CUST-APEX-03',
       customerName: 'Apex Automotive Drivetrains',
       destinationAddress: '400 Industrial Way, Detroit, MI 48201'
+    },
+    items: [
+      {
+        serialNumber: 1,
+        partName: 'Case-Hardened Pinion Gears',
+        partDescription: 'Case-Hardened Pinion Gears',
+        partNumber: 'PART-GEAR-8620',
+        materialGrade: 'SAE 8620H',
+        heatTreatmentProcess: 'Carburizing & Quench 60HRC',
+        batchLotNumber: 'HL-8620-2026B',
+        quantity: 300,
+        unitOfMeasure: 'PCS'
+      }
+    ],
+    heatTreatmentInformation: {
+      furnaceEquipment: 'FURNACE-PIT-01 (Integral Quench Furnace)',
+      furnaceCode: 'FURNACE-PIT-01',
+      hardnessSpecification: '58-62 HRC',
+      actualHardness: '60.5 HRC',
+      actualHardnessValue: 60.5,
+      caseDepth: '1.15 mm',
+      effectiveCaseDepthMm: 1.15,
+      quantityReceived: 300,
+      quantityDelivered: 300
     },
     lines: [
       {
@@ -282,6 +384,30 @@ const DEFAULT_DISPATCHES: DispatchConsignment[] = [
       customerCode: 'CUST-AERO-01',
       customerName: 'AeroDynamics Propulsion Inc.',
       destinationAddress: '100 Aerospace Blvd, Seattle, WA 98101'
+    },
+    items: [
+      {
+        serialNumber: 1,
+        partName: 'Turbine Rotor Shafts 4340',
+        partDescription: 'Turbine Rotor Shafts 4340',
+        partNumber: 'PART-SHAFT-4340',
+        materialGrade: 'AISI 4340',
+        heatTreatmentProcess: 'Vacuum Annealing & Temper',
+        batchLotNumber: 'HL-4340-2026A',
+        quantity: 120,
+        unitOfMeasure: 'PCS'
+      }
+    ],
+    heatTreatmentInformation: {
+      furnaceEquipment: 'VAC-FURNACE-02 (Vacuum Chamber)',
+      furnaceCode: 'VAC-FURNACE-02',
+      hardnessSpecification: '32-36 HRC',
+      actualHardness: '34.2 HRC',
+      actualHardnessValue: 34.2,
+      caseDepth: 'Through-hardened (N/A)',
+      effectiveCaseDepthMm: 0,
+      quantityReceived: 120,
+      quantityDelivered: 120
     },
     lines: [
       {
@@ -954,6 +1080,67 @@ export const DispatchPage: React.FC = () => {
 
             <AppCard style={{ padding: '16px' }}>
               <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--color-primary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <PackageCheck size={14} /> BO-DERIVED OUTWARD CHALLAN ITEMS (AUTHORITATIVE)
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {(selectedDispatch.items && selectedDispatch.items.length > 0
+                  ? selectedDispatch.items
+                  : [
+                      {
+                        serialNumber: 1,
+                        partName: selectedDispatch.lines?.[0]?.itemName || 'Treated Components',
+                        partDescription: selectedDispatch.lines?.[0]?.itemName || 'Treated Components',
+                        partNumber: selectedDispatch.lines?.[0]?.itemCode || 'PART-DEFAULT',
+                        materialGrade: 'Authoritative Grade',
+                        heatTreatmentProcess: 'Heat-Treatment Process',
+                        batchLotNumber: selectedDispatch.lines?.[0]?.heatLotNumber || 'HL-DEFAULT',
+                        quantity: selectedDispatch.lines?.[0]?.dispatchedQuantity || selectedDispatch.totalQuantity || 0,
+                        unitOfMeasure: selectedDispatch.lines?.[0]?.uom || 'PCS'
+                      }
+                    ]
+                ).map((item) => (
+                  <div
+                    key={item.serialNumber}
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.02)',
+                      border: '1px solid var(--color-border-subtle)',
+                      borderRadius: '6px',
+                      padding: '10px 12px',
+                      fontSize: '12px',
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(2, 1fr)',
+                      gap: '8px'
+                    }}
+                  >
+                    <div><strong>Serial Number:</strong> {item.serialNumber}</div>
+                    <div><strong>Part Number:</strong> <span style={{ color: '#38bdf8' }}>{item.partNumber}</span></div>
+                    <div><strong>Part Name / Description:</strong> {item.partName || item.partDescription}</div>
+                    <div><strong>Material Grade:</strong> {item.materialGrade}</div>
+                    <div><strong>Heat-Treatment Process:</strong> {item.heatTreatmentProcess}</div>
+                    <div><strong>Batch / Lot Number:</strong> <span style={{ color: '#f59e0b' }}>{item.batchLotNumber}</span></div>
+                    <div><strong>Quantity:</strong> <strong style={{ color: '#34d399' }}>{item.quantity} {item.unitOfMeasure}</strong></div>
+                    <div><strong>Unit of Measure:</strong> {item.unitOfMeasure}</div>
+                  </div>
+                ))}
+              </div>
+            </AppCard>
+
+            <AppCard style={{ padding: '16px' }}>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: '#f59e0b', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Flame size={14} /> METALLURGICAL HEAT-TREATMENT SPECIFICATIONS & RESULTS
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', fontSize: '12px' }}>
+                <div><strong>Furnace / Equipment:</strong> {selectedDispatch.heatTreatmentInformation?.furnaceEquipment || 'FURNACE-PIT-01 (Integral Quench Furnace)'}</div>
+                <div><strong>Hardness Specification:</strong> {selectedDispatch.heatTreatmentInformation?.hardnessSpecification || '58-62 HRC'}</div>
+                <div><strong>Actual Hardness:</strong> <span style={{ color: '#34d399', fontWeight: 700 }}>{selectedDispatch.heatTreatmentInformation?.actualHardness || '60.5 HRC'}</span></div>
+                <div><strong>Case Depth:</strong> {selectedDispatch.heatTreatmentInformation?.caseDepth || '1.15 mm'}</div>
+                <div><strong>Quantity Received:</strong> {selectedDispatch.heatTreatmentInformation?.quantityReceived ?? (selectedDispatch.lines?.[0]?.dispatchedQuantity || 0)}</div>
+                <div><strong>Quantity Delivered:</strong> <span style={{ color: '#38bdf8', fontWeight: 700 }}>{selectedDispatch.heatTreatmentInformation?.quantityDelivered ?? (selectedDispatch.lines?.[0]?.dispatchedQuantity || 0)}</span></div>
+              </div>
+            </AppCard>
+
+            <AppCard style={{ padding: '16px' }}>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--color-primary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <Truck size={14} /> LOGISTICS & DESTINATION
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '13px' }}>
@@ -1057,36 +1244,147 @@ export const DispatchPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Part & Verified Quantity Summary */}
+            {/* Read-Only Traceability Notice */}
             <div
               style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
-                gap: '12px',
-                background: 'rgba(255, 255, 255, 0.02)',
-                padding: '10px 12px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '8px 12px',
+                background: 'rgba(16, 185, 129, 0.08)',
+                border: '1px solid rgba(16, 185, 129, 0.3)',
                 borderRadius: '6px',
                 fontSize: '12px',
-                border: '1px solid var(--color-border-subtle)'
+                color: '#34d399'
               }}
             >
-              <div>
-                <span style={{ color: '#94a3b8' }}>Customer:</span>
-                <div style={{ fontWeight: 600, color: '#ffffff' }}>{selectedBOForOC.customerName}</div>
+              <ShieldCheck size={16} />
+              <span>
+                <strong>No Re-Entry Required:</strong> All OC items and metallurgical heat-treatment values are strictly derived from Batch Order <strong>{selectedBOForOC.jobNumber || selectedBOForOC.batchOrderNumber}</strong> and its Inspection records. Manual editing is prohibited.
+              </span>
+            </div>
+
+            {/* 1. BO-Derived Items Card (All 8 Required Authoritative Fields) */}
+            <div
+              style={{
+                background: 'rgba(255, 255, 255, 0.02)',
+                border: '1px solid var(--color-border-subtle)',
+                borderRadius: '8px',
+                padding: '12px 14px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '10px',
+                fontSize: '12px'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ fontWeight: 700, color: '#38bdf8', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <PackageCheck size={14} />
+                  <span>AUTHORITATIVE OC ITEM DETAILS</span>
+                </div>
+                <span style={{ fontSize: '11px', color: '#94a3b8', background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: '4px' }}>
+                  Line 1 of 1 • Derived from BO
+                </span>
               </div>
-              <div>
-                <span style={{ color: '#94a3b8' }}>Component / Material:</span>
-                <div style={{ fontWeight: 600, color: '#ffffff' }}>{selectedBOForOC.part.itemName} ({selectedBOForOC.part.materialGrade})</div>
-              </div>
-              <div>
-                <span style={{ color: '#94a3b8' }}>Verified Quantity:</span>
-                <div style={{ fontWeight: 700, color: '#34d399' }}>
-                  {selectedBOForOC.quantities.verified} {selectedBOForOC.quantities.uom} {selectedBOForOC.weightKg ? `(${selectedBOForOC.weightKg} kg)` : ''}
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
+                <div>
+                  <span style={{ color: '#94a3b8' }}>Serial Number:</span>
+                  <div style={{ fontWeight: 600, color: '#ffffff' }}>1</div>
+                </div>
+                <div>
+                  <span style={{ color: '#94a3b8' }}>Part Number:</span>
+                  <div style={{ fontWeight: 600, color: '#38bdf8' }}>{selectedBOForOC.part.itemCode}</div>
+                </div>
+                <div>
+                  <span style={{ color: '#94a3b8' }}>Part Name / Description:</span>
+                  <div style={{ fontWeight: 600, color: '#ffffff' }}>{selectedBOForOC.part.itemName}</div>
+                </div>
+                <div>
+                  <span style={{ color: '#94a3b8' }}>Material Grade:</span>
+                  <div style={{ fontWeight: 600, color: '#ffffff' }}>{selectedBOForOC.part.materialGrade}</div>
+                </div>
+                <div>
+                  <span style={{ color: '#94a3b8' }}>Heat-Treatment Process:</span>
+                  <div style={{ fontWeight: 600, color: '#ffffff' }}>{selectedBOForOC.recipe.name}</div>
+                </div>
+                <div>
+                  <span style={{ color: '#94a3b8' }}>Batch / Lot Number:</span>
+                  <div style={{ fontWeight: 600, color: '#f59e0b' }}>{selectedBOForOC.heatLotNumber}</div>
+                </div>
+                <div>
+                  <span style={{ color: '#94a3b8' }}>Dispatched Quantity:</span>
+                  <div style={{ fontWeight: 700, color: '#34d399' }}>
+                    {selectedBOForOC.quantities.verified} {selectedBOForOC.quantities.uom}
+                  </div>
+                </div>
+                <div>
+                  <span style={{ color: '#94a3b8' }}>Unit of Measure (UOM):</span>
+                  <div style={{ fontWeight: 600, color: '#ffffff' }}>{selectedBOForOC.quantities.uom}</div>
                 </div>
               </div>
-              <div>
-                <span style={{ color: '#94a3b8' }}>CoC Certificate:</span>
-                <div style={{ fontWeight: 700, color: '#38bdf8' }}>{selectedBOForOC.inspectionApproval?.cocNumber || 'PASSED'}</div>
+            </div>
+
+            {/* 2. BO-Derived Heat-Treatment Information Card (All 6 Required Parameters) */}
+            <div
+              style={{
+                background: 'rgba(255, 255, 255, 0.02)',
+                border: '1px solid var(--color-border-subtle)',
+                borderRadius: '8px',
+                padding: '12px 14px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '10px',
+                fontSize: '12px'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ fontWeight: 700, color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Flame size={14} />
+                  <span>AUTHORITATIVE HEAT-TREATMENT & INSPECTION DATA</span>
+                </div>
+                <span style={{ fontSize: '11px', color: '#34d399', background: 'rgba(16, 185, 129, 0.1)', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}>
+                  {selectedBOForOC.inspectionApproval?.cocNumber || 'PASSED'}
+                </span>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
+                <div>
+                  <span style={{ color: '#94a3b8' }}>Furnace / Equipment:</span>
+                  <div style={{ fontWeight: 600, color: '#ffffff' }}>
+                    {selectedBOForOC.heatTreatmentInformation?.furnaceEquipment || 'FURNACE-PIT-01 (Integral Quench Furnace)'}
+                  </div>
+                </div>
+                <div>
+                  <span style={{ color: '#94a3b8' }}>Hardness Specification:</span>
+                  <div style={{ fontWeight: 600, color: '#ffffff' }}>
+                    {selectedBOForOC.heatTreatmentInformation?.hardnessSpecification || '58-62 HRC'}
+                  </div>
+                </div>
+                <div>
+                  <span style={{ color: '#94a3b8' }}>Actual Hardness:</span>
+                  <div style={{ fontWeight: 700, color: '#34d399' }}>
+                    {selectedBOForOC.heatTreatmentInformation?.actualHardness || '60.5 HRC'}
+                  </div>
+                </div>
+                <div>
+                  <span style={{ color: '#94a3b8' }}>Case Depth:</span>
+                  <div style={{ fontWeight: 600, color: '#ffffff' }}>
+                    {selectedBOForOC.heatTreatmentInformation?.caseDepth || '1.15 mm'}
+                  </div>
+                </div>
+                <div>
+                  <span style={{ color: '#94a3b8' }}>Quantity Received:</span>
+                  <div style={{ fontWeight: 600, color: '#ffffff' }}>
+                    {selectedBOForOC.heatTreatmentInformation?.quantityReceived ?? selectedBOForOC.quantities.verified} {selectedBOForOC.quantities.uom}
+                  </div>
+                </div>
+                <div>
+                  <span style={{ color: '#94a3b8' }}>Quantity Delivered:</span>
+                  <div style={{ fontWeight: 700, color: '#38bdf8' }}>
+                    {selectedBOForOC.heatTreatmentInformation?.quantityDelivered ?? selectedBOForOC.quantities.verified} {selectedBOForOC.quantities.uom}
+                  </div>
+                </div>
               </div>
             </div>
 

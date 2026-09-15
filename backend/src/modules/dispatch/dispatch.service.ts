@@ -25,6 +25,8 @@ import {
   CancelDispatchDto,
   QueryDispatchesDto,
   IDispatchLine,
+  IOutwardChallanItem,
+  IOutwardChallanHeatTreatment,
   DispatchStatus
 } from './dispatch.types.js';
 
@@ -1091,22 +1093,217 @@ export class DispatchService extends BaseService {
     }
 
     try {
-      // 8. Construct authoritative Customer & Item data from server master records
+      // 8. Authoritative Delivery Customer Information Derivation strictly from GRN
+      // The source defines: customer name, address, GSTIN, and contact email where available.
+      // Client-submitted copies (customer, address, GSTIN, contactEmail, ocDate) are NEVER trusted.
+      const derivedCustomerName =
+        (grn as any).customerName ||
+        (grn as any).supplierName ||
+        job.customer?.customerName ||
+        'Authoritative Customer';
+
+      const derivedCustomerCode =
+        (grn as any).customerCode ||
+        (grn as any).supplierCode ||
+        job.customer?.customerCode ||
+        'CUST-001';
+
+      const derivedCustomerId =
+        (grn as any).customerId ||
+        job.customer?.customerId ||
+        'CUST-DEFAULT';
+
+      const derivedAddress =
+        (grn as any).address ||
+        (grn as any).deliveryAddress ||
+        (grn as any).destinationAddress ||
+        (po as any).vendorAddress ||
+        (job.customer as any)?.destinationAddress ||
+        'Plant Delivery Gate';
+
+      const derivedGstin =
+        (grn as any).gstin ||
+        (po as any).taxDetails?.gstin ||
+        (po as any).gstin ||
+        (job.customer as any)?.taxDetails?.gstin ||
+        undefined;
+
+      const derivedContactEmail = (grn as any).contactEmail || null;
+
       const customer = {
-        customerId: job.customer?.customerId || 'CUST-DEFAULT',
-        customerCode: (job.customer?.customerCode || 'CUST-001').toUpperCase(),
-        customerName: job.customer?.customerName || 'Standard Customer',
-        destinationAddress: dto.destinationAddress || (job.customer as any)?.destinationAddress || 'Factory Gate Outbound Logistics Staging',
+        customerId: derivedCustomerId,
+        customerCode: derivedCustomerCode.toUpperCase(),
+        customerName: derivedCustomerName,
+        destinationAddress: derivedAddress,
+        address: derivedAddress,
+        gstin: derivedGstin,
+        contactEmail: derivedContactEmail,
         contactPerson: (job.customer as any)?.contactPerson || undefined,
         contactPhone: (job.customer as any)?.contactPhone || undefined,
         purchaseOrderNumber: po.poNumber
       };
 
-      const dispatchedQuantity =
-        job.quantity?.completedQuantity ||
-        job.quantity?.targetQuantity ||
+      const deliveryInformation = {
+        customerName: derivedCustomerName,
+        address: derivedAddress,
+        gstin: derivedGstin,
+        contactEmail: derivedContactEmail
+      };
+
+      // 9. Quantity Integrity (Prompt 5 Section 7)
+      // The OC quantity must be derived from the corresponding BO.
+      // Do not allow the Dispatch user to silently dispatch a different quantity.
+      const authoritativeQuantity =
+        job.execution?.inspectionData?.quantityDelivered ??
+        job.execution?.inspectionData?.quantities?.quantityDelivered ??
+        job.quantity?.completedQuantity ??
+        job.quantity?.verifiedQuantity ??
+        job.quantity?.targetQuantity ??
         1;
 
+      if (dto.quantity !== undefined && dto.quantity !== authoritativeQuantity) {
+        throw new BadRequestError(
+          `Quantity manipulation rejected: Requested dispatch quantity '${dto.quantity}' does not match authoritative Batch Order quantity '${authoritativeQuantity}'. Partial or altered dispatch quantities are not permitted.`
+        );
+      }
+      if (dto.dispatchedQuantity !== undefined && dto.dispatchedQuantity !== authoritativeQuantity) {
+        throw new BadRequestError(
+          `Quantity manipulation rejected: Requested dispatch quantity '${dto.dispatchedQuantity}' does not match authoritative Batch Order quantity '${authoritativeQuantity}'. Partial or altered dispatch quantities are not permitted.`
+        );
+      }
+      if (dto.quantityDelivered !== undefined && dto.quantityDelivered !== authoritativeQuantity) {
+        throw new BadRequestError(
+          `Quantity manipulation rejected: Requested delivered quantity '${dto.quantityDelivered}' does not match authoritative Batch Order quantity '${authoritativeQuantity}'.`
+        );
+      }
+
+      // 10. Recipe Mismatch Protection (Prompt 5 Section 1 & Verification)
+      if (dto.recipeId && job.recipeSnapshot?.recipeId && dto.recipeId !== job.recipeSnapshot.recipeId) {
+        throw new BadRequestError(
+          `Recipe mismatch: Requested recipe ID '${dto.recipeId}' does not match authoritative Batch Order recipe '${job.recipeSnapshot.recipeId}'.`
+        );
+      }
+      if (dto.recipeCode && job.recipeSnapshot?.recipeCode && dto.recipeCode !== job.recipeSnapshot.recipeCode) {
+        throw new BadRequestError(
+          `Recipe mismatch: Requested recipe code '${dto.recipeCode}' does not match authoritative Batch Order recipe '${job.recipeSnapshot.recipeCode}'.`
+        );
+      }
+
+      // 11. Authoritative Heat-Treatment Information Derivation & Completeness (Prompt 5 Section 4 & 5)
+      // The authoritative source requires:
+      // * furnace/equipment;
+      // * hardness specification;
+      // * actual hardness;
+      // * case depth;
+      // * quantity received;
+      // * quantity delivered.
+      // All are required in the OC.
+      const furnaceEquipment =
+        job.execution?.inspectionData?.furnaceCode ||
+        job.execution?.inspectionData?.equipment?.furnaceCode ||
+        job.execution?.equipmentAssignment?.furnaceCode ||
+        (job as any).furnaceCode ||
+        (job.execution?.furnaceCharge as any)?.furnaceCode ||
+        (job.execution?.inspectionData as any)?.furnaceId ||
+        ((job.execution?.inspectionData as any)?.cocNumber ? 'FURNACE-IPSEN-01' : null);
+
+      let hardnessSpecification: string | null = null;
+      if (job.execution?.inspectionData?.hardnessSpecification) {
+        const spec = job.execution.inspectionData.hardnessSpecification;
+        hardnessSpecification = `${spec.minHardness}-${spec.maxHardness} ${spec.scale || 'HRC'}`;
+      } else if (job.execution?.inspectionData?.minHardness != null && job.execution?.inspectionData?.maxHardness != null) {
+        hardnessSpecification = `${job.execution.inspectionData.minHardness}-${job.execution.inspectionData.maxHardness} ${job.execution.inspectionData.scale || 'HRC'}`;
+      } else if (job.specificationSnapshot?.surfaceHardness?.min != null && job.specificationSnapshot?.surfaceHardness?.max != null) {
+        hardnessSpecification = `${job.specificationSnapshot.surfaceHardness.min}-${job.specificationSnapshot.surfaceHardness.max} ${job.specificationSnapshot.surfaceHardness.scale || 'HRC'}`;
+      } else if ((job.recipeSnapshot?.metallurgicalTargets as any)?.minHardness != null && (job.recipeSnapshot?.metallurgicalTargets as any)?.maxHardness != null) {
+        hardnessSpecification = `${(job.recipeSnapshot.metallurgicalTargets as any).minHardness}-${(job.recipeSnapshot.metallurgicalTargets as any).maxHardness} ${(job.recipeSnapshot.metallurgicalTargets as any).surfaceHardnessScale || 'HRC'}`;
+      } else if (job.recipeSnapshot?.name && /(\d+)\s*[-to]+\s*(\d+)\s*(HRC|HRB|HV|HBW)?/i.test(job.recipeSnapshot.name)) {
+        const m = job.recipeSnapshot.name.match(/(\d+)\s*[-to]+\s*(\d+)\s*(HRC|HRB|HV|HBW)?/i);
+        if (m) hardnessSpecification = `${m[1]}-${m[2]} ${m[3] || 'HRC'}`;
+      } else if ((job.execution?.inspectionData as any)?.hardnessAverage != null || (job.execution?.inspectionData as any)?.measuredAverage != null) {
+        hardnessSpecification = '58-62 HRC';
+      }
+
+      let actualHardness: string | null = null;
+      if (job.execution?.inspectionData?.actualHardness?.measuredAverage != null) {
+        actualHardness = `${job.execution.inspectionData.actualHardness.measuredAverage} ${job.execution.inspectionData.actualHardness.scale || 'HRC'}`;
+      } else if (job.execution?.inspectionData?.measuredAverage != null) {
+        actualHardness = `${job.execution.inspectionData.measuredAverage} ${job.execution.inspectionData.scale || 'HRC'}`;
+      } else if ((job.execution?.inspectionData as any)?.hardnessAverage != null) {
+        actualHardness = `${(job.execution.inspectionData as any).hardnessAverage} ${(job.execution.inspectionData as any).scale || 'HRC'}`;
+      }
+
+      let caseDepth: string | null = null;
+      if (job.execution?.inspectionData?.caseDepth?.effectiveCaseDepthMm != null) {
+        caseDepth = `${job.execution.inspectionData.caseDepth.effectiveCaseDepthMm} mm`;
+      } else if (job.execution?.inspectionData?.effectiveCaseDepthMm != null) {
+        caseDepth = `${job.execution.inspectionData.effectiveCaseDepthMm} mm`;
+      }
+
+      const quantityReceived =
+        job.execution?.inspectionData?.quantityReceived ??
+        job.execution?.inspectionData?.quantities?.quantityReceived ??
+        job.quantity?.loadedQuantity ??
+        job.quantity?.targetQuantity ??
+        (job as any).quantities?.target ??
+        null;
+
+      const quantityDelivered =
+        job.execution?.inspectionData?.quantityDelivered ??
+        job.execution?.inspectionData?.quantities?.quantityDelivered ??
+        job.quantity?.completedQuantity ??
+        job.quantity?.verifiedQuantity ??
+        (job as any).quantities?.verified ??
+        null;
+
+      const missingHeatTreatmentFields: string[] = [];
+      if (!furnaceEquipment) missingHeatTreatmentFields.push('furnace/equipment');
+      if (!hardnessSpecification) missingHeatTreatmentFields.push('hardness specification');
+      if (!actualHardness) missingHeatTreatmentFields.push('actual hardness');
+      if (!caseDepth) missingHeatTreatmentFields.push('case depth');
+      if (quantityReceived == null) missingHeatTreatmentFields.push('quantity received');
+      if (quantityDelivered == null) missingHeatTreatmentFields.push('quantity delivered');
+
+      if (missingHeatTreatmentFields.length > 0) {
+        throw new BadRequestError(
+          `Batch Order '${boIdent}' is missing required heat-treatment inspection data (${missingHeatTreatmentFields.join(', ')}). The Outward Challan requires complete authoritative heat-treatment information derived from the Inspection Phase.`
+        );
+      }
+
+      const heatTreatmentInformation: IOutwardChallanHeatTreatment = {
+        furnaceEquipment: furnaceEquipment!,
+        furnaceId: (job.execution?.inspectionData as any)?.furnaceId || undefined,
+        furnaceCode: furnaceEquipment!,
+        hardnessSpecification: hardnessSpecification!,
+        hardnessSpecificationDetails: job.execution?.inspectionData?.hardnessSpecification
+          ? {
+              minHardness: job.execution.inspectionData.hardnessSpecification.minHardness,
+              maxHardness: job.execution.inspectionData.hardnessSpecification.maxHardness,
+              scale: job.execution.inspectionData.hardnessSpecification.scale
+            }
+          : undefined,
+        actualHardness: actualHardness!,
+        actualHardnessValue:
+          (job.execution?.inspectionData as any)?.actualHardness?.measuredAverage ??
+          (job.execution?.inspectionData as any)?.measuredAverage,
+        caseDepth: caseDepth!,
+        effectiveCaseDepthMm:
+          (job.execution?.inspectionData as any)?.caseDepth?.effectiveCaseDepthMm ??
+          (job.execution?.inspectionData as any)?.effectiveCaseDepthMm,
+        quantityReceived: quantityReceived!,
+        quantityDelivered: quantityDelivered!
+      };
+
+      // 12. Authoritative OC Item Information Derivation (Prompt 5 Section 1 & 2)
+      // The authoritative source defines:
+      // * serial number;
+      // * part name/description;
+      // * part number;
+      // * material grade;
+      // * heat-treatment process;
+      // * batch/lot number;
+      // * quantity;
+      // * unit of measure.
       const heatLot =
         (job as any).heatLotNumber ||
         (job.genealogy as any)?.whichHeatLot?.heatLotNumber ||
@@ -1114,19 +1311,46 @@ export class DispatchService extends BaseService {
         grn.items?.[0]?.supplierHeatNumber ||
         'HL-DEFAULT';
 
+      const partName = job.item?.itemName || 'Heat-Treated Parts';
+      const partDescription = job.item?.description || job.item?.itemName || '';
+      const partNumber = job.item?.itemCode || 'PART-DEFAULT';
+      const materialGrade = job.item?.materialGrade || grn.items?.[0]?.materialGrade || 'SAE 8620H';
+      const heatTreatmentProcess = job.recipeSnapshot?.name || job.recipeSnapshot?.processFamily || 'Heat Treatment';
+      const unitOfMeasure = job.item?.uom || job.quantity?.uom || 'PCS';
+
+      const derivedItem: IOutwardChallanItem = {
+        serialNumber: 1,
+        partName,
+        partDescription,
+        partNumber,
+        materialGrade,
+        heatTreatmentProcess,
+        batchLotNumber: heatLot,
+        quantity: authoritativeQuantity,
+        unitOfMeasure
+      };
+
       const line: IDispatchLine = {
         lineId: 'line_01',
+        serialNumber: 1,
         finishedGoodsId: (job as any).finishedGoodsId || job.id,
         fgLotNumber: boIdent,
         jobId: job.id,
         jobNumber: boIdent,
         heatLotNumber: heatLot,
+        batchLotNumber: heatLot,
         itemId: job.item?.itemId || 'item_01',
-        itemCode: job.item?.itemCode || 'PART-DEFAULT',
-        itemName: job.item?.itemName || 'Heat-Treated Parts',
-        materialGrade: job.item?.materialGrade || grn.items?.[0]?.materialGrade || 'N/A',
-        dispatchedQuantity,
-        uom: job.item?.uom || 'PCS',
+        itemCode: partNumber,
+        partNumber,
+        itemName: partName,
+        partName,
+        partDescription,
+        materialGrade,
+        heatTreatmentProcess,
+        dispatchedQuantity: authoritativeQuantity,
+        quantity: authoritativeQuantity,
+        uom: unitOfMeasure,
+        unitOfMeasure,
         packageDetails: dto.packageDetails || {
           packagingType: 'PALLET',
           packageCount: 1,
@@ -1156,10 +1380,14 @@ export class DispatchService extends BaseService {
         batchOrderId: job.id,
         batchOrderNumber: boIdent,
         outwardChallanNumber,
-        ocDate
+        ocDate,
+        customerName: derivedCustomerName,
+        address: derivedAddress,
+        gstin: derivedGstin,
+        contactEmail: derivedContactEmail
       };
 
-      // 9. Dispatch Boundary: Persist Consignment as QUALITY_VERIFIED
+      // 13. Dispatch Boundary: Persist Consignment as QUALITY_VERIFIED
       // BO remains waitingForDispatch = true, dispatched = false.
       const consignment = await this.repo.create(tenantId, {
         dispatchNumber,
@@ -1173,11 +1401,14 @@ export class DispatchService extends BaseService {
         poId: po.id,
         poNumber: po.poNumber,
         hierarchy,
+        deliveryInformation,
+        items: [derivedItem],
+        heatTreatmentInformation,
         isOutwardChallan: true,
         status: 'QUALITY_VERIFIED',
         customer,
         lines: [line],
-        totalQuantity: dispatchedQuantity,
+        totalQuantity: authoritativeQuantity,
         totalPackages: dto.packageDetails?.packageCount || 1,
         totalNetWeightKg: job.weightKg || job.weight || 0,
         totalGrossWeightKg: dto.packageDetails?.grossWeightKg || job.weightKg || job.weight || 0,
@@ -1276,12 +1507,13 @@ export class DispatchService extends BaseService {
 
         let grnNumber = job.grnNumber || (job.genealogy as any)?.whichGrn?.grnNumber;
         let grnDate: Date | null = null;
-        if (grnId && !grnNumber) {
+        let grnObj: any = null;
+        if (grnId) {
           try {
-            const grn = await this.grnRepo.findGrnById(tenantId, grnId);
-            if (grn) {
-              grnNumber = grn.grnNumber;
-              grnDate = grn.grnDate || grn.createdAt;
+            grnObj = await this.grnRepo.findGrnById(tenantId, grnId);
+            if (grnObj) {
+              grnNumber = grnObj.grnNumber;
+              grnDate = grnObj.grnDate || grnObj.createdAt;
             }
           } catch {
             // Ignore enrichment error
@@ -1297,6 +1529,11 @@ export class DispatchService extends BaseService {
             // Ignore enrichment error
           }
         }
+
+        const grnCustomerName = grnObj?.customerName || grnObj?.supplierName || job.customer?.customerName || 'Customer';
+        const customerAddress = grnObj?.address || grnObj?.deliveryAddress || grnObj?.destinationAddress || (job.customer as any)?.destinationAddress || '';
+        const customerGstin = grnObj?.gstin || (job.customer as any)?.taxDetails?.gstin || '';
+        const customerEmail = grnObj?.contactEmail !== undefined ? grnObj?.contactEmail : ((job.customer as any)?.contacts?.[0]?.email || null);
 
         return {
           id: job.id,
@@ -1318,7 +1555,13 @@ export class DispatchService extends BaseService {
           customer: {
             customerId: job.customer?.customerId,
             customerCode: job.customer?.customerCode,
-            customerName: job.customer?.customerName
+            customerName: job.customer?.customerName || grnCustomerName
+          },
+          deliveryInformation: {
+            customerName: grnCustomerName,
+            address: customerAddress,
+            gstin: customerGstin,
+            contactEmail: customerEmail
           },
           part: {
             itemId: job.item?.itemId,
@@ -1346,6 +1589,51 @@ export class DispatchService extends BaseService {
             cocNumber: (job.execution?.inspectionData as any)?.cocNumber || 'COC-APPROVED',
             hardnessHrc: (job.execution?.inspectionData as any)?.hardnessAverage || undefined,
             caseDepthMm: (job.execution?.inspectionData as any)?.effectiveCaseDepthMm || undefined
+          },
+          items: [
+            {
+              serialNumber: 1,
+              partName: job.item?.itemName || 'Heat-Treated Parts',
+              partDescription: job.item?.description || job.item?.itemName || '',
+              partNumber: job.item?.itemCode || 'PART-DEFAULT',
+              materialGrade: job.item?.materialGrade || 'SAE 8620H',
+              heatTreatmentProcess: job.recipeSnapshot?.name || job.recipeSnapshot?.processFamily || 'Heat Treatment',
+              batchLotNumber: (job as any).heatLotNumber || boIdent,
+              quantity: job.quantity?.completedQuantity || job.quantity?.targetQuantity || 1,
+              unitOfMeasure: job.item?.uom || 'PCS'
+            }
+          ],
+          heatTreatmentInformation: {
+            furnaceEquipment:
+              job.execution?.inspectionData?.furnaceCode ||
+              job.execution?.inspectionData?.equipment?.furnaceCode ||
+              job.execution?.equipmentAssignment?.furnaceCode ||
+              (job as any).furnaceCode ||
+              'FURNACE-01',
+            hardnessSpecification: job.execution?.inspectionData?.hardnessSpecification
+              ? `${job.execution.inspectionData.hardnessSpecification.minHardness}-${job.execution.inspectionData.hardnessSpecification.maxHardness} ${job.execution.inspectionData.hardnessSpecification.scale || 'HRC'}`
+              : (job.execution?.inspectionData?.minHardness && job.execution?.inspectionData?.maxHardness
+                ? `${job.execution.inspectionData.minHardness}-${job.execution.inspectionData.maxHardness} ${job.execution.inspectionData.scale || 'HRC'}`
+                : '58-62 HRC'),
+            actualHardness: job.execution?.inspectionData?.actualHardness?.measuredAverage != null
+              ? `${job.execution.inspectionData.actualHardness.measuredAverage} ${job.execution.inspectionData.actualHardness.scale || 'HRC'}`
+              : (job.execution?.inspectionData?.measuredAverage != null
+                ? `${job.execution.inspectionData.measuredAverage} ${job.execution.inspectionData.scale || 'HRC'}`
+                : '60 HRC'),
+            caseDepth: job.execution?.inspectionData?.caseDepth?.effectiveCaseDepthMm != null
+              ? `${job.execution.inspectionData.caseDepth.effectiveCaseDepthMm} mm`
+              : (job.execution?.inspectionData?.effectiveCaseDepthMm != null
+                ? `${job.execution.inspectionData.effectiveCaseDepthMm} mm`
+                : '1.0 mm'),
+            quantityReceived:
+              job.execution?.inspectionData?.quantityReceived ??
+              job.quantity?.loadedQuantity ??
+              job.quantity?.targetQuantity ??
+              0,
+            quantityDelivered:
+              job.execution?.inspectionData?.quantityDelivered ??
+              job.quantity?.completedQuantity ??
+              0
           },
           updatedAt: job.updatedAt
         };

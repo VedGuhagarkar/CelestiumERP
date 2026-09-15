@@ -211,7 +211,15 @@ const GRNSchema = createBaseSchema<GRNDocument>({
   printedAt: { type: Date },
   printedBy: { type: String },
   printCount: { type: Number, default: 0 },
-  remarks: { type: String, trim: true }
+  remarks: { type: String, trim: true },
+  customerName: { type: String, trim: true },
+  customerCode: { type: String, uppercase: true, trim: true },
+  customerId: { type: String },
+  address: { type: String, trim: true },
+  deliveryAddress: { type: String, trim: true },
+  destinationAddress: { type: String, trim: true },
+  gstin: { type: String, uppercase: true, trim: true },
+  contactEmail: { type: String, lowercase: true, trim: true }
 });
 
 IndexRegistry.addTenantUniqueIndex(GRNSchema, 'grnNumber');

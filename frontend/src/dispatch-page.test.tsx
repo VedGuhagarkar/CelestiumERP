@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, cleanup, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { DispatchPage } from './pages/DispatchPage.js';
 
@@ -63,10 +63,51 @@ describe('DispatchPage & Outward Challan Workflow', () => {
       expect(screen.getByText(/\[AUTO-GENERATED: OC-YYYYMM-XXXX\]/i)).toBeDefined();
     });
 
+    const ocForm = document.getElementById('create-oc-form')!;
+    expect(ocForm).toBeDefined();
+
     // Check that derived PO and GRN are displayed
-    expect(screen.getByText('Derived Purchase Order:')).toBeDefined();
-    expect(screen.getByText('Corresponding GRN:')).toBeDefined();
-    expect(screen.getByText('Selected Batch Order:')).toBeDefined();
+    expect(within(ocForm).getByText('Derived Purchase Order:')).toBeDefined();
+    expect(within(ocForm).getByText('Corresponding GRN:')).toBeDefined();
+    expect(within(ocForm).getByText('Selected Batch Order:')).toBeDefined();
+
+    // Check 8 required authoritative BO item fields
+    expect(within(ocForm).getByText(/AUTHORITATIVE OC ITEM DETAILS/i)).toBeDefined();
+    expect(within(ocForm).getByText('Serial Number:')).toBeDefined();
+    expect(within(ocForm).getByText('Part Number:')).toBeDefined();
+    expect(within(ocForm).getByText('PART-GEAR-8620')).toBeDefined();
+    expect(within(ocForm).getByText('Part Name / Description:')).toBeDefined();
+    expect(within(ocForm).getByText('Case-Hardened Pinion Gears')).toBeDefined();
+    expect(within(ocForm).getByText('Material Grade:')).toBeDefined();
+    expect(within(ocForm).getByText('SAE 8620H')).toBeDefined();
+    expect(within(ocForm).getByText('Heat-Treatment Process:')).toBeDefined();
+    expect(within(ocForm).getByText('Carburizing & Quench 60HRC')).toBeDefined();
+    expect(within(ocForm).getByText('Batch / Lot Number:')).toBeDefined();
+    expect(within(ocForm).getByText('HL-8620-2026B')).toBeDefined();
+    expect(within(ocForm).getByText('Dispatched Quantity:')).toBeDefined();
+    expect(within(ocForm).getByText('Unit of Measure (UOM):')).toBeDefined();
+
+    // Check 6 required authoritative heat-treatment parameters
+    expect(within(ocForm).getByText(/AUTHORITATIVE HEAT-TREATMENT & INSPECTION DATA/i)).toBeDefined();
+    expect(within(ocForm).getByText('Furnace / Equipment:')).toBeDefined();
+    expect(within(ocForm).getByText(/FURNACE-PIT-01 \(Integral Quench Furnace\)/i)).toBeDefined();
+    expect(within(ocForm).getByText('Hardness Specification:')).toBeDefined();
+    expect(within(ocForm).getByText('58-62 HRC')).toBeDefined();
+    expect(within(ocForm).getByText('Actual Hardness:')).toBeDefined();
+    expect(within(ocForm).getByText('60.5 HRC')).toBeDefined();
+    expect(within(ocForm).getByText('Case Depth:')).toBeDefined();
+    expect(within(ocForm).getByText('1.15 mm')).toBeDefined();
+    expect(within(ocForm).getByText('Quantity Received:')).toBeDefined();
+    expect(within(ocForm).getByText('Quantity Delivered:')).toBeDefined();
+
+    // Verify No Re-Entry notice
+    expect(within(ocForm).getByText(/No Re-Entry Required:/i)).toBeDefined();
+    expect(within(ocForm).getByText(/Manual editing is prohibited/i)).toBeDefined();
+
+    // Ensure no manual inputs exist for item quantity, part code, or hardness in the form
+    expect(ocForm.querySelector('input[name="dispatchedQuantity"]')).toBeNull();
+    expect(ocForm.querySelector('input[name="actualHardness"]')).toBeNull();
+    expect(ocForm.querySelector('input[name="caseDepth"]')).toBeNull();
   });
 
   it('submits OC creation request with batchOrderId and updates UI upon success', async () => {
@@ -80,6 +121,27 @@ describe('DispatchPage & Outward Challan Workflow', () => {
       poNumber: 'PO-TITAN-8891',
       grnNumber: 'GRN-2026-0042',
       batchOrderNumber: 'BO-202609-001',
+      items: [
+        {
+          serialNumber: 1,
+          partName: 'Case-Hardened Pinion Gears',
+          partDescription: 'Case-Hardened Pinion Gears',
+          partNumber: 'PART-GEAR-8620',
+          materialGrade: 'SAE 8620H',
+          heatTreatmentProcess: 'Carburizing & Quench 60HRC',
+          batchLotNumber: 'HL-8620-2026B',
+          quantity: 300,
+          unitOfMeasure: 'PCS'
+        }
+      ],
+      heatTreatmentInformation: {
+        furnaceEquipment: 'FURNACE-PIT-01 (Integral Quench Furnace)',
+        hardnessSpecification: '58-62 HRC',
+        actualHardness: '60.5 HRC',
+        caseDepth: '1.15 mm',
+        quantityReceived: 300,
+        quantityDelivered: 300
+      },
       customer: {
         customerCode: 'CUST-APEX-03',
         customerName: 'Apex Automotive Drivetrains',
@@ -127,7 +189,7 @@ describe('DispatchPage & Outward Challan Workflow', () => {
     fetchSpy.mockRestore();
   });
 
-  it('allows switching to Active Consignments tab and displays hierarchy badges', async () => {
+  it('allows switching to Active Consignments tab and displays hierarchy badges and drawer details', async () => {
     render(
       <MemoryRouter>
         <DispatchPage />
@@ -140,6 +202,17 @@ describe('DispatchPage & Outward Challan Workflow', () => {
     await waitFor(() => {
       expect(screen.getByText(/OUTWARD CHALLAN \/ DISPATCH #/i)).toBeDefined();
       expect(screen.getByText(/PO ➔ GRN ➔ BO HIERARCHY/i)).toBeDefined();
+    });
+
+    // Open Details Drawer for the first consignment
+    const detailsButtons = screen.getAllByRole('button', { name: /Details/i });
+    expect(detailsButtons.length).toBeGreaterThan(0);
+    fireEvent.click(detailsButtons[0]);
+
+    await waitFor(() => {
+      // Check Drawer items and heat-treatment cards
+      expect(screen.getByText(/BO-DERIVED OUTWARD CHALLAN ITEMS \(AUTHORITATIVE\)/i)).toBeDefined();
+      expect(screen.getByText(/METALLURGICAL HEAT-TREATMENT SPECIFICATIONS & RESULTS/i)).toBeDefined();
     });
   });
 });

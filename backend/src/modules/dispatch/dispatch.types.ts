@@ -39,19 +39,57 @@ export interface IDispatchQualityVerification {
   verificationNotes?: string;
 }
 
+export interface IOutwardChallanItem {
+  serialNumber: number;
+  partName: string;
+  partDescription?: string;
+  partNumber: string;
+  materialGrade: string;
+  heatTreatmentProcess: string;
+  batchLotNumber: string;
+  quantity: number;
+  unitOfMeasure: string;
+}
+
+export interface IOutwardChallanHeatTreatment {
+  furnaceEquipment: string;
+  furnaceId?: string;
+  furnaceCode?: string;
+  hardnessSpecification: string;
+  hardnessSpecificationDetails?: {
+    minHardness?: number;
+    maxHardness?: number;
+    scale?: string;
+  };
+  actualHardness: string;
+  actualHardnessValue?: number;
+  caseDepth: string;
+  effectiveCaseDepthMm?: number;
+  quantityReceived: number;
+  quantityDelivered: number;
+}
+
 export interface IDispatchLine {
   lineId: string;
+  serialNumber?: number;
   finishedGoodsId: string;
   fgLotNumber: string;
   jobId: string;
   jobNumber: string;
   heatLotNumber?: string;
+  batchLotNumber?: string;
   itemId: string;
   itemCode: string;
+  partNumber?: string;
   itemName: string;
+  partName?: string;
+  partDescription?: string;
   materialGrade?: string;
+  heatTreatmentProcess?: string;
   dispatchedQuantity: number;
+  quantity?: number;
   uom: string;
+  unitOfMeasure?: string;
   packageDetails?: IDispatchLinePackageDetails;
   qualityVerification?: IDispatchQualityVerification;
   notes?: string;
@@ -62,9 +100,19 @@ export interface IDispatchCustomer {
   customerCode: string;
   customerName: string;
   destinationAddress?: string;
+  address?: string;
+  gstin?: string;
+  contactEmail?: string | null;
   contactPerson?: string;
   contactPhone?: string;
   purchaseOrderNumber?: string;
+}
+
+export interface IDispatchDeliveryInformation {
+  customerName: string;
+  address: string;
+  gstin?: string;
+  contactEmail?: string | null;
 }
 
 export interface IDispatchCarrier {
@@ -145,6 +193,10 @@ export interface IOutwardChallanHierarchy {
   batchOrderNumber: string;
   outwardChallanNumber: string;
   ocDate: Date;
+  customerName?: string;
+  address?: string;
+  gstin?: string;
+  contactEmail?: string | null;
 }
 
 export interface IDispatchConsignment {
@@ -160,6 +212,9 @@ export interface IDispatchConsignment {
   poId?: string;
   poNumber?: string;
   hierarchy?: IOutwardChallanHierarchy;
+  deliveryInformation?: IDispatchDeliveryInformation;
+  items?: IOutwardChallanItem[];
+  heatTreatmentInformation?: IOutwardChallanHeatTreatment;
   isOutwardChallan?: boolean;
   status: DispatchStatus;
   customer: IDispatchCustomer;
@@ -233,19 +288,15 @@ export interface ApproveDispatchDto {
 export interface DepartDispatchDto {
   securityOfficerName: string;
   sealNumber?: string;
-  vehicleNumber?: string;
-  driverName?: string;
-  actualDepartureTime?: string;
-  notes?: string;
+  remarks?: string;
 }
 
 export interface DeliverDispatchDto {
   receiverName: string;
-  receivedQuantity?: number;
-  receivedCondition: DeliveryCondition;
   receiverSignatureRef?: string;
   podDocumentUrl?: string;
-  actualDeliveryTime?: string;
+  receivedQuantity?: number;
+  receivedCondition?: DeliveryCondition;
   remarks?: string;
 }
 
@@ -261,9 +312,36 @@ export interface CreateOutwardChallanDto {
   transportMode?: TransportMode;
   vehicleNumber?: string;
   driverName?: string;
+  driverPhone?: string;
   destinationAddress?: string;
   packageDetails?: IDispatchLinePackageDetails;
   notes?: string;
+  // Optional client-supplied fields (must be ignored or rejected by backend in favor of authoritative BO/GRN data)
+  customerName?: string;
+  customer?: any;
+  address?: string;
+  gstin?: string;
+  contactEmail?: string | null;
+  ocDate?: string | Date;
+  items?: any[];
+  heatTreatmentInformation?: any;
+  heatTreatment?: any;
+  furnaceEquipment?: string;
+  hardnessSpecification?: string;
+  actualHardness?: string;
+  caseDepth?: string;
+  quantity?: number;
+  dispatchedQuantity?: number;
+  quantityReceived?: number;
+  quantityDelivered?: number;
+  recipeId?: string;
+  recipeCode?: string;
+  materialGrade?: string;
+  partNumber?: string;
+  partName?: string;
+  partDescription?: string;
+  serialNumber?: number;
+  batchLotNumber?: string;
 }
 
 export interface QueryDispatchesDto {

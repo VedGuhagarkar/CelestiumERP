@@ -39,20 +39,64 @@ const QualityVerificationSchema = new Schema(
 const DispatchLineSchema = new Schema(
   {
     lineId: { type: String, required: true },
+    serialNumber: { type: Number },
     finishedGoodsId: { type: String, required: true },
     fgLotNumber: { type: String, required: true },
     jobId: { type: String, required: true },
     jobNumber: { type: String, required: true },
     heatLotNumber: { type: String },
+    batchLotNumber: { type: String },
     itemId: { type: String, required: true },
     itemCode: { type: String, required: true },
+    partNumber: { type: String },
     itemName: { type: String, required: true },
+    partName: { type: String },
+    partDescription: { type: String },
     materialGrade: { type: String },
+    heatTreatmentProcess: { type: String },
     dispatchedQuantity: { type: Number, required: true, min: 0.001 },
+    quantity: { type: Number },
     uom: { type: String, required: true, default: 'PCS' },
+    unitOfMeasure: { type: String },
     packageDetails: { type: PackageDetailsSchema },
     qualityVerification: { type: QualityVerificationSchema },
     notes: { type: String }
+  },
+  { _id: false }
+);
+
+const OutwardChallanItemSchema = new Schema(
+  {
+    serialNumber: { type: Number, required: true },
+    partName: { type: String, required: true },
+    partDescription: { type: String },
+    partNumber: { type: String, required: true },
+    materialGrade: { type: String, required: true },
+    heatTreatmentProcess: { type: String, required: true },
+    batchLotNumber: { type: String, required: true },
+    quantity: { type: Number, required: true, min: 0.001 },
+    unitOfMeasure: { type: String, required: true, default: 'PCS' }
+  },
+  { _id: false }
+);
+
+const OutwardChallanHeatTreatmentSchema = new Schema(
+  {
+    furnaceEquipment: { type: String, required: true },
+    furnaceId: { type: String },
+    furnaceCode: { type: String },
+    hardnessSpecification: { type: String, required: true },
+    hardnessSpecificationDetails: {
+      minHardness: { type: Number },
+      maxHardness: { type: Number },
+      scale: { type: String }
+    },
+    actualHardness: { type: String, required: true },
+    actualHardnessValue: { type: Number },
+    caseDepth: { type: String, required: true },
+    effectiveCaseDepthMm: { type: Number },
+    quantityReceived: { type: Number, required: true, min: 0 },
+    quantityDelivered: { type: Number, required: true, min: 0 }
   },
   { _id: false }
 );
@@ -63,6 +107,9 @@ const DispatchCustomerSchema = new Schema(
     customerCode: { type: String, required: true },
     customerName: { type: String, required: true },
     destinationAddress: { type: String },
+    address: { type: String },
+    gstin: { type: String, uppercase: true },
+    contactEmail: { type: String, lowercase: true },
     contactPerson: { type: String },
     contactPhone: { type: String },
     purchaseOrderNumber: { type: String }
@@ -184,7 +231,21 @@ const OutwardChallanHierarchySchema = new Schema(
     batchOrderId: { type: String, required: true },
     batchOrderNumber: { type: String, required: true, uppercase: true },
     outwardChallanNumber: { type: String, required: true, uppercase: true },
-    ocDate: { type: Date, required: true }
+    ocDate: { type: Date, required: true },
+    customerName: { type: String },
+    address: { type: String },
+    gstin: { type: String, uppercase: true },
+    contactEmail: { type: String, lowercase: true }
+  },
+  { _id: false }
+);
+
+const DeliveryInformationSchema = new Schema(
+  {
+    customerName: { type: String, required: true },
+    address: { type: String, required: true },
+    gstin: { type: String, uppercase: true },
+    contactEmail: { type: String, lowercase: true }
   },
   { _id: false }
 );
@@ -203,6 +264,9 @@ const DispatchConsignmentSchema = new Schema<DispatchConsignmentDocument>(
     poId: { type: String },
     poNumber: { type: String, uppercase: true },
     hierarchy: { type: OutwardChallanHierarchySchema },
+    deliveryInformation: { type: DeliveryInformationSchema },
+    items: { type: [OutwardChallanItemSchema], default: [] },
+    heatTreatmentInformation: { type: OutwardChallanHeatTreatmentSchema },
     isOutwardChallan: { type: Boolean, default: false },
     status: {
       type: String,
