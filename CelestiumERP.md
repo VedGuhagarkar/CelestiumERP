@@ -95,7 +95,7 @@
    - 8.1 Database Seeding Engine (`backend/src/scripts/seed.ts`)
    - 8.2 Centralized Configuration Subsystem (`backend/src/config/`)
    - 8.3 Operational Runbooks & Technical Specifications (`docs/`)
-   - 8.4 Automated Test Suite Matrix (68 Backend Specs + Frontend Suites)
+   - 8.4 Automated Test Suite Matrix (69 Backend Specs + Frontend Suites)
      - *Prompt 8:* `production-operator-workspace.spec.ts`
      - *Prompt 9:* `production-security-concurrency.spec.ts`
      - *Prompt 10:* `production-e2e-integration.spec.ts`
@@ -104,6 +104,7 @@
      - *Inspection Prompt 4:* `inspection-data.spec.ts`
      - *Inspection Prompt 5:* `inspection-recipe-verification.spec.ts`
      - *Inspection Prompt 6:* `inspection-approval-dispatch.spec.ts`
+     - *Inspection Prompt 7:* `inspection-failure-handling.spec.ts`
 
 ---
 
@@ -1116,7 +1117,15 @@ _No direct HTTP routes mounted for this internal domain service._
       - **6. Post-Approval Production Lock & Queue Clearance:** Permanently locks inspection editing (`400 Bad Request`) and production operations (furnace charges, stage progress, partial saves) on approved BOs (`Post-Production Lock Violation`). Clears the BO from active inspection queues and surfaces it exclusively in `GET /api/v1/production-jobs/waiting-for-dispatch`.
       - **7. Dispatch Boundary Preservation:** Inspection strictly establishes `waitingForDispatch = true` and `dispatched = false`. Outward challans, delivery notes, and gate passes are reserved for the Dispatch Phase. Direct bypass transitions from `IN_INSPECTION` to `DISPATCHED` via generic `/transition` are prohibited (`Inspection Lock Violation`).
       - **8. Audit Trail & Domain Event Publication:** Records immutable audit log `INSPECTION_APPROVED_FOR_DISPATCH` with approving user, timestamp, previous status (`IN_INSPECTION`), resulting status (`WAITING_FOR_DISPATCH`), delivered pieces, scrapped pieces, and publishes `DomainEvents.JOB_INSPECTION_APPROVED`.
-    - `failInspection(tenantId, id, actorId, dto)`: Validates active inspection status, enforces exclusive ownership (`403 Forbidden`), atomically transitions BO to quarantined failure state `inspection: true` ($\sum \text{flag}_i = 1$), records defect category, rejection reason, and inspector notes, and publishes `Job.InspectionFailed`.
+    - `failInspection(tenantId, id, actorId, dto)`: Authoritative Batch Order Quality Inspection Failure & Quarantine Handling (`inInspection -> inspection` atomic transition):
+      - **1. Failure Eligibility Invariant:** Only a Batch Order currently in active `inInspection = true` (`workflowState.inInspection: true`, `status: 'IN_INSPECTION'`) may be failed. Rejection attempts across all other workflow states (`waitingForProduction`, `inProduction`, `waitingForInspection`, `waitingForDispatch`, `dispatched`, `inspection`) are strictly rejected with `400 Bad Request`.
+      - **2. Server-Side Authorization & Ownership Enforcement:** Only users with authorized Quality Inspection roles (`QC_INSPECTOR`, `METALLURGIST`, `QUALITY_LEAD`, `PLANT_MANAGER`, `ADMIN`, `SUPER_ADMIN`) or direct quality permissions (`record`, `reject`, `verify`, `disposition`) may perform the failure operation; unauthorized roles are rejected with `403 Forbidden`. Enforces exclusive claimed inspector ownership (`claimedBy`); competing inspectors are rejected with `403 Forbidden` (`Inspection Ownership Violation`), while supervisory roles (`METALLURGIST`, `QUALITY_LEAD`, `PLANT_MANAGER`, `ADMIN`, `SUPER_ADMIN`) retain override authority.
+      - **3. Failure Transition & Single Active Flag Invariant:** When failure is confirmed, atomically sets `inInspection = false`, `inspection = true` (and `workflow.inspection = true`, `workflowState.inspection = true`), and `status = 'INSPECTION'`. All other workflow flags (`waitingForProduction`, `inProduction`, `waitingForInspection`, `waitingForDispatch`, `dispatched`) are set to false, guaranteeing exactly one active state flag remains ($\sum \text{flag}_i = 1$). Balances piece counts: `quantity.completedQuantity = 0` and `quantity.scrappedQuantity = quantityRejected`.
+      - **4. Dispatch Protection & Quarantine Isolation:** A failed BO must never become `waitingForDispatch`, must never be eligible for Outward Challan (OC) creation, and must never become `dispatched`. Verified in `DispatchService` (`createDispatch`, `verifyQualityRelease`), rejecting any consignment with a linked BO in `INSPECTION` with `400 Bad Request` (`Dispatch Protection Violation`). Generic status transitions (`/transition`) out of `INSPECTION` are permanently locked (`Quarantine Lock Violation`), permitting only `CANCELLED`.
+      - **5. Inspection Data Preservation (No Erasure):** Pre-existing inspection measurements and test point actuals (furnace equipment, hardness specification, test points, measured average, case depth measurements, quantity received) are preserved without erasure across canonical nested subdocuments (`equipment`, `hardnessSpecification`, `actualHardness`, `caseDepth`, `quantities`, `inspectedBy`) and flat accessors. Sets `disposition: 'REJECTED'`, `isHardnessCompliant: false`, and `isCaseDepthCompliant: false`.
+      - **6. Mandatory Failure Information Gating:** Rejection requires mandatory non-empty `defectCategory` and `defectReason` (or `rejectionReason`). Preserves optional `correctiveAction`, `quantityRejected`, and inspector `notes`. Missing required failure fields are rejected with validation errors.
+      - **7. Historical Integrity & Concurrency Protection:** The failure result remains fully traceable across the entire manufacturing lifecycle: $\text{PO} \longrightarrow \text{GRN} \longrightarrow \text{BO} \longrightarrow \text{Recipe} \longrightarrow \text{Production} \longrightarrow \text{Inspection}$. Concurrent failure attempts return `409 Conflict`.
+      - **8. Audit Trail & Domain Event Publication:** Records an immutable audit log `INSPECTION_FAILED_QUARANTINED` capturing the BO, inspector ID, failure event, timestamp, defect category, rejection reason, scrapped piece count, and resulting quarantine state, and publishes `DomainEvents.JOB_INSPECTION_FAILED`.
   - *Inspection Lock & Cross-Phase Protection Invariants (Prompt 3):*
     - **Queue Locking:** Taking a BO into inspection atomically excludes it from `GET /queue/waiting-for-inspection`.
     - **Production Operation Lockout:** While a BO is in inspection (`isJobInInspection`), `takeForProduction`, `recordRecipeStageProgress`, `recordFurnaceCharge`, and `saveProductionData` are strictly rejected with `400 Bad Request` (`Inspection Lock Violation` or `Post-Production Lock Violation`).
@@ -1236,8 +1245,8 @@ _No direct HTTP routes mounted for this internal domain service._
   - `takeForInspection()`: Atomically claims BO, enforces single-winner concurrency (`409 Conflict`), records `claimedBy`, `claimedAt`, `inspectedBy`, emits `Job.InspectionStarted`, and logs `INSPECTION_STARTED`.
   - `recordHeatTreatmentInspectionData()`: Validates `isJobInInspection`, enforces exclusive ownership (`403 Forbidden` if another inspector), enforces Recipe Protection (`400 Bad Request`), enforces Production Data Protection (`400 Bad Request`), validates equipment against master records, verifies non-negative numeric constraints with precision preservation, protects Planned vs Actual separation, and saves inspection test data.
   - `approveInspectionForDispatch()`: Validates `isJobInInspection`, enforces exclusive ownership (`403 Forbidden`), validates completeness across all Six Mandatory Fields (equipment, hardness spec, actual hardness, case depth, quantity received, quantity delivered), validates quantity delivered $\le$ quantity received, sets `waitingForDispatch = true` ($\sum=1$), and publishes `Job.InspectionApproved`.
-  - `failInspection()`: Validates `isJobInInspection`, enforces exclusive ownership (`403 Forbidden`), sets `inspection = true` ($\sum=1$), and publishes `Job.InspectionFailed`.
-  - Cross-Phase Lock Enforcement: Prohibits `takeForProduction`, `recordFurnaceCharge`, `recordRecipeStageProgress`, `saveProductionData`, `updateJob`, `updateProcessDetails`, operator/furnace changes, cancellation, or generic status transitions while in active inspection.
+  - `failInspection()`: Validates `isJobInInspection`, enforces exclusive ownership (`403 Forbidden` with supervisory override), validates mandatory defect category and reason, sets `inspection = true` and `status = 'INSPECTION'` ($\sum=1$), preserves prior test actuals without erasure, balances piece counts ($Q_{\text{completed}}=0, Q_{\text{scrapped}}=Q_{\text{rejected}}$), isolates in quarantine queue (`findInspectionFailedQueue`), permanently locks against dispatch staging or Outward Challan creation, and publishes `Job.InspectionFailed`.
+  - Cross-Phase Lock Enforcement: Prohibits `takeForProduction`, `recordFurnaceCharge`, `recordRecipeStageProgress`, `saveProductionData`, `updateJob`, `updateProcessDetails`, operator/furnace changes, cancellation, or generic status transitions while in active inspection or quarantined inspection.
 
 #### Controllers
 - **`QualityInspectionController`** (`quality-inspection.controller.ts`): Handles standalone quality inspection records and auxiliary testing endpoints.
@@ -1248,7 +1257,7 @@ _No direct HTTP routes mounted for this internal domain service._
   - `takeForInspectionSchema`: Inspector assignment and optional intake notes.
   - `recordHeatTreatmentInspectionSchema`: Partial inspection actuals entry.
   - `approveInspectionForDispatchSchema`: Strictly enforces all 6 mandatory heat-treatment fields, valid hardness scale, and positive quantities ($0 < Q_{\text{del}} \le Q_{\text{rec}}$).
-  - `failInspectionSchema`: Validates mandatory non-empty `rejectionReason` and `defectCategory`.
+  - `failInspectionSchema`: Validates mandatory non-empty `defectCategory` and `defectReason` / `rejectionReason`, with optional `correctiveAction`, `quantityRejected`, and inspector `notes`.
   - `hardnessTestPointValidatorSchema`: Validates multi-point hardness readings.
 - **`quality-inspection.validator.ts`**: Standalone inspection schemas (`createQualityInspectionSchema`, `assignInspectorSchema`, `recordTestResultsSchema`, `approveInspectionSchema`, `rejectInspectionSchema`, `requestReinspectionSchema`, `queryQualityInspectionsSchema`).
 
@@ -1566,6 +1575,7 @@ _No direct HTTP routes mounted for this internal domain service._
 #### Services
 - **`DispatchService`** (`dispatch.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
   - Methods: `createDispatch()`, `verifyQuality()`, `scheduleDispatch()`, `approveDispatch()`, `recordDeparture()`, `confirmDelivery()`, `cancelDispatch()`, `queryDispatches()`, `getDispatchById()`, `getDispatchByNumber()`.
+  - **Dispatch Protection & Outward Challan Invariant:** `createDispatch()` and `verifyQualityRelease()` strictly inspect linked Batch Orders. Any attempt to create an Outward Challan (OC) consignment or release dispatch for a job in quarantined `INSPECTION` (`workflowState.inspection: true`) or not actively in `waitingForDispatch: true` is strictly rejected with `400 Bad Request` (`Dispatch Protection Violation`). Failed jobs can never become dispatchable through ordinary workflow operations.
 
 #### Controllers
 - **`DispatchController`** (`dispatch.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
@@ -3140,6 +3150,35 @@ The codebase features comprehensive test suites validating layer boundaries, dat
   - Invariant 31 (Audit Trail & Event Publication): Records audit log `INSPECTION_APPROVED_FOR_DISPATCH` and publishes `DomainEvents.JOB_INSPECTION_APPROVED` with complete payload.
   - Invariant 32 (Router Compatibility - Dedicated Route): Allows approval via dedicated route `/api/v1/quality-inspections/:id/approve-dispatch` with `200 OK`.
   - Invariant 33 (Router Compatibility - Unified Route): Allows approval via unified endpoint `/api/v1/production-jobs/:id/approve-inspection` with `200 OK`.
+- `backend/tests/inspection-failure-handling.spec.ts` (28 tests — Prompt 7: Implement Inspection Failure Handling):
+  - Invariant 1 (Eligibility - WAITING_FOR_PRODUCTION Rejection): Rejects failure when BO is in `WAITING_FOR_PRODUCTION` with `400 Bad Request`.
+  - Invariant 2 (Eligibility - IN_PRODUCTION Rejection): Rejects failure when BO is in `IN_PRODUCTION` with `400 Bad Request`.
+  - Invariant 3 (Eligibility - WAITING_FOR_INSPECTION Rejection): Rejects failure when BO is in `WAITING_FOR_INSPECTION` with `400 Bad Request`.
+  - Invariant 4 (Eligibility - Already WAITING_FOR_DISPATCH Rejection): Rejects failure when BO is in `WAITING_FOR_DISPATCH` with `400 Bad Request`.
+  - Invariant 5 (Eligibility - DISPATCHED Rejection): Rejects failure when BO is in `DISPATCHED` with `400 Bad Request`.
+  - Invariant 6 (Eligibility - Already Quarantined INSPECTION Rejection): Rejects failure when BO is already in quarantined `INSPECTION` with `400 Bad Request`.
+  - Invariant 7 (Permission - Non-QA Role Rejection): Rejects failure attempts by unauthorized non-inspection roles with `403 Forbidden` enforced server-side.
+  - Invariant 8 (Permission - Authorized QC Inspector Acceptance): Grants failure operation to authorized QC Inspector with `200 OK`.
+  - Invariant 9 (Permission - Exclusive Ownership Enforcement): Rejects competing inspector from failing claimed session with `403 Forbidden` (`Inspection Ownership Violation`).
+  - Invariant 10 (Permission - QA Lead / Metallurgist Supervisory Override): Permits supervisory roles (`METALLURGIST`, `QUALITY_LEAD`, `PLANT_MANAGER`, `ADMIN`) to override and fail session with `200 OK`.
+  - Invariant 11 (State Transition - Quarantine Flags & Status Mutation): Atomically transitions `inInspection = false` and `inspection = true` (`workflow.inspection = true`, `workflowState.inspection = true`, `status = 'INSPECTION'`).
+  - Invariant 12 (State Transition - Single Active Flag Invariant): Enforces strict single-active state machine invariant ($\sum \text{flag}_i = 1$) with all other workflow flags false.
+  - Invariant 13 (State Transition - Piece Count Balancing): Balances piece counts setting `completedQuantity = 0` and `scrappedQuantity = quantityRejected`.
+  - Invariant 14 (Data Preservation - Inspection Records Retention): Preserves pre-existing inspection actuals, equipment identification, hardness test points, and case depth measurements without erasure.
+  - Invariant 15 (Data Preservation - Disposition & Compliance Marking): Sets `disposition = 'REJECTED'`, `isHardnessCompliant = false`, and `isCaseDepthCompliant = false`.
+  - Invariant 16 (Required Failure Data - Missing Defect Category Rejection): Rejects failure when `defectCategory` is missing or empty with `422 Unprocessable Entity`.
+  - Invariant 17 (Required Failure Data - Missing Defect Reason Rejection): Rejects failure when `defectReason` is missing or empty with `422 Unprocessable Entity`.
+  - Invariant 18 (Required Failure Data - Optional Fields Persistence): Persists optional corrective action, rejected quantity, and inspector notes alongside mandatory failure data.
+  - Invariant 19 (Dispatch Protection - Queue Exclusion): Strictly excludes failed BO from `waiting-for-dispatch` queue.
+  - Invariant 20 (Dispatch Protection - Quarantine Queue Presence): Surfaces failed BO exclusively in `inspection-failed` quarantine queue (`findInspectionFailedQueue`).
+  - Invariant 21 (Dispatch Protection - Outward Challan Creation Blocking): Blocks Outward Challan (OC) creation attempt in `DispatchService` with `400 Bad Request` (`Dispatch Protection Violation`).
+  - Invariant 22 (Dispatch Protection - Release Verification Blocking): Blocks dispatch release verification in `DispatchService` with `400 Bad Request` (`Dispatch Protection Violation`).
+  - Invariant 23 (Concurrency Protection - Duplicate Failure Collision): Prevents duplicate failure and rejects concurrent race attempts with `409 Conflict`.
+  - Invariant 24 (State Manipulation - Quarantine Lockout Violation): Rejects generic lifecycle status transitions out of `INSPECTION` to non-cancelled states with `400 Bad Request` (`Quarantine Lock Violation`).
+  - Invariant 25 (State Manipulation - Production & Inspection Operations Lockout): Prohibits taking a quarantined BO for production or inspection.
+  - Invariant 26 (Historical Traceability - Unbroken Genealogy): Preserves complete unbroken lineage across $\text{PO} \longrightarrow \text{GRN} \longrightarrow \text{BO} \longrightarrow \text{Recipe} \longrightarrow \text{Production} \longrightarrow \text{Inspection}$.
+  - Invariant 27 (Audit Trail & Event Publication): Records audit log `INSPECTION_FAILED_QUARANTINED` and publishes `DomainEvents.JOB_INSPECTION_FAILED` with complete failure telemetry.
+  - Invariant 28 (Router Compatibility - Dedicated & Unified Routes): Allows failure via `/api/v1/quality-inspections/:id/fail-inspection`, `/api/v1/production-jobs/:id/fail-inspection`, and `/api/v1/production-jobs/batch-orders/:id/fail-inspection` with `200 OK`.
 
 #### 4. Domain Integration Suites (48 Core Specs in `backend/tests/`)
 - Production Execution & Lifecycle: `production-job.spec.ts`, `production-execution-workflow.spec.ts`, `production-scheduling.spec.ts`, `plan-to-job-handoff.spec.ts`.

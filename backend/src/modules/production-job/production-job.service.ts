@@ -2611,6 +2611,14 @@ export class ProductionJobService {
       );
     }
 
+    if (job.inspection || (job.workflowState as any)?.inspection || currentStatus === 'INSPECTION') {
+      if (targetStatus !== 'CANCELLED') {
+        throw new BadRequestError(
+          `Quarantine Lock Violation: Batch Order '${job.boNumber || job.jobNumber}' is in quarantined inspection failure state ('INSPECTION') and cannot be transitioned to '${targetStatus}'. A failed Batch Order must never become dispatchable or active through ordinary workflow operations.`
+        );
+      }
+    }
+
     // State Transition Authority: Prevent phase skipping from WAITING_FOR_PRODUCTION
     if (currentStatus === 'WAITING_FOR_PRODUCTION') {
       const downstreamPhases = ['QUALITY_CHECK', 'STORAGE', 'READY_FOR_DISPATCH', 'DISPATCHED', 'COMPLETED'];
@@ -5800,9 +5808,29 @@ export class ProductionJobService {
       throw new NotFoundError(`Batch Order with identifier '${jobId}' not found.`);
     }
 
+    // 1. Failure Eligibility: Only a BO currently in inInspection may be failed
     if (!this.isJobInInspection(job)) {
       throw new BadRequestError(
-        `Cannot fail inspection: Batch Order '${job.boNumber || job.jobNumber}' is not in active inspection (current status: '${job.status}').`
+        `Cannot fail inspection: Batch Order '${job.boNumber || job.jobNumber}' is not in active inspection (current status: '${job.status}'). Only Batch Orders currently in 'inInspection' may be failed.`
+      );
+    }
+
+    // 2. Authorization: Only users with Inspection permission may perform failure operation
+    const isQualityAuthorized =
+      actor.role === 'QC_INSPECTOR' ||
+      actor.role === 'METALLURGIST' ||
+      actor.role === 'QUALITY_LEAD' ||
+      actor.role === 'PLANT_MANAGER' ||
+      actor.role === 'ADMIN' ||
+      actor.role === 'SUPER_ADMIN' ||
+      (actor as any).permissions?.includes('quality:inspection:record') ||
+      (actor as any).permissions?.includes('quality:inspection:reject') ||
+      (actor as any).permissions?.includes('quality:inspection:verify') ||
+      (actor as any).permissions?.includes('quality:disposition:manage');
+
+    if (actor.role && !isQualityAuthorized) {
+      throw new ForbiddenError(
+        `Permission Denied: User '${actor.userId}' with role '${actor.role}' does not possess Quality Inspection failure authority.`
       );
     }
 
@@ -5813,41 +5841,170 @@ export class ProductionJobService {
       actor.role !== 'QUALITY_LEAD' &&
       actor.role !== 'METALLURGIST' &&
       actor.role !== 'PLANT_MANAGER' &&
-      actor.role !== 'ADMIN'
+      actor.role !== 'ADMIN' &&
+      actor.role !== 'SUPER_ADMIN'
     ) {
       throw new ForbiddenError(
         `Inspection Ownership Violation: Batch Order '${job.boNumber || job.jobNumber}' is exclusively claimed by inspector '${job.claimedBy}'. Another inspector cannot fail or reject this active inspection session.`
       );
     }
 
+    // 3. Failure Information Validation
     if (!dto.defectCategory || !dto.defectReason) {
       throw new BadRequestError('Defect category and defect reason are mandatory for failed inspection disposition.');
     }
 
+    // 4. Data Preservation: Preserve existing inspection results that led to failure
+    const existingInspection = job.execution?.inspectionData || {};
+
+    const furnaceId =
+      dto.furnaceId ||
+      existingInspection.furnaceId ||
+      existingInspection.equipment?.furnaceId ||
+      job.equipmentAssignment?.furnaceId ||
+      'FURNACE-01';
+    const furnaceCode =
+      dto.furnaceCode ||
+      existingInspection.furnaceCode ||
+      existingInspection.equipment?.furnaceCode ||
+      job.equipmentAssignment?.furnaceCode ||
+      'FURNACE-01';
+
+    const minHardness =
+      dto.minHardness ??
+      existingInspection.minHardness ??
+      existingInspection.hardnessSpecification?.minHardness ??
+      0;
+    const maxHardness =
+      dto.maxHardness ??
+      existingInspection.maxHardness ??
+      existingInspection.hardnessSpecification?.maxHardness ??
+      0;
+    const scale =
+      dto.scale ||
+      existingInspection.scale ||
+      existingInspection.hardnessSpecification?.scale ||
+      'HRC';
+
+    const measuredAverage =
+      dto.measuredAverage ??
+      existingInspection.measuredAverage ??
+      existingInspection.actualHardness?.measuredAverage ??
+      0;
+    const testPoints =
+      dto.testPoints ||
+      existingInspection.testPoints ||
+      existingInspection.actualHardness?.testPoints ||
+      [];
+
+    const effectiveCaseDepthMm =
+      dto.effectiveCaseDepthMm ??
+      existingInspection.effectiveCaseDepthMm ??
+      existingInspection.caseDepth?.effectiveCaseDepthMm ??
+      0;
+    const targetCaseDepthMinMm =
+      existingInspection.targetCaseDepthMinMm ??
+      existingInspection.caseDepth?.targetMinMm ??
+      null;
+    const targetCaseDepthMaxMm =
+      existingInspection.targetCaseDepthMaxMm ??
+      existingInspection.caseDepth?.targetMaxMm ??
+      null;
+    const caseDepthMethod =
+      dto.caseDepthMethod ||
+      existingInspection.caseDepthMethod ||
+      existingInspection.caseDepth?.method ||
+      'MICROHARDNESS_TRAVERSE';
+
+    const quantityReceived =
+      dto.quantityReceived ??
+      existingInspection.quantityReceived ??
+      existingInspection.quantities?.quantityReceived ??
+      job.quantity?.loadedQuantity ??
+      job.quantity?.targetQuantity ??
+      0;
+    const quantityRejected =
+      dto.quantityRejected ??
+      existingInspection.quantityRejected ??
+      existingInspection.quantities?.quantityRejected ??
+      quantityReceived;
+    const quantityDelivered = 0; // Failed inspection delivers 0 conforming pieces
+
     const consolidatedData: any = {
-      furnaceId: dto.furnaceId || job.execution?.inspectionData?.furnaceId || job.equipmentAssignment?.furnaceId || 'FURNACE-01',
-      furnaceCode: dto.furnaceCode || job.execution?.inspectionData?.furnaceCode || job.equipmentAssignment?.furnaceCode || 'FURNACE-01',
-      minHardness: dto.minHardness ?? job.execution?.inspectionData?.minHardness ?? 0,
-      maxHardness: dto.maxHardness ?? job.execution?.inspectionData?.maxHardness ?? 0,
-      scale: dto.scale || job.execution?.inspectionData?.scale || 'HRC',
-      measuredAverage: dto.measuredAverage ?? job.execution?.inspectionData?.measuredAverage ?? 0,
-      testPoints: dto.testPoints || job.execution?.inspectionData?.testPoints || [],
+      // 1. Furnace / Equipment
+      furnaceId,
+      furnaceCode,
+      equipmentNotes: existingInspection.equipmentNotes || existingInspection.equipment?.equipmentNotes || null,
+      equipment: {
+        furnaceId,
+        furnaceCode,
+        equipmentNotes: existingInspection.equipmentNotes || existingInspection.equipment?.equipmentNotes || null
+      },
+
+      // 2. Hardness Specification
+      minHardness,
+      maxHardness,
+      scale,
+      specificationNotes: existingInspection.specificationNotes || null,
+      hardnessSpecification: {
+        minHardness,
+        maxHardness,
+        scale
+      },
+
+      // 3. Actual Hardness
+      measuredAverage,
+      testPoints,
       isHardnessCompliant: false,
-      effectiveCaseDepthMm: dto.effectiveCaseDepthMm ?? job.execution?.inspectionData?.effectiveCaseDepthMm ?? 0,
+      actualHardness: {
+        measuredAverage,
+        scale,
+        isCompliant: false,
+        testPoints
+      },
+
+      // 4. Case Depth
+      targetCaseDepthMinMm,
+      targetCaseDepthMaxMm,
+      effectiveCaseDepthMm,
       isCaseDepthCompliant: false,
-      quantityReceived: dto.quantityReceived ?? job.execution?.inspectionData?.quantityReceived ?? job.quantity?.loadedQuantity ?? 0,
-      quantityDelivered: 0,
-      quantityRejected: dto.quantityRejected ?? job.quantity?.loadedQuantity ?? 0,
+      caseDepthMethod,
+      caseDepth: {
+        effectiveCaseDepthMm,
+        targetMinMm: targetCaseDepthMinMm,
+        targetMaxMm: targetCaseDepthMaxMm,
+        isCompliant: false,
+        method: caseDepthMethod
+      },
+
+      // 5 & 6. Quantities
+      quantityReceived,
+      quantityDelivered,
+      quantityRejected,
+      quantities: {
+        quantityReceived,
+        quantityDelivered,
+        quantityRejected
+      },
+
+      // Quality Sign-off & Audit Metadata
       inspectorId: actor.userId,
       inspectorName: actor.name || actor.email || 'Inspector',
       inspectedAt: new Date(),
+      inspectedBy: {
+        userId: actor.userId,
+        email: actor.email || '',
+        role: actor.role || 'QC_INSPECTOR'
+      },
       disposition: 'REJECTED',
       defectCategory: dto.defectCategory,
       defectReason: dto.defectReason,
       correctiveAction: dto.correctiveAction || null,
-      notes: dto.notes || null
+      notes: dto.notes || existingInspection.notes || null,
+      remarks: dto.remarks || existingInspection.remarks || null
     };
 
+    // 5. Failure Transition & Single Active State Machine Invariant: sum(flag_i) = 1
     const updateData = {
       $set: {
         status: 'INSPECTION',
@@ -5858,6 +6015,13 @@ export class ProductionJobService {
         waitingForDispatch: false,
         dispatched: false,
         inspection: true,
+        'workflow.waitingForProduction': false,
+        'workflow.inProduction': false,
+        'workflow.waitingForInspection': false,
+        'workflow.inInspection': false,
+        'workflow.waitingForDispatch': false,
+        'workflow.dispatched': false,
+        'workflow.inspection': true,
         'workflowState.waitingForProduction': false,
         'workflowState.inProduction': false,
         'workflowState.waitingForInspection': false,
@@ -5866,11 +6030,12 @@ export class ProductionJobService {
         'workflowState.dispatched': false,
         'workflowState.inspection': true,
         'execution.inspectionData': consolidatedData,
+        'quantity.completedQuantity': 0,
         'quantity.scrappedQuantity': consolidatedData.quantityRejected
       },
       $push: {
         transitionHistory: {
-          fromStatus: 'IN_INSPECTION',
+          fromStatus: job.status || 'IN_INSPECTION',
           toStatus: 'INSPECTION',
           timestamp: new Date(),
           performedBy: {
@@ -5891,6 +6056,7 @@ export class ProductionJobService {
       );
     }
 
+    // 6. Audit Logging
     await auditService.record(tenantId, {
       actorId: actor.userId,
       action: 'INSPECTION_FAILED_QUARANTINED',
@@ -5901,10 +6067,14 @@ export class ProductionJobService {
         jobNumber: updated.jobNumber,
         defectCategory: dto.defectCategory,
         defectReason: dto.defectReason,
-        toStatus: 'INSPECTION'
+        previousStatus: job.status,
+        toStatus: 'INSPECTION',
+        inspectorId: actor.userId,
+        quantityRejected: consolidatedData.quantityRejected
       }
     });
 
+    // 7. Domain Event Publication
     await this.eventBus.publish({
       name: DomainEvents.JOB_INSPECTION_FAILED,
       tenantId,
@@ -5916,7 +6086,10 @@ export class ProductionJobService {
         jobNumber: updated.jobNumber,
         defectCategory: dto.defectCategory,
         defectReason: dto.defectReason,
-        toStatus: 'INSPECTION'
+        previousStatus: job.status,
+        toStatus: 'INSPECTION',
+        inspectorId: actor.userId,
+        quantityRejected: consolidatedData.quantityRejected
       }
     });
 

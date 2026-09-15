@@ -98,6 +98,32 @@ export class DispatchService extends BaseService {
         );
       }
 
+      if (fg.jobCardId) {
+        const linkedJob = await this.jobRepo.findById(tenantId, fg.jobCardId);
+        if (linkedJob) {
+          if (
+            linkedJob.status === 'INSPECTION' ||
+            linkedJob.inspection ||
+            (linkedJob.workflowState as any)?.inspection
+          ) {
+            throw new BadRequestError(
+              `Dispatch Protection Violation: Batch Order '${linkedJob.boNumber || linkedJob.jobNumber}' failed Quality Inspection and is quarantined. Ineligible for Outward Challan creation or dispatch release.`
+            );
+          }
+          if (
+            !linkedJob.waitingForDispatch &&
+            !(linkedJob.workflowState as any)?.waitingForDispatch &&
+            linkedJob.status !== 'WAITING_FOR_DISPATCH' &&
+            linkedJob.status !== 'STORAGE' &&
+            linkedJob.status !== 'READY_FOR_DISPATCH'
+          ) {
+            throw new BadRequestError(
+              `Dispatch Protection Violation: Batch Order '${linkedJob.boNumber || linkedJob.jobNumber}' is not waiting for dispatch (status: '${linkedJob.status}'). An Outward Challan may only be created when waitingForDispatch is true.`
+            );
+          }
+        }
+      }
+
       if (fg.availableQuantity < lineDto.dispatchedQuantity) {
         throw new BadRequestError(
           `Insufficient available quantity for lot '${fg.fgLotNumber}'. Requested: ${lineDto.dispatchedQuantity} ${fg.uom}, Available: ${fg.availableQuantity} ${fg.uom}`
@@ -272,6 +298,29 @@ export class DispatchService extends BaseService {
           fg.qualityRelease.inspectionReportId
         );
       } else if (line.jobId) {
+        const linkedJob = await this.jobRepo.findById(tenantId, line.jobId);
+        if (linkedJob) {
+          if (
+            linkedJob.status === 'INSPECTION' ||
+            linkedJob.inspection ||
+            (linkedJob.workflowState as any)?.inspection
+          ) {
+            throw new BadRequestError(
+              `Dispatch Protection Violation: Batch Order '${linkedJob.boNumber || linkedJob.jobNumber}' failed Quality Inspection and is quarantined. Ineligible for Outward Challan / Dispatch release.`
+            );
+          }
+          if (
+            !linkedJob.waitingForDispatch &&
+            !(linkedJob.workflowState as any)?.waitingForDispatch &&
+            linkedJob.status !== 'WAITING_FOR_DISPATCH' &&
+            linkedJob.status !== 'STORAGE' &&
+            linkedJob.status !== 'READY_FOR_DISPATCH'
+          ) {
+            throw new BadRequestError(
+              `Dispatch Protection Violation: Batch Order '${linkedJob.boNumber || linkedJob.jobNumber}' is not waiting for dispatch (status: '${linkedJob.status}'). Outward Challan release requires waitingForDispatch = true.`
+            );
+          }
+        }
         const jobInspections = await this.qcInspectionRepo.findByJobId(tenantId, line.jobId);
         inspectionDoc = jobInspections.find((i) => i.status === 'APPROVED') || null;
       }
