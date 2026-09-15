@@ -170,7 +170,7 @@ export class FinishedGoodsService extends BaseService {
       throw new NotFoundError(`Finished goods lot with ID '${id}' not found`);
     }
 
-    if (!fg.qualityRelease.isReleased || fg.status === 'AWAITING_QC_RELEASE' || fg.status === 'QUARANTINED') {
+    if (!fg.qualityRelease?.isReleased || fg.status === 'AWAITING_QC_RELEASE' || fg.status === 'QUARANTINED') {
       throw new BadRequestError(
         `Finished goods lot [${fg.fgLotNumber}] is not released by QC (Status: ${fg.status}) and cannot be reserved for dispatch`
       );

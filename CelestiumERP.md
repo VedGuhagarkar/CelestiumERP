@@ -95,7 +95,7 @@
    - 8.1 Database Seeding Engine (`backend/src/scripts/seed.ts`)
    - 8.2 Centralized Configuration Subsystem (`backend/src/config/`)
    - 8.3 Operational Runbooks & Technical Specifications (`docs/`)
-   - 8.4 Automated Test Suite Matrix (69 Backend Specs + Frontend Suites)
+   - 8.4 Automated Test Suite Matrix (70 Backend Specs + Frontend Suites)
      - *Prompt 8:* `production-operator-workspace.spec.ts`
      - *Prompt 9:* `production-security-concurrency.spec.ts`
      - *Prompt 10:* `production-e2e-integration.spec.ts`
@@ -106,6 +106,7 @@
      - *Inspection Prompt 6:* `inspection-approval-dispatch.spec.ts`
      - *Inspection Prompt 7:* `inspection-failure-handling.spec.ts`
      - *Inspection Prompt 9:* `inspection-security-concurrency.spec.ts`
+     - *Inspection Prompt 10:* `inspection-e2e-integration.spec.ts`
 
 ---
 
@@ -3292,6 +3293,52 @@ The codebase features comprehensive test suites validating layer boundaries, dat
     - Invariant 9.1: Enforces Mongoose pre-validate and pre-save hooks rejecting any BO document having multiple active workflow state flags ($\sum \text{flag}_i > 1$) with `Mutual Exclusivity Violation`.
     - Invariant 9.2: Formally verifies that an approved BO has exactly one active state flag (`waitingForDispatch = true`, $\sum \text{flag}_i = 1$).
     - Invariant 9.3: Formally verifies that a quarantined failed BO has exactly one active state flag (`inspection = true`, $\sum \text{flag}_i = 1$).
+- `backend/tests/inspection-e2e-integration.spec.ts` (36 tests — Prompt 10: Complete Inspection Phase Integration, Testing and Final Cleanup):
+  - Section 1 (Repository-Wide Authoritative Workflow & Queue Partitioning - 5 tests):
+    - Invariant 1.1: Queries `waiting-for-inspection` queue and returns eligible BOs awaiting QC claim.
+    - Invariant 1.2: Queries `in-inspection` queue and returns active claimed BOs with inspector ownership.
+    - Invariant 1.3: Queries `waiting-for-dispatch` queue and returns QC-approved BOs awaiting Outward Challan creation.
+    - Invariant 1.4: Queries `inspection-failed` quarantine queue and returns failed/quarantined BOs.
+    - Invariant 1.5: Verifies identical queue access and strict router parity across `/api/v1/quality-inspections` and `/api/v1/production-jobs`.
+  - Section 2 (Creation-to-Inspection Traceability - 2 tests):
+    - Invariant 2.1: Preserves the unbroken genealogy ($\text{PO} \longrightarrow \text{GRN} \longrightarrow \text{BO} \longrightarrow \text{Recipe} \longrightarrow \text{Production} \longrightarrow \text{Inspection}$) accessible via workbench endpoint.
+    - Invariant 2.2: Strictly prohibits detaching inspection records, nullifying parent BO lineage, or altering genealogy via inspection endpoints with `400 Bad Request` (`Production Data Protection Violation`).
+  - Section 3 (Complete End-to-End Inspection Lifecycle - 18-Step Canonical Journey - 1 test):
+    - Invariant 3.1: Executes and validates the entire 18-step canonical quality inspection lifecycle from waiting for inspection through atomic take, competing inspector rejection, workbench inspection verification, six mandatory fields entry, 15 process row verifications, atomic dispatch approval, queue re-partitioning, and downstream Outward Challan dispatch eligibility.
+  - Section 4 (Required Heat-Treatment Data Gating - The Six Mandatory Fields - 6 tests):
+    - Invariant 4.1: Rejects approval when furnace/equipment identification is missing (`400/422`).
+    - Invariant 4.2: Rejects approval when hardness specification limits are missing (`400/422`).
+    - Invariant 4.3: Rejects approval when actual measured hardness result is missing (`400/422`).
+    - Invariant 4.4: Rejects approval when effective case depth measurement is missing (`400/422`).
+    - Invariant 4.5: Rejects approval when quantity received is missing or non-positive (`400 Bad Request`).
+    - Invariant 4.6: Rejects approval when quantity delivered exceeds quantity received (`400 Bad Request`).
+  - Section 5 (Failure Test & Quarantine Lifecycle - 2 tests):
+    - Invariant 5.1: Atomically transitions non-compliant BO to authoritative `INSPECTION` failure quarantine state (`inspection = true`, all other flags false).
+    - Invariant 5.2: Strictly prevents Outward Challan creation in `DispatchService` for any failed BO with `400 Bad Request` (`Dispatch Protection Violation`).
+  - Section 6 (Workflow Manipulation Testing - 8 tests):
+    - Invariant 6.1: Rejects taking an already inspected / approved BO with `400 Bad Request`.
+    - Invariant 6.2: Rejects approving a `WAITING_FOR_INSPECTION` BO without taking it with `400 Bad Request`.
+    - Invariant 6.3: Rejects approving an incomplete BO with missing required data with `400 Bad Request`.
+    - Invariant 6.4: Rejects approving a failed / quarantined BO with `400 Bad Request`.
+    - Invariant 6.5: Rejects setting multiple workflow flags simultaneously via schema validation with `Mutual Exclusivity Violation`.
+    - Invariant 6.6: Rejects substituting or replacing `recipeSnapshot` through inspection endpoints with `400 Bad Request` (`Recipe Protection Violation`).
+    - Invariant 6.7: Rejects rewriting historical production data or piece counts through inspection endpoints with `400 Bad Request` (`Production Data Protection Violation`).
+    - Invariant 6.8: Rejects directly moving from `IN_INSPECTION` to `DISPATCHED` via generic `/transition` endpoint with `400 Bad Request` (`Inspection Lock Violation`).
+  - Section 7 (Authorization Testing - 4 tests):
+    - Invariant 7.1: Permits authorized QC Inspector (`QC_INSPECTOR`) to perform inspection mutations with `200 OK`.
+    - Invariant 7.2: Rejects unauthorized inventory clerk (`INVENTORY_CLERK`) attempting inspection operations with `403 Forbidden`.
+    - Invariant 7.3: Rejects production operator (`FURNACE_OPERATOR`) attempting inspection operations with `403 Forbidden`.
+    - Invariant 7.4: Rejects dispatch officer (`DISPATCH_OFFICER`) attempting inspection operations with `403 Forbidden`.
+  - Section 8 (Concurrency & Collision Testing - 6 tests):
+    - Invariant 8.1: Handles atomic race conditions: when two inspectors attempt simultaneous atomic take, second receives `409 Conflict`.
+    - Invariant 8.2: Rejects competing inspector from editing an active claimed inspection session with `403 Forbidden` (`Inspection Ownership Violation`).
+    - Invariant 8.3: Permits supervisory Chief Metallurgist (`METALLURGIST`) to override and edit an active claimed inspection session with `200 OK`.
+    - Invariant 8.4: Rejects duplicate approval requests on an already approved BO with `400 Bad Request` (`not in active inspection`).
+    - Invariant 8.5: Rejects duplicate failure requests on an already quarantined BO with `400 Bad Request` (`not in active inspection`).
+    - Invariant 8.6: Rejects stale session modifications on an already approved BO in `WAITING_FOR_DISPATCH` with `400 Bad Request`.
+  - Section 9 (Historical Integrity & Cross-Phase Boundary Enforcement - 2 tests):
+    - Invariant 9.1: Preserves all historical inspection results, genealogy, and recipe snapshots viewable after dispatch approval.
+    - Invariant 9.2: Formally verifies that Inspection phase endpoints do NOT create or execute Outward Challans (clean architectural boundary).
 
 #### 4. Domain Integration Suites (48 Core Specs in `backend/tests/`)
 - Production Execution & Lifecycle: `production-job.spec.ts`, `production-execution-workflow.spec.ts`, `production-scheduling.spec.ts`, `plan-to-job-handoff.spec.ts`.

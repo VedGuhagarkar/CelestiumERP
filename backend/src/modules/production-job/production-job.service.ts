@@ -5147,7 +5147,8 @@ export class ProductionJobService {
       dto?.loadedPieces !== undefined ||
       dto?.actualTemperatureC !== undefined ||
       dto?.loadedQuantity !== undefined ||
-      dto?.loadedWeightKg !== undefined
+      dto?.loadedWeightKg !== undefined ||
+      dto?.genealogy !== undefined
     ) {
       throw new BadRequestError(
         `Production Data Protection Violation: Historical production telemetry, piece counts, and charge actuals cannot be modified during Quality Inspection. Silent rewriting of production values is strictly prohibited.`
@@ -6288,6 +6289,23 @@ export class ProductionJobService {
 
     return {
       headerContext,
+      genealogy: {
+        poNumber: job.poNumber || job.genealogy?.whichPo?.poNumber || 'N/A',
+        grnNumber: job.grnNumber || job.genealogy?.whichGrn?.grnNumber || 'N/A',
+        boNumber: job.boNumber || job.jobNumber || 'N/A',
+        heatNumber: job.genealogy?.heatNumber || 'N/A',
+        heatTreatLotNumber: job.genealogy?.heatTreatLotNumber || 'N/A',
+        whichPo: job.genealogy?.whichPo,
+        whichGrn: job.genealogy?.whichGrn,
+        whichPart: job.genealogy?.whichPart
+      },
+      recipeSnapshot: job.recipeSnapshot,
+      productionExecution: {
+        furnaceCode: job.execution?.furnaceCharge?.furnaceCode || job.equipmentAssignment?.furnaceCode || 'N/A',
+        chargeNumber: job.execution?.furnaceCharge?.chargeNumber || 'N/A',
+        loadedPieces: (job.execution?.furnaceCharge as any)?.loadedPieces || (job.execution?.furnaceCharge as any)?.loadedPieceCount || job.quantity?.loadedQuantity || 0,
+        loadedWeightKg: job.execution?.furnaceCharge?.loadedWeightKg || job.quantity?.weightKg || 0
+      },
       recipeRequirements,
       recipeAuthority,
       processDetails,

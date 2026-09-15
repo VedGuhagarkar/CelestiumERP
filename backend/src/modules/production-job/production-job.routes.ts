@@ -348,7 +348,9 @@ productionJobRouter.post(
 productionJobRouter.get(
   [
     '/:id/inspection-workbench',
-    '/batch-orders/:id/inspection-workbench'
+    '/:id/workbench',
+    '/batch-orders/:id/inspection-workbench',
+    '/batch-orders/:id/workbench'
   ],
   authenticateJwt,
   requireAnyPermission(
