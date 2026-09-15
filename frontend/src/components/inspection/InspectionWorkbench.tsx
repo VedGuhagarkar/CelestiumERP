@@ -15,11 +15,9 @@ import {
   Trash2,
   Truck,
   FileCheck,
-  Clock,
   ShieldCheck,
   Check,
   RefreshCw,
-  Info,
   Sliders
 } from 'lucide-react';
 import { AppCard } from '../../design-system/surfaces/AppCard.js';
@@ -747,7 +745,7 @@ export const InspectionWorkbench: React.FC<InspectionWorkbenchProps> = ({
               Piece Count & Weight
             </span>
             <div>
-              Loaded: <strong>{loadedQty} {uom}</strong> | Target: {targetQty}
+              Loaded: <strong>{loadedQty} {uom}</strong> | Target: {targetQty} | Comp: {completedQty} | Scrap: {scrappedQty}
             </div>
             <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: 'var(--color-text-secondary)' }}>
               <Scale size={13} /> Weight: <strong>{weightKg} kg</strong>

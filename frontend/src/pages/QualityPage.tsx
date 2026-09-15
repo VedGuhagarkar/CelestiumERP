@@ -6,16 +6,10 @@ import {
   AlertTriangle,
   ShieldCheck,
   CheckCircle2,
-  XCircle,
   Search,
   RefreshCw,
-  Flame,
-  Save,
   Plus,
-  Trash2,
-  Layers,
   FileCheck,
-  Award,
   Lock,
   Scale,
   Calendar,
@@ -28,7 +22,6 @@ import { AppCard } from '../design-system/surfaces/AppCard.js';
 import { AppButton } from '../design-system/buttons/AppButton.js';
 import { AppDialog } from '../design-system/feedback/AppDialog.js';
 import { AppInput } from '../design-system/forms/AppInput.js';
-import { AppSelect } from '../design-system/forms/AppSelect.js';
 import { AppAlert } from '../design-system/feedback/AppAlert.js';
 import { StatusBadge } from '../design-system/feedback/StatusBadge.js';
 import { EmptyState } from '../design-system/states/EmptyState.js';
@@ -99,7 +92,8 @@ interface BatchOrderInspection {
   productionCompleted?: boolean;
   isProductionDataLocked?: boolean;
   priority?: string;
-  status: string;
+  status?: string;
+  currentWorkflowState?: string;
   waitingForProduction?: boolean;
   inProduction?: boolean;
   waitingForInspection?: boolean;
@@ -245,6 +239,7 @@ const SAMPLE_WAITING_JOB: BatchOrderInspection = {
     inspection: false
   },
   currentWorkflowState: 'WAITING_FOR_INSPECTION',
+  status: 'WAITING_FOR_INSPECTION',
   execution: {
     furnaceCharge: {
       furnaceCode: 'FURNACE-VAC-01',
@@ -287,7 +282,8 @@ const SAMPLE_IN_INSPECTION_JOB: BatchOrderInspection = {
     waitingForDispatch: false,
     inspection: false
   },
-  currentWorkflowState: 'IN_INSPECTION'
+  currentWorkflowState: 'IN_INSPECTION',
+  status: 'IN_INSPECTION'
 };
 
 export const QualityPage: React.FC = () => {
