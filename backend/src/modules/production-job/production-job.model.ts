@@ -26,11 +26,13 @@ const processDetailRowSchema = new Schema<IProcessDetailRow>(
     recipeCode: { type: String, default: null },
     minhardness: { type: Number, default: null, min: 0 },
     maxhardness: { type: Number, default: null, min: 0 },
+    actualHardness: { type: Number, default: null, min: 0 },
+    isCompliant: { type: Boolean, default: null },
     userId: { type: String, default: null },
     userName: { type: String, default: null },
     status: {
       type: String,
-      enum: ['BLANK', 'PENDING', 'IN_PROGRESS', 'COMPLETED', 'SKIPPED', 'CANCELLED'],
+      enum: ['BLANK', 'PENDING', 'IN_PROGRESS', 'COMPLETED', 'PASSED', 'FAILED', 'SKIPPED', 'CANCELLED'],
       default: 'BLANK'
     },
     notes: { type: String, default: null }

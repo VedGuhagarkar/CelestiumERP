@@ -61,6 +61,8 @@ export const processRowStatusEnum = z.enum([
   'PENDING',
   'IN_PROGRESS',
   'COMPLETED',
+  'PASSED',
+  'FAILED',
   'SKIPPED',
   'CANCELLED'
 ]);
@@ -76,6 +78,8 @@ export const processDetailRowValidatorSchema = z
     recipeCode: z.string().trim().nullable().optional(),
     minhardness: z.number().min(0, 'minhardness must be non-negative').nullable().optional(),
     maxhardness: z.number().min(0, 'maxhardness must be non-negative').nullable().optional(),
+    actualHardness: z.number().min(0, 'actualHardness must be non-negative').nullable().optional(),
+    isCompliant: z.boolean().nullable().optional(),
     userId: z.string().trim().nullable().optional(),
     userName: z.string().trim().nullable().optional(),
     status: processRowStatusEnum.optional().default('BLANK'),
@@ -96,6 +100,22 @@ export const processDetailRowValidatorSchema = z
       });
     }
   });
+
+export const verifyProcessRowSchema: ValidationSchema = {
+  body: z.object({
+    serialNumber: z.number().int().min(1).max(15, 'serialNumber must be between 1 and 15'),
+    status: processRowStatusEnum.optional(),
+    actualHardness: z.number().min(0, 'actualHardness must be non-negative').optional(),
+    notes: z.string().trim().max(1000).optional(),
+    userId: z.string().trim().optional(),
+    userName: z.string().trim().optional(),
+    recipeId: z.string().trim().optional(),
+    recipeCode: z.string().trim().optional(),
+    partId: z.string().trim().optional(),
+    partCode: z.string().trim().optional(),
+    isHardnessCompliant: z.boolean().optional()
+  })
+};
 
 export const createBatchOrderSchema: ValidationSchema = {
   body: z

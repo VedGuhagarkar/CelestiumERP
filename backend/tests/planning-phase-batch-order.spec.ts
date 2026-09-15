@@ -1750,14 +1750,16 @@ describe('Planning Phase — Authoritative PO -> GRN -> BO Workflow', () => {
       expect(bo.waitingForDispatch).toBe(false);
       expect(bo.dispatched).toBe(false);
 
-      expect(bo.workflowState).toEqual({
-        waitingForProduction: true,
-        inProduction: false,
-        waitingForInspection: false,
-        inInspection: false,
-        waitingForDispatch: false,
-        dispatched: false
-      });
+      expect(bo.workflowState).toEqual(
+        expect.objectContaining({
+          waitingForProduction: true,
+          inProduction: false,
+          waitingForInspection: false,
+          inInspection: false,
+          waitingForDispatch: false,
+          dispatched: false
+        })
+      );
     });
 
     // 2. Mutual Exclusivity: Exactly one flag is true

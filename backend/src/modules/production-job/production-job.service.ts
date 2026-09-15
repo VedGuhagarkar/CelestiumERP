@@ -6,6 +6,7 @@ import {
   CreateDirectJobDto,
   CreateBatchOrderDto,
   UpdateProcessDetailsDto,
+  VerifyProcessRowDto,
   IProcessDetailRow,
   ProcessRowStatus,
   UpdateJobDto,
@@ -1752,7 +1753,7 @@ export class ProductionJobService {
 
     if (job.inProduction || (job.workflowState as any)?.inProduction || job.status === 'IN_PRODUCTION' || job.status === 'IN_PROGRESS') {
       throw new BadRequestError(
-        `In-Production Lock Violation: Cannot remove assigned operator while Batch Order '${job.boNumber || job.jobNumber}' is in production.`
+        `In-Production Lock Violation: Cannot remove assigned operator while Batch Order '${job.boNumber || job.jobNumber}' is in production (job is actively IN_PROGRESS).`
       );
     }
 
@@ -2904,7 +2905,9 @@ export class ProductionJobService {
     tenantId: string,
     filters: any = {}
   ): Promise<any[]> {
-    const rawJobs = await this.repo.findWaitingForProductionQueue(tenantId, filters);
+    const rawJobs = await (this.repo.findActiveQueueJobs
+      ? this.repo.findActiveQueueJobs(tenantId, filters)
+      : this.repo.findWaitingForProductionQueue(tenantId, filters));
     const readyJobs = rawJobs.filter((job) => {
       const readiness = this.validateProductionReadiness(job);
       return readiness.isReadyForProduction;
@@ -5058,11 +5061,37 @@ export class ProductionJobService {
       );
     }
 
+    // Specification Integrity Check: evaluate BO strictly against requirements applicable to THAT BO
+    if (dto?.partId || dto?.partCode || dto?.itemId || dto?.itemCode) {
+      const candidatePart = dto.partId || dto.itemId || dto.partCode || dto.itemCode;
+      const jobItemMatches =
+        candidatePart === job.item?.itemId ||
+        candidatePart === job.item?.itemCode ||
+        candidatePart === (job.item as any)?._id?.toString();
+      if (!jobItemMatches) {
+        throw new BadRequestError(
+          `Specification Integrity Violation: Item / Part '${candidatePart}' does not match Batch Order part '${job.item?.itemCode || job.item?.itemId}'. Evaluation against unrelated parts is strictly prohibited.`
+        );
+      }
+    }
+
     // Recipe Protection Check
-    if (dto?.recipeId || dto?.recipeSnapshot || dto?.recipeCode) {
+    if (dto?.recipeSnapshot) {
       throw new BadRequestError(
-        `Recipe Protection Violation: Batch Order recipe is locked and immutable during Quality Inspection. Recipe substitution is strictly prohibited.`
+        `Recipe Protection Violation: Batch Order recipe snapshot is locked and immutable during Quality Inspection. Recipe substitution is strictly prohibited.`
       );
+    }
+    if (dto?.recipeId || dto?.recipeCode) {
+      const candidateRecipe = dto.recipeId || dto.recipeCode;
+      const jobRecipeMatches =
+        candidateRecipe === job.recipeSnapshot?.recipeId ||
+        candidateRecipe === (job as any).recipeId ||
+        candidateRecipe === job.recipeSnapshot?.recipeCode;
+      if (!jobRecipeMatches) {
+        throw new BadRequestError(
+          `Recipe Protection Violation: Batch Order recipe is locked and immutable during Quality Inspection. Recipe substitution is strictly prohibited.`
+        );
+      }
     }
 
     // Production Data Protection Check
@@ -5182,14 +5211,27 @@ export class ProductionJobService {
       }
     }
 
-    const isHardnessCompliant =
-      dto.isHardnessCompliant !== undefined
-        ? Boolean(dto.isHardnessCompliant)
-        : dto.actualHardness?.isCompliant !== undefined
-        ? Boolean(dto.actualHardness.isCompliant)
-        : minHardness !== null && maxHardness !== null && measuredAverage !== null
-        ? measuredAverage >= minHardness && measuredAverage <= maxHardness
-        : true;
+    let isHardnessCompliant: boolean;
+    if (minHardness !== null && maxHardness !== null && measuredAverage !== null) {
+      const mathematicallyCompliant = measuredAverage >= minHardness && measuredAverage <= maxHardness;
+      if (!mathematicallyCompliant) {
+        if (dto.isHardnessCompliant === true || dto.actualHardness?.isCompliant === true) {
+          throw new BadRequestError(
+            `Hardness Verification Violation: Measured hardness (${measuredAverage} ${scale}) is outside specified range [${minHardness}, ${maxHardness}] ${scale}. Metallurgical failure cannot be silently converted into a pass.`
+          );
+        }
+        isHardnessCompliant = false;
+      } else {
+        isHardnessCompliant = true;
+      }
+    } else {
+      isHardnessCompliant =
+        dto.isHardnessCompliant !== undefined
+          ? Boolean(dto.isHardnessCompliant)
+          : dto.actualHardness?.isCompliant !== undefined
+          ? Boolean(dto.actualHardness.isCompliant)
+          : true;
+    }
 
     // 4. Case Depth (Actual and Target Limits)
     const rawCaseDepth = dto.effectiveCaseDepthMm ?? dto.caseDepth?.effectiveCaseDepthMm;
@@ -5505,10 +5547,24 @@ export class ProductionJobService {
       );
     }
 
-    const isHardnessCompliant =
-      dto?.isHardnessCompliant !== undefined
-        ? Boolean(dto.isHardnessCompliant)
-        : measuredAverage >= minHardness && measuredAverage <= maxHardness;
+    // 3. Hardness Verification
+    const isHardnessMathematicallyCompliant =
+      minHardness !== null && maxHardness !== null && measuredAverage !== null
+        ? measuredAverage >= minHardness && measuredAverage <= maxHardness
+        : true;
+
+    if (!isHardnessMathematicallyCompliant) {
+      throw new BadRequestError(
+        `Hardness Verification Violation: Measured hardness (${measuredAverage} ${scale}) is outside specified range [${minHardness}, ${maxHardness}] ${scale}. Batch Order with failing metallurgical results cannot be approved for dispatch. Failed inspection must be processed via failInspection.`
+      );
+    }
+
+    if (dto?.isHardnessCompliant === false) {
+      throw new BadRequestError(
+        'Inspection Approval Rejected: Measured hardness was marked non-compliant. Cannot approve a non-compliant Batch Order for dispatch.'
+      );
+    }
+    const isHardnessCompliant = true;
 
     const targetCaseDepthMinMm =
       dto?.targetCaseDepthMinMm ??
@@ -5524,12 +5580,33 @@ export class ProductionJobService {
       (job.specificationSnapshot?.caseDepth as any)?.maxMm ??
       null;
 
-    const isCaseDepthCompliant =
-      dto?.isCaseDepthCompliant !== undefined
-        ? Boolean(dto.isCaseDepthCompliant)
-        : targetCaseDepthMinMm !== null && targetCaseDepthMaxMm !== null
+    const isCaseDepthMathematicallyCompliant =
+      targetCaseDepthMinMm !== null && targetCaseDepthMaxMm !== null && effectiveCaseDepthMm !== null
         ? effectiveCaseDepthMm >= targetCaseDepthMinMm && effectiveCaseDepthMm <= targetCaseDepthMaxMm
         : true;
+
+    if (!isCaseDepthMathematicallyCompliant) {
+      throw new BadRequestError(
+        `Case Depth Verification Violation: Measured case depth (${effectiveCaseDepthMm} mm) is outside specified range [${targetCaseDepthMinMm}, ${targetCaseDepthMaxMm}] mm. Batch Order with failing case depth cannot be approved for dispatch. Failed inspection must be processed via failInspection.`
+      );
+    }
+
+    if (dto?.isCaseDepthCompliant === false) {
+      throw new BadRequestError(
+        'Inspection Approval Rejected: Case depth was marked non-compliant. Cannot approve a non-compliant Batch Order for dispatch.'
+      );
+    }
+    const isCaseDepthCompliant = true;
+
+    // Check processDetails: verify no process rows failed
+    if (job.processDetails && Array.isArray(job.processDetails)) {
+      const failedRow = job.processDetails.find((r: any) => r.status === 'FAILED');
+      if (failedRow) {
+        throw new BadRequestError(
+          `Process Verification Violation: Process row #${failedRow.serialNumber} (${failedRow.process || 'Position ' + failedRow.serialNumber}) failed verification. Batch Order with failed process steps cannot be approved for dispatch.`
+        );
+      }
+    }
 
     const quantityRejected =
       dto?.quantityRejected ??
@@ -5862,7 +5939,7 @@ export class ProductionJobService {
 
     // Recipe & Specification Requirements
     const recipeRequirements = {
-      recipeId: job.recipeSnapshot?.recipeId,
+      recipeId: job.recipeSnapshot?.recipeId || (job as any).recipeId,
       recipeCode: job.recipeSnapshot?.recipeCode,
       recipeName: job.recipeSnapshot?.name,
       processFamily: job.recipeSnapshot?.processFamily,
@@ -5876,6 +5953,36 @@ export class ProductionJobService {
         minMm: (job.recipeSnapshot?.metallurgicalTargets as any)?.caseDepthMinMm,
         maxMm: (job.recipeSnapshot?.metallurgicalTargets as any)?.caseDepthMaxMm
       }
+    };
+
+    // Recipe Authority: Authoritative locked reference
+    const recipeAuthority = {
+      recipeId: job.recipeSnapshot?.recipeId || (job as any).recipeId,
+      recipeCode: job.recipeSnapshot?.recipeCode,
+      recipeName: job.recipeSnapshot?.name,
+      processFamily: job.recipeSnapshot?.processFamily,
+      stages: job.recipeSnapshot?.stages || [],
+      metallurgicalTargets: job.recipeSnapshot?.metallurgicalTargets || {},
+      surfaceHardnessTarget: recipeRequirements.surfaceHardnessTarget,
+      caseDepthTarget: recipeRequirements.caseDepthTarget,
+      isRecipeLocked: true,
+      canReplaceRecipe: false
+    };
+
+    // Authoritative 15 process details positions
+    const processDetails =
+      job.processDetails && job.processDetails.length === 15
+        ? job.processDetails
+        : this.buildDefaultProcessTable();
+
+    const processVerificationSummary = {
+      totalPositions: 15,
+      verifiedCount: (processDetails || []).filter((r: any) => r.status === 'PASSED' || r.status === 'COMPLETED').length,
+      failedCount: (processDetails || []).filter((r: any) => r.status === 'FAILED').length,
+      pendingCount: (processDetails || []).filter(
+        (r: any) => r.status === 'PENDING' || r.status === 'IN_PROGRESS' || r.status === 'BLANK'
+      ).length,
+      allVerified: (processDetails || []).length === 15 && !(processDetails || []).some((r: any) => r.status === 'FAILED')
     };
 
     // Existing Execution summary from production
@@ -5913,6 +6020,9 @@ export class ProductionJobService {
     return {
       headerContext,
       recipeRequirements,
+      recipeAuthority,
+      processDetails,
+      processVerificationSummary,
       executionSummary,
       inspectionData,
       workflowState: {
@@ -5923,6 +6033,201 @@ export class ProductionJobService {
         status: job.status
       }
     };
+  }
+
+  /**
+   * Verifies an individual process row within the authoritative 15-position process table.
+   * Compares actual hardness against specification, enforces recipe authority & specification integrity,
+   * derives inspector attribution exclusively from authenticated actor, and prevents silent failure passes.
+   */
+  public async verifyProcessRow(
+    tenantId: string,
+    jobId: string,
+    dto: VerifyProcessRowDto,
+    actor: { userId: string; email?: string; role?: string; name?: string }
+  ): Promise<ProductionJobDocument> {
+    const job = await this.repo.findById(tenantId, jobId);
+    if (!job) {
+      throw new NotFoundError(`Batch Order with identifier '${jobId}' not found.`);
+    }
+
+    if (!this.isJobInInspection(job)) {
+      throw new BadRequestError(
+        `Cannot verify process row: Batch Order '${job.boNumber || job.jobNumber}' is not in active inspection (current status: '${job.status}').`
+      );
+    }
+
+    // Exclusive Inspection Ownership Check
+    if (
+      job.claimedBy &&
+      job.claimedBy !== actor.userId &&
+      actor.role !== 'QUALITY_LEAD' &&
+      actor.role !== 'METALLURGIST' &&
+      actor.role !== 'PLANT_MANAGER' &&
+      actor.role !== 'ADMIN'
+    ) {
+      throw new ForbiddenError(
+        `Inspection Ownership Violation: Batch Order '${job.boNumber || job.jobNumber}' is exclusively claimed by inspector '${job.claimedBy}'. Another inspector cannot verify process rows in this active inspection session.`
+      );
+    }
+
+    // Specification Integrity: evaluate BO strictly against requirements applicable to THAT BO
+    if (dto.partId || dto.partCode) {
+      const candidatePart = dto.partId || dto.partCode;
+      const jobItemMatches =
+        candidatePart === job.item?.itemId ||
+        candidatePart === job.item?.itemCode ||
+        candidatePart === (job.item as any)?._id?.toString();
+      if (!jobItemMatches) {
+        throw new BadRequestError(
+          `Specification Integrity Violation: Part '${candidatePart}' does not match Batch Order part '${job.item?.itemCode || job.item?.itemId}'. Evaluation against unrelated parts is strictly prohibited.`
+        );
+      }
+    }
+
+    // Recipe Authority: Recipe is locked and immutable. Recipe substitution is prohibited.
+    if (dto.recipeId || dto.recipeCode) {
+      const candidateRecipe = dto.recipeId || dto.recipeCode;
+      const jobRecipeMatches =
+        candidateRecipe === job.recipeSnapshot?.recipeId ||
+        candidateRecipe === (job as any).recipeId ||
+        candidateRecipe === job.recipeSnapshot?.recipeCode;
+      if (!jobRecipeMatches) {
+        throw new BadRequestError(
+          `Recipe Authority Violation: Recipe '${candidateRecipe}' does not match Batch Order assigned recipe '${job.recipeSnapshot?.recipeCode || job.recipeSnapshot?.recipeId || (job as any).recipeId}'. Evaluation against unrelated recipes or recipe substitution is strictly prohibited.`
+        );
+      }
+    }
+
+    // Process row serial number must be 1 to 15
+    const serialNumber = Number(dto.serialNumber);
+    if (isNaN(serialNumber) || serialNumber < 1 || serialNumber > 15) {
+      throw new BadRequestError('Process row serialNumber must be an integer between 1 and 15.');
+    }
+
+    // Controlled status check
+    const VALID_PROCESS_ROW_STATUSES = [
+      'BLANK',
+      'PENDING',
+      'IN_PROGRESS',
+      'COMPLETED',
+      'PASSED',
+      'FAILED',
+      'SKIPPED',
+      'CANCELLED'
+    ];
+    if (dto.status && !VALID_PROCESS_ROW_STATUSES.includes(dto.status)) {
+      throw new BadRequestError(
+        `Invalid process row status '${dto.status}'. Allowed statuses are: ${VALID_PROCESS_ROW_STATUSES.join(', ')}`
+      );
+    }
+
+    // Ensure 15 positions in job.processDetails
+    if (!job.processDetails || job.processDetails.length === 0) {
+      job.processDetails = this.buildDefaultProcessTable();
+    } else if (job.processDetails.length < 15) {
+      const defaults = this.buildDefaultProcessTable();
+      for (let s = job.processDetails.length + 1; s <= 15; s++) {
+        job.processDetails.push(defaults[s - 1]);
+      }
+    }
+
+    const rowIndex = job.processDetails.findIndex(r => r.serialNumber === serialNumber);
+    if (rowIndex === -1) {
+      throw new BadRequestError(`Process position #${serialNumber} not found in process details table.`);
+    }
+
+    const row = job.processDetails[rowIndex];
+
+    // Reference Part and Recipe from job if not set on row
+    if (!row.partId) row.partId = job.item?.itemId || null;
+    if (!row.partCode) row.partCode = job.item?.itemCode || null;
+    if (!row.recipeId) row.recipeId = job.recipeSnapshot?.recipeId || (job as any).recipeId || null;
+    if (!row.recipeCode) row.recipeCode = job.recipeSnapshot?.recipeCode || null;
+
+    // Hardness limits on row or fallback to recipe / specification
+    const specMin =
+      row.minhardness ??
+      (job.specificationSnapshot?.surfaceHardness as any)?.min ??
+      (job.recipeSnapshot?.metallurgicalTargets as any)?.minHardness ??
+      null;
+    const specMax =
+      row.maxhardness ??
+      (job.specificationSnapshot?.surfaceHardness as any)?.max ??
+      (job.recipeSnapshot?.metallurgicalTargets as any)?.maxHardness ??
+      null;
+
+    // Actual hardness validation & compliance check
+    if (dto.actualHardness !== undefined && dto.actualHardness !== null) {
+      if (typeof dto.actualHardness !== 'number' || isNaN(dto.actualHardness) || dto.actualHardness < 0) {
+        throw new BadRequestError('Actual hardness must be a non-negative number.');
+      }
+      row.actualHardness = dto.actualHardness;
+
+      if (specMin !== null && specMax !== null) {
+        const mathematicallyCompliant = dto.actualHardness >= specMin && dto.actualHardness <= specMax;
+
+        if (!mathematicallyCompliant) {
+          if (dto.isHardnessCompliant === true || dto.status === 'PASSED') {
+            throw new BadRequestError(
+              `Hardness Verification Violation: Measured hardness (${dto.actualHardness}) is outside specified range [${specMin}, ${specMax}]. Metallurgical failure cannot be silently converted into a pass.`
+            );
+          }
+          row.isCompliant = false;
+          row.status = dto.status || 'FAILED';
+        } else {
+          row.isCompliant = true;
+          row.status = dto.status || 'PASSED';
+        }
+      } else {
+        row.isCompliant = true;
+        row.status = dto.status || 'PASSED';
+      }
+    } else {
+      if (dto.status) {
+        if (row.actualHardness !== undefined && row.actualHardness !== null && specMin !== null && specMax !== null) {
+          const mathematicallyCompliant = row.actualHardness >= specMin && row.actualHardness <= specMax;
+          if (!mathematicallyCompliant && (dto.status === 'PASSED' || dto.isHardnessCompliant === true)) {
+            throw new BadRequestError(
+              `Hardness Verification Violation: Measured hardness (${row.actualHardness}) is outside specified range [${specMin}, ${specMax}]. Metallurgical failure cannot be silently converted into a pass.`
+            );
+          }
+        }
+        row.status = dto.status;
+        if (row.actualHardness !== undefined && row.actualHardness !== null && specMin !== null && specMax !== null) {
+          row.isCompliant = row.actualHardness >= specMin && row.actualHardness <= specMax;
+        }
+      }
+    }
+
+    // User Attribution: strictly from authenticated ERP user token
+    row.userId = actor.userId;
+    row.userName = actor.name || actor.email || 'Inspector';
+
+    // Notes
+    if (dto.notes !== undefined) {
+      row.notes = dto.notes;
+    }
+
+    job.markModified('processDetails');
+    await job.save();
+
+    await auditService.record(tenantId, {
+      actorId: actor.userId,
+      action: 'PROCESS_ROW_VERIFIED',
+      entityType: 'BatchOrder',
+      entityId: job.id || (job as any)._id?.toString(),
+      metadata: {
+        boNumber: job.boNumber,
+        serialNumber,
+        process: row.process,
+        actualHardness: row.actualHardness,
+        status: row.status,
+        isCompliant: row.isCompliant
+      }
+    });
+
+    return job;
   }
 }
 

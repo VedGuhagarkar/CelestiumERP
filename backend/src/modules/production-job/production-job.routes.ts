@@ -36,7 +36,8 @@ import {
   takeForInspectionSchema,
   recordHeatTreatmentInspectionSchema,
   approveInspectionForDispatchSchema,
-  failInspectionSchema
+  failInspectionSchema,
+  verifyProcessRowSchema
 } from './production-job.validator.js';
 
 export const productionJobRouter = Router();
@@ -45,7 +46,7 @@ export const productionJobRouter = Router();
 
 // 0i. Get Batch Orders Waiting for Production (eligible queue)
 productionJobRouter.get(
-  ['/waiting-for-production', '/queue/waiting-for-production'],
+  ['/waiting-for-production', '/queue/waiting-for-production', '/queue', '/batch-orders/queue'],
   authenticateJwt,
   requireAnyPermission(PERMISSIONS.PRODUCTION_JOB_VIEW, PERMISSIONS.BATCH_ORDER_VIEW),
   asyncHandler(productionJobController.getWaitingForProductionQueue)
@@ -195,6 +196,33 @@ productionJobRouter.post(
   asyncHandler(productionJobController.approveForInspection)
 );
 
+const approveInspectionUnifiedValidator = (req: any, res: any, next: any) => {
+  if (req.body?.measuredAverage !== undefined || req.body?.effectiveCaseDepthMm !== undefined) {
+    return validateRequest(approveInspectionForDispatchSchema)(req, res, next);
+  }
+  return validateRequest(approveForInspectionSchema)(req, res, next);
+};
+
+// 0o-alias. Unified Approve Inspection endpoint (routes to production handoff or inspection dispatch based on lifecycle state)
+productionJobRouter.post(
+  [
+    '/:id/approve-inspection',
+    '/batch-orders/:id/approve-inspection'
+  ],
+  authenticateJwt,
+  requireAnyPermission(
+    PERMISSIONS.PRODUCTION_JOB_COMPLETE,
+    PERMISSIONS.PRODUCTION_JOB_TRANSITION,
+    PERMISSIONS.PRODUCTION_JOB_UPDATE,
+    PERMISSIONS.MACHINES_FURNACE_OPERATE,
+    PERMISSIONS.QUALITY_INSPECTION_RECORD,
+    PERMISSIONS.QUALITY_INSPECTION_VERIFY,
+    PERMISSIONS.QUALITY_DISPOSITION_MANAGE
+  ),
+  approveInspectionUnifiedValidator,
+  asyncHandler(productionJobController.approveInspectionUnified)
+);
+
 // --- Authoritative Revised Quality Inspection Phase Endpoints (Prompt 1) ---
 
 // 0p. Get Batch Orders In Inspection (active inspection queue)
@@ -287,12 +315,8 @@ productionJobRouter.post(
   [
     '/:id/approve-dispatch',
     '/:id/approve-for-dispatch',
-    '/:id/approve-inspection',
-    '/:id/approve-for-inspection',
     '/batch-orders/:id/approve-dispatch',
-    '/batch-orders/:id/approve-for-dispatch',
-    '/batch-orders/:id/approve-inspection',
-    '/batch-orders/:id/approve-for-inspection'
+    '/batch-orders/:id/approve-for-dispatch'
   ],
   authenticateJwt,
   requireAnyPermission(
@@ -333,6 +357,23 @@ productionJobRouter.get(
     PERMISSIONS.BATCH_ORDER_VIEW
   ),
   asyncHandler(productionJobController.getInspectionWorkbenchData)
+);
+
+// 0x. Verify Process Row (authoritative 15-position process verification)
+productionJobRouter.post(
+  [
+    '/:id/verify-process-row',
+    '/:id/process-details/verify',
+    '/batch-orders/:id/verify-process-row',
+    '/batch-orders/:id/process-details/verify'
+  ],
+  authenticateJwt,
+  requireAnyPermission(
+    PERMISSIONS.QUALITY_INSPECTION_RECORD,
+    PERMISSIONS.QUALITY_INSPECTION_VERIFY
+  ),
+  validateRequest(verifyProcessRowSchema),
+  asyncHandler(productionJobController.verifyProcessRow)
 );
 
 // --- Authoritative Planning Phase & Batch Order Endpoints ---

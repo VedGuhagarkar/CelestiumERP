@@ -837,6 +837,42 @@ export class ProductionJobController extends BaseController {
     }
   };
 
+  public approveInspectionUnified = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const user = this.getUser(req);
+      const job = await this.service.getJobById(tenantId, req.params.id as string);
+
+      if (
+        this.service.isJobInInspection(job) ||
+        req.body.measuredAverage !== undefined ||
+        req.body.effectiveCaseDepthMm !== undefined
+      ) {
+        const approvedDispatchJob = await this.service.approveInspectionForDispatch(
+          tenantId,
+          req.params.id as string,
+          req.body,
+          { userId: user.userId, email: user.email, role: user.roles?.[0], name: (user as any).name }
+        );
+        return this.sendSuccess(res, approvedDispatchJob, 'Batch Order approved for dispatch successfully');
+      }
+
+      const approvedJob = await this.service.approveForInspection(
+        tenantId,
+        { userId: user.userId, email: user.email, role: user.roles?.[0] },
+        req.params.id as string,
+        req.body
+      );
+      this.sendSuccess(res, approvedJob, 'Batch Order approved for inspection successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
   public failInspection = async (
     req: Request,
     res: Response,
@@ -869,6 +905,30 @@ export class ProductionJobController extends BaseController {
         req.params.id as string
       );
       this.sendSuccess(res, data, 'Inspection workbench data retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public verifyProcessRow = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const user = this.getUser(req);
+      const job = await this.service.verifyProcessRow(
+        tenantId,
+        req.params.id as string,
+        req.body,
+        { userId: user.userId, email: user.email, role: user.roles?.[0], name: (user as any).name }
+      );
+      this.sendSuccess(
+        res,
+        job,
+        `Process detail row #${req.body.serialNumber} verified successfully`
+      );
     } catch (error) {
       next(error);
     }

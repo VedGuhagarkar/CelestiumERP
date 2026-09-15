@@ -22,7 +22,8 @@ import {
   takeForInspectionSchema,
   recordHeatTreatmentInspectionSchema,
   approveInspectionForDispatchSchema,
-  failInspectionSchema
+  failInspectionSchema,
+  verifyProcessRowSchema
 } from '../production-job/production-job.validator.js';
 
 export const qualityInspectionRouter = Router();
@@ -144,6 +145,17 @@ qualityInspectionRouter.get(
     PERMISSIONS.BATCH_ORDER_VIEW
   ),
   asyncHandler(productionJobController.getInspectionWorkbenchData)
+);
+
+// 10. Verify Process Row for In-Inspection Batch Order
+qualityInspectionRouter.post(
+  ['/:id/verify-process-row', '/:id/process-details/verify'],
+  requireAnyPermission(
+    PERMISSIONS.QUALITY_INSPECTION_RECORD,
+    PERMISSIONS.QUALITY_INSPECTION_VERIFY
+  ),
+  validateRequest(verifyProcessRowSchema),
+  asyncHandler(productionJobController.verifyProcessRow)
 );
 
 // Create Quality Inspection

@@ -95,13 +95,14 @@
    - 8.1 Database Seeding Engine (`backend/src/scripts/seed.ts`)
    - 8.2 Centralized Configuration Subsystem (`backend/src/config/`)
    - 8.3 Operational Runbooks & Technical Specifications (`docs/`)
-   - 8.4 Automated Test Suite Matrix (66 Backend Specs + Frontend Suites)
+   - 8.4 Automated Test Suite Matrix (67 Backend Specs + Frontend Suites)
      - *Prompt 8:* `production-operator-workspace.spec.ts`
      - *Prompt 9:* `production-security-concurrency.spec.ts`
      - *Prompt 10:* `production-e2e-integration.spec.ts`
      - *Inspection Prompt 2:* `inspection-queue.spec.ts`
      - *Inspection Prompt 3:* `inspection-lock.spec.ts`
      - *Inspection Prompt 4:* `inspection-data.spec.ts`
+     - *Inspection Prompt 5:* `inspection-recipe-verification.spec.ts`
 
 ---
 
@@ -984,7 +985,8 @@ _No direct HTTP routes mounted for this internal domain service._
 - **`production-job.model.ts`** — Mongoose model: `ProductionJob`. Exported interfaces:
   - `IProductionJob`: Complete domain document representing a Batch Order / Production Job. Includes exclusive inspection session metadata: `claimedBy: string | null`, `claimedAt: Date | null`, `claimedByEmail: string | null`, `claimedByRole: string | null`.
   - `isJobInInspection(job: any): boolean`: Canonical exported helper function providing unified detection across status flags, workflow states, and claimed sessions.
-  - `IProcessDetailRow`: 15-position process details row (`position: 1..15`, `stageName`, `targetTemp`, `targetDurationMinutes`, `quenchMedium`, `atmosphere`, `tolerance`, `operatorNotes`, `isCompleted`).
+  - `IProcessDetailRow`: 15-position process details row (`serialNumber: 1..15`, `processNumber: 1..15`, `partId`, `partCode`, `partName`, `process`, `targetTemp`, `targetDurationMinutes`, `quenchMedium`, `atmosphere`, `tolerance`, `operatorNotes`, `inspectorNotes`, `verifiedBy`, `completedAt`, `actualHardness?: number`, `isCompliant?: boolean`, `status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'BLANK' | 'SKIPPED' | 'PASSED' | 'FAILED'`).
+  - `VerifyProcessRowDto`: 15-position process row verification input payload (`serialNumber: 1..15`, `actualHardness: number`, `operatorNotes?: string`, `inspectorNotes?: string`, `verifiedBy?: string`).
   - `IBatchOrderGenealogy`: Immutable source lineage (`purchaseOrderId`, `purchaseOrderNumber`, `grnId`, `grnNumber`, `itemId`, `itemPartNumber`, `materialName`, `recipeId`, `recipeCode`, `isImmutable: true`).
   - `IBatchOrderProductionReadiness`: 10-point readiness check payload (`isProductionReady`, `reasons`, `checks`, `evaluatedAt`).
   - `IBatchOrderWorkflowState`: Single-active boolean state flags with invariant $\sum \text{flag}_i = 1$ across `{ waitingForProduction, inProduction, waitingForInspection, inInspection, waitingForDispatch, dispatched, inspection }`.
@@ -1085,10 +1087,20 @@ _No direct HTTP routes mounted for this internal domain service._
     - `getInInspectionQueue(tenantId)`: Surfaces batch orders actively undergoing inspection (`inInspection: true`).
     - `getWaitingForDispatchQueue(tenantId)`: Surfaces batch orders approved by inspection awaiting dispatch release (`waitingForDispatch: true`).
     - `getInspectionFailedQueue(tenantId)`: Surfaces batch orders rejected/quarantined by inspection (`inspection: true`).
-    - `getInspectionWorkbenchData(tenantId, id)`: Compiles comprehensive heat-treatment inspection workbench data: complete unbroken genealogy (`PO -> GRN -> BO`), recipe target limits, furnace charge parameters, execution telemetry, and current inspection sub-document.
+    - `getInspectionWorkbenchData(tenantId, id)`: Compiles comprehensive heat-treatment inspection workbench data: complete unbroken genealogy (`PO -> GRN -> BO`), recipe target limits, furnace charge parameters, execution telemetry, current inspection sub-document, and authoritative `recipeAuthority` specifications (master recipe code, revision number, tolerance limits, hardness range $[H_{\text{min}}, H_{\text{max}}]$, case depth limits, and temperature limits).
+    - `verifyProcessRow(tenantId, id, dto, actor)`: Authoritative 15-position process row verification:
+      - Enforces active inspection session (`isJobInInspection`), throwing `400 Bad Request` if BO is in other states.
+      - Enforces exclusive claimed inspector ownership (`403 Forbidden` if another inspector claims session without QA Lead/Admin role).
+      - Binds row by `serialNumber` (1..15); rejects invalid serial numbers outside 1..15 or blank rows (`400 Bad Request`).
+      - Validates measured `actualHardness` against recipe metallurgical targets $[H_{\text{min}}, H_{\text{max}}]$ from `recipeSnapshot` or `specificationSnapshot`.
+      - Sets `actualHardness`, `isCompliant: true/false`, and status `PASSED` (if within tolerance) or `FAILED` (if out-of-spec).
+      - Silent-Pass Prevention: Strictly rejects converting failed hardness into passes with `400 Bad Request`.
+      - Separate Storage: Stores actual verification results strictly within the process details row without mutating recipe snapshot specifications.
+      - Blocks Dispatch Approval: If any process row has status `FAILED`, subsequent dispatch approval is strictly blocked (`400 Bad Request`).
+      - Quarantine Integration: Provides immediate fail-path routing to authoritative `INSPECTION` failure quarantine state (`workflowState.inspection = true`) via `failInspection`.
     - `takeForInspection(tenantId, id, actorId, dto)`: Atomically transitions BO from `waitingForInspection` to `inInspection`, establishes single active flag (`inInspection: true`), rejects concurrent claims with `409 Conflict`, records exclusive ownership (`claimedBy`, `claimedAt`, `claimedByEmail`, `claimedByRole`, `inspectedBy`), sets `disposition = 'PENDING'`, logs audit diff `INSPECTION_STARTED`, and publishes `Job.InspectionStarted`.
-    - `recordHeatTreatmentInspectionData(tenantId, id, actorId, dto)`: Validates active inspection status (`isJobInInspection`), enforces exclusive ownership (`403 Forbidden` if another inspector without QA Lead/Admin role), enforces Recipe Protection (`Recipe Protection Violation` on recipe tampering), enforces Production Data Protection (`Production Data Protection Violation` on telemetry/piece tampering), and saves partial inspection actuals without advancing state.
-    - `approveInspectionForDispatch(tenantId, id, actorId, dto)`: Validates active inspection status, enforces exclusive ownership (`403 Forbidden`), validates all Six Mandatory Heat-Treatment Inspection Fields, validates quantity balance ($Q_{\text{del}} \le Q_{\text{rec}}$, $Q_{\text{rej}} = Q_{\text{rec}} - Q_{\text{del}}$), atomically transitions to `waitingForDispatch: true` ($\sum \text{flag}_i = 1$), stages BO for dispatch without auto-dispatching, and publishes `Job.InspectionApproved`.
+    - `recordHeatTreatmentInspectionData(tenantId, id, actorId, dto)`: Validates active inspection status (`isJobInInspection`), enforces exclusive ownership (`403 Forbidden` if another inspector without QA Lead/Admin role), enforces Recipe Protection (`Recipe Protection Violation` on recipe tampering), enforces Production Data Protection (`Production Data Protection Violation` on telemetry/piece tampering), enforces silent-pass prevention when measured average is out of spec, and saves partial inspection actuals without advancing state.
+    - `approveInspectionForDispatch(tenantId, id, actorId, dto)`: Validates active inspection status, enforces exclusive ownership (`403 Forbidden`), validates all Six Mandatory Heat-Treatment Inspection Fields, validates quantity balance ($Q_{\text{del}} \le Q_{\text{rec}}$, $Q_{\text{rej}} = Q_{\text{rec}} - Q_{\text{del}}$), asserts no failed process rows, atomically transitions to `waitingForDispatch: true` ($\sum \text{flag}_i = 1$), stages BO for dispatch without auto-dispatching, and publishes `Job.InspectionApproved`.
     - `failInspection(tenantId, id, actorId, dto)`: Validates active inspection status, enforces exclusive ownership (`403 Forbidden`), atomically transitions BO to quarantined failure state `inspection: true` ($\sum \text{flag}_i = 1$), records defect category, rejection reason, and inspector notes, and publishes `Job.InspectionFailed`.
   - *Inspection Lock & Cross-Phase Protection Invariants (Prompt 3):*
     - **Queue Locking:** Taking a BO into inspection atomically excludes it from `GET /queue/waiting-for-inspection`.
@@ -1106,7 +1118,7 @@ _No direct HTTP routes mounted for this internal domain service._
 #### Validators (Zod Schemas)
 - **`production-job.validator.ts`**: Exported Zod validation schemas:
   - Reconstructed Production Phase: `takeForProductionSchema`, `recordRecipeStageProgressSchema`, `recordFurnaceChargeSchema`, `saveProductionDataSchema` (with custom `superRefine` boundary rejection quarantining laboratory inspection fields: `surfaceHardness`, `coreHardness`, `caseDepth`, `surfaceHardnessHRC`, `coreHardnessHRC`, `caseDepthMm`, `microstructure`, `mechanical`, `pyrometryCertification`), `approveForInspectionSchema` (with custom `superRefine` inspection boundary rejection and conditional `concessionReason` validation).
-  - Reconstructed Inspection Phase: `takeForInspectionSchema`, `recordHeatTreatmentInspectionSchema`, `approveInspectionForDispatchSchema` (strictly enforcing all 6 mandatory heat-treatment inspection fields, positive quantities, and delivered $\le$ received), `failInspectionSchema` (requiring non-empty `rejectionReason` and `defectCategory`), `hardnessTestPointValidatorSchema` (supports flexible `pointIdentifier` and `measuredValue`).
+  - Reconstructed Inspection Phase: `takeForInspectionSchema`, `recordHeatTreatmentInspectionSchema`, `approveInspectionForDispatchSchema` (strictly enforcing all 6 mandatory heat-treatment inspection fields, positive quantities, and delivered $\le$ received), `failInspectionSchema` (requiring non-empty `rejectionReason` and `defectCategory`), `hardnessTestPointValidatorSchema` (supports flexible `pointIdentifier` and `measuredValue`), `verifyProcessRowSchema` (validating `serialNumber` 1..15, non-negative `actualHardness`, notes, and controlled status values `PASSED` / `FAILED`).
   - Planning Phase: `createBatchOrderSchema`, `updateProcessDetailsSchema`, `getProcessDetailsSchema`, `getBatchOrderGenealogySchema`, `getBatchOrderProductionReadinessSchema`, `convertPlanToJobSchema`, `queryJobsSchema`, `getJobByIdSchema`, `updateJobSchema`.
 
 #### API Endpoints & Routes
@@ -1129,8 +1141,9 @@ _No direct HTTP routes mounted for this internal domain service._
   - `GET /api/v1/production-jobs/inspection-failed` — Returns batch orders rejected by QA and quarantined (`inspection: true`). Protected with `requireAnyPermission(QC_INSPECT, QUALITY_INSPECTION_VIEW, PRODUCTION_JOB_VIEW)`.
   - `GET /api/v1/production-jobs/:id/inspection-workbench` — Returns unified inspection workbench data package (BO identity, genealogy, recipe specification limits, furnace charge actuals, stage execution logs, and inspection form actuals). Protected with `requireAnyPermission(QC_INSPECT, QUALITY_INSPECTION_VIEW, PRODUCTION_JOB_VIEW)`.
   - `POST /api/v1/production-jobs/:id/take-for-inspection` (alias `POST /:id/take-inspection`) — Atomically takes BO into inspection (`waitingForInspection` -> `inInspection`), enforcing single-winner concurrency (`409 Conflict` on race) and single active flag ($\sum \text{flag}_i = 1$). Protected with `requireAnyPermission(QC_INSPECT, QUALITY_INSPECTION_UPDATE, PRODUCTION_JOB_UPDATE)`.
+  - `POST /api/v1/production-jobs/:id/verify-process-row` (alias `POST /batch-orders/:id/verify-process-row`) — Verifies an individual process row within the authoritative 15-position table against recipe limits, evaluating actual hardness, setting compliant/failed status, preventing silent passes, and enforcing inspector attribution. Protected with `requireAnyPermission(QC_INSPECT, QUALITY_INSPECTION_UPDATE, PRODUCTION_JOB_UPDATE)`.
   - `POST /api/v1/production-jobs/:id/inspection-data` — Saves intermediate heat-treatment inspection actuals without advancing state. Protected with `requireAnyPermission(QC_INSPECT, QUALITY_INSPECTION_UPDATE, PRODUCTION_JOB_UPDATE)`.
-  - `POST /api/v1/production-jobs/:id/approve-inspection` (alias `POST /:id/approve-dispatch`) — Validates all 6 mandatory heat-treatment inspection fields, validates quantity delivered vs received, atomically transitions BO to `waitingForDispatch: true` ($\sum \text{flags} = 1$), stages for dispatch without direct dispatching, and publishes `Job.InspectionApproved`. Protected with `requireAnyPermission(QC_APPROVE, QUALITY_INSPECTION_APPROVE, PRODUCTION_JOB_COMPLETE)`.
+  - `POST /api/v1/production-jobs/:id/approve-inspection` (alias `POST /:id/approve-dispatch`) — Unified inspection approval endpoint: routes to `approveForInspection` if BO is in production, or validates all 6 mandatory heat-treatment inspection fields, validates quantity delivered vs received, and routes to `approveInspectionForDispatch` if BO is in inspection, staging BO for dispatch without direct dispatching, and publishing `Job.InspectionApproved`. Protected with `requireAnyPermission(QC_APPROVE, QUALITY_INSPECTION_APPROVE, PRODUCTION_JOB_COMPLETE)`.
   - `POST /api/v1/production-jobs/:id/fail-inspection` (alias `POST /:id/reject-inspection`) — Atomically transitions BO to failure/quarantine state `inspection: true` ($\sum \text{flags} = 1$), captures defect category and reason, and publishes `Job.InspectionFailed`. Protected with `requireAnyPermission(QC_REJECT, QUALITY_INSPECTION_REJECT, PRODUCTION_JOB_UPDATE)`.
 - **Planning Phase & Batch Order Endpoints:**
   - `GET /api/v1/production-jobs/eligible-pos` (also `/planning/eligible-pos`) — Returns POs with completed GRNs available for planning.
@@ -1235,6 +1248,7 @@ _No direct HTTP routes mounted for this internal domain service._
   - `GET /api/v1/quality-inspections/:id/workbench` (alias `/:id/inspection-workbench`) — Comprehensive workbench compilation (lineage `PO -> GRN -> BO`, recipe target limits, furnace charge actuals, stage execution logs, and inspection form data).
   - `POST /api/v1/quality-inspections/:id/take-for-inspection` (alias `/:id/take-inspection`) — Atomically takes BO into active inspection (`waitingForInspection` -> `inInspection`) with `409 Conflict` race protection.
   - `POST /api/v1/quality-inspections/:id/record-inspection` (alias `/:id/inspection-data`) — Records intermediate inspection actuals without state advance.
+  - `POST /api/v1/quality-inspections/:id/verify-process-row` — Verifies process row against recipe specification.
   - `POST /api/v1/quality-inspections/:id/approve-dispatch` (aliases `/:id/approve-for-dispatch`, `/:id/approve-inspection`, `/:id/approve-for-inspection`) — Validates all 6 mandatory heat-treatment fields, atomically transitions to `waitingForDispatch = true`, preserves dispatch boundary (no auto-dispatch), and emits `Job.InspectionApproved`.
   - `POST /api/v1/quality-inspections/:id/fail-inspection` — Atomically transitions to failure state `inspection = true` and emits `Job.InspectionFailed`.
 - **Standalone Quality Inspection Endpoints:**
@@ -3058,6 +3072,25 @@ The codebase features comprehensive test suites validating layer boundaries, dat
   - Invariant 22 (State Restriction - Already Approved): Rejects editing inspection data after dispatch approval (`400 Bad Request`).
   - Invariant 23 (Planned vs Actual Preservation): Preserves required specification separate from actual measured hardness; strictly protects recipe specification from overwrite.
   - Invariant 24 (Delivered Exceeding Received Rejection): Rejects quantity delivered exceeding quantity received ($Q_{\text{del}} > Q_{\text{rec}}$) with `400 Bad Request`.
+- `backend/tests/inspection-recipe-verification.spec.ts` (18 tests — Prompt 5: Recipe-Based Inspection and Process Verification):
+  - Invariant 1 (Authoritative Recipe Requirements in Read-Only Mode): Displays authoritative recipe requirements in read-only mode via inspection workbench data (`recipeAuthority` object with limits and specifications).
+  - Invariant 2 (Recipe Replacement Prohibition): Prohibits inspector from replacing or substituting the recipe with `400 Bad Request` (`Recipe Protection Violation`).
+  - Invariant 3 (Individual Process Row Verification): Verifies an individual process row within the authoritative 15-position table with `actualHardness`, `isCompliant`, and status.
+  - Invariant 4 (Process Row serialNumber Bounds Enforcement): Rejects invalid process row `serialNumber` outside 1 to 15 with `400 Bad Request`.
+  - Invariant 5 (Conforming Hardness Verification): Verifies conforming hardness within specified recipe range (e.g. $[58, 62]$ HRC) and marks status `PASSED` and `isCompliant: true`.
+  - Invariant 6 (Non-Conforming Hardness Flagged as FAILED): Marks non-conforming hardness below min range (e.g. 52 HRC $< 58$ HRC) as `FAILED` and `isCompliant: false`.
+  - Invariant 7 (Prohibits Silently Converting Hardness Failures to Passes): Strictly prohibits silently converting hardness failures into passes with `400 Bad Request`.
+  - Invariant 8 (Silent-Pass Prevention in Intermediate Inspection Data): Rejects silent pass conversion in `recordHeatTreatmentInspectionData` when measured average is out of spec.
+  - Invariant 9 (Unrelated Part Rejection on Process Row Verification): Rejects evaluation payload referencing an unrelated part or item with `400 Bad Request`.
+  - Invariant 10 (Unrelated Part Rejection on Inspection Data): Rejects inspection data referencing an unrelated part or item with `400 Bad Request`.
+  - Invariant 11 (Separate Storage of Actuals vs Recipe Specs): Stores actual inspection and verification results separately in `processDetails` and `inspectionData` without mutating `recipeSnapshot`.
+  - Invariant 12 (Inspector Attribution from Authenticated JWT): Derives inspector attribution strictly from authenticated JWT context and ignores client-spoofed user IDs.
+  - Invariant 13 (Rejection of Arbitrary Uncontrolled Status Values): Rejects arbitrary uncontrolled status values with `400 Bad Request`.
+  - Invariant 14 (Acceptance of Controlled Status Values): Accepts strictly controlled status values (`SKIPPED`, `COMPLETED`, `PASSED`, `FAILED`).
+  - Invariant 15 (Blocks Dispatch Approval on Non-Compliant Hardness): Blocks dispatch approval with `400 Bad Request` if measured hardness is non-compliant.
+  - Invariant 16 (Blocks Dispatch Approval if Any Process Row is FAILED): Blocks dispatch approval with `400 Bad Request` if any process row has status `FAILED`.
+  - Invariant 17 (Transitions Non-Compliant BO to Authoritative Failure Quarantine): Transitions non-compliant BO to authoritative `INSPECTION` failure quarantine state (`workflowState.inspection: true`) via `failInspection`.
+  - Invariant 18 (Process Row Verification via Quality Inspection Route): Allows process row verification via `POST /api/v1/quality-inspections/:id/verify-process-row`.
 
 #### 4. Domain Integration Suites (48 Core Specs in `backend/tests/`)
 - Production Execution & Lifecycle: `production-job.spec.ts`, `production-execution-workflow.spec.ts`, `production-scheduling.spec.ts`, `plan-to-job-handoff.spec.ts`.
