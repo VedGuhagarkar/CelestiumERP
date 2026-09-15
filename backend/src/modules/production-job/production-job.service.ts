@@ -5418,6 +5418,24 @@ export class ProductionJobService {
       );
     }
 
+    // Server-side Quality Inspection Permission Enforcement (Prompt 6 Requirement 2)
+    const isQualityAuthorized =
+      actor.role === 'QC_INSPECTOR' ||
+      actor.role === 'METALLURGIST' ||
+      actor.role === 'QUALITY_LEAD' ||
+      actor.role === 'PLANT_MANAGER' ||
+      actor.role === 'ADMIN' ||
+      actor.role === 'SUPER_ADMIN' ||
+      (actor as any).permissions?.includes('quality:inspection:record') ||
+      (actor as any).permissions?.includes('quality:inspection:verify') ||
+      (actor as any).permissions?.includes('quality:disposition:manage');
+
+    if (actor.role && !isQualityAuthorized) {
+      throw new ForbiddenError(
+        `Permission Denied: User '${actor.userId}' with role '${actor.role}' does not possess Quality Inspection approval authority.`
+      );
+    }
+
     // Exclusive Inspection Ownership Check
     if (
       job.claimedBy &&
@@ -5535,8 +5553,8 @@ export class ProductionJobService {
     // 6. Quantity Delivered
     if (quantityDelivered === undefined || quantityDelivered === null) {
       missingOrInvalidFields.push('6. Quantity Delivered (quantityDelivered is required)');
-    } else if (typeof quantityDelivered !== 'number' || isNaN(quantityDelivered) || quantityDelivered < 0) {
-      missingOrInvalidFields.push('6. Quantity Delivered (must be a non-negative number)');
+    } else if (typeof quantityDelivered !== 'number' || isNaN(quantityDelivered) || quantityDelivered <= 0) {
+      missingOrInvalidFields.push('6. Quantity Delivered (must be a positive number greater than zero)');
     } else if (quantityReceived !== undefined && quantityReceived !== null && quantityDelivered > quantityReceived) {
       missingOrInvalidFields.push(`6. Quantity Delivered (quantityDelivered ${quantityDelivered} cannot exceed quantityReceived ${quantityReceived})`);
     }
@@ -5739,7 +5757,15 @@ export class ProductionJobService {
         jobNumber: updated.jobNumber,
         quantityDelivered,
         quantityRejected,
-        toStatus: 'WAITING_FOR_DISPATCH'
+        previousStatus: 'IN_INSPECTION',
+        toStatus: 'WAITING_FOR_DISPATCH',
+        approvingUser: {
+          userId: actor.userId,
+          email: actor.email,
+          role: actor.role,
+          name: actor.name
+        },
+        approvedAt: new Date()
       }
     });
 
@@ -5754,7 +5780,9 @@ export class ProductionJobService {
         jobNumber: updated.jobNumber,
         quantityDelivered,
         quantityRejected,
-        toStatus: 'WAITING_FOR_DISPATCH'
+        previousStatus: 'IN_INSPECTION',
+        toStatus: 'WAITING_FOR_DISPATCH',
+        approvedBy: actor.userId
       }
     });
 

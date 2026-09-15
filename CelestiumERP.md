@@ -95,7 +95,7 @@
    - 8.1 Database Seeding Engine (`backend/src/scripts/seed.ts`)
    - 8.2 Centralized Configuration Subsystem (`backend/src/config/`)
    - 8.3 Operational Runbooks & Technical Specifications (`docs/`)
-   - 8.4 Automated Test Suite Matrix (67 Backend Specs + Frontend Suites)
+   - 8.4 Automated Test Suite Matrix (68 Backend Specs + Frontend Suites)
      - *Prompt 8:* `production-operator-workspace.spec.ts`
      - *Prompt 9:* `production-security-concurrency.spec.ts`
      - *Prompt 10:* `production-e2e-integration.spec.ts`
@@ -103,6 +103,7 @@
      - *Inspection Prompt 3:* `inspection-lock.spec.ts`
      - *Inspection Prompt 4:* `inspection-data.spec.ts`
      - *Inspection Prompt 5:* `inspection-recipe-verification.spec.ts`
+     - *Inspection Prompt 6:* `inspection-approval-dispatch.spec.ts`
 
 ---
 
@@ -1100,7 +1101,21 @@ _No direct HTTP routes mounted for this internal domain service._
       - Quarantine Integration: Provides immediate fail-path routing to authoritative `INSPECTION` failure quarantine state (`workflowState.inspection = true`) via `failInspection`.
     - `takeForInspection(tenantId, id, actorId, dto)`: Atomically transitions BO from `waitingForInspection` to `inInspection`, establishes single active flag (`inInspection: true`), rejects concurrent claims with `409 Conflict`, records exclusive ownership (`claimedBy`, `claimedAt`, `claimedByEmail`, `claimedByRole`, `inspectedBy`), sets `disposition = 'PENDING'`, logs audit diff `INSPECTION_STARTED`, and publishes `Job.InspectionStarted`.
     - `recordHeatTreatmentInspectionData(tenantId, id, actorId, dto)`: Validates active inspection status (`isJobInInspection`), enforces exclusive ownership (`403 Forbidden` if another inspector without QA Lead/Admin role), enforces Recipe Protection (`Recipe Protection Violation` on recipe tampering), enforces Production Data Protection (`Production Data Protection Violation` on telemetry/piece tampering), enforces silent-pass prevention when measured average is out of spec, and saves partial inspection actuals without advancing state.
-    - `approveInspectionForDispatch(tenantId, id, actorId, dto)`: Validates active inspection status, enforces exclusive ownership (`403 Forbidden`), validates all Six Mandatory Heat-Treatment Inspection Fields, validates quantity balance ($Q_{\text{del}} \le Q_{\text{rec}}$, $Q_{\text{rej}} = Q_{\text{rec}} - Q_{\text{del}}$), asserts no failed process rows, atomically transitions to `waitingForDispatch: true` ($\sum \text{flag}_i = 1$), stages BO for dispatch without auto-dispatching, and publishes `Job.InspectionApproved`.
+    - `approveInspectionForDispatch(tenantId, id, actorId, dto)`: Authoritative Inspection Approval for Dispatch (`inInspection -> waitingForDispatch` atomic transition):
+      - **1. Eligibility Invariant:** Only a Batch Order currently in active `inInspection = true` (`workflowState.inInspection: true`, `status: 'IN_INSPECTION'`) may be approved. All other states (`waitingForProduction`, `inProduction`, `waitingForInspection`, `waitingForDispatch`, `dispatched`, `inspection`) are strictly rejected with `400 Bad Request`.
+      - **2. Server-Side Permission & Ownership Invariant:** Only users with authorized Quality Inspection roles (`QC_INSPECTOR`, `METALLURGIST`, `QUALITY_LEAD`, `PLANT_MANAGER`, `ADMIN`, `SUPER_ADMIN`) or direct quality inspection permissions may approve inspection; unauthorized roles are rejected server-side with `403 Forbidden`. Enforces exclusive claimed inspector ownership (`claimedBy`); competing inspectors are rejected with `403 Forbidden` (`Inspection Ownership Violation`), while QA Lead / Metallurgist / Plant Manager / Admin retain supervisory override authority.
+      - **3. Six Authoritative Heat-Treatment Fields Completeness:** Validates that all six core heat-treatment inspection fields are complete, valid, and verified:
+        1. Furnace / equipment identification: Verified against equipment master records (`furnaceCapacityRepository`, `machineRepository`); arbitrary unverified equipment is prohibited (`400 Bad Request`).
+        2. Hardness specification: Valid numeric bounds (`minHardness`, `maxHardness`, `scale`: `HRC` | `HBW` | `HV` | `HRB`) with `maxHardness >= minHardness`.
+        3. Actual hardness: Non-negative measured value (`measuredAverage`) and test points (`testPoints`).
+        4. Case depth: Non-negative measured value (`effectiveCaseDepthMm`) and testing method (`caseDepthMethod`).
+        5. Quantity received: Positive count (`quantityReceived > 0`).
+        6. Quantity delivered: Positive count ($0 < \text{quantityDelivered} \le \text{quantityReceived}$), rejecting delivered exceeding received with `400 Bad Request`.
+      - **4. Process Validation & Mandatory Failure Blocking:** Confirms measured hardness is within specification $[H_{\text{min}}, H_{\text{max}}]$, effective case depth is within recipe limits $[C_{\text{min}}, C_{\text{max}}]$, no row in the 15-position process details table has status `FAILED`, and neither `isHardnessCompliant` nor `isCaseDepthCompliant` is false. Unresolved mandatory failures strictly block approval (`400 Bad Request`).
+      - **5. Single Active Workflow Flag & Atomic State Transition:** Atomically mutates `inInspection = false`, `waitingForDispatch = true`, `status = 'WAITING_FOR_DISPATCH'`, setting all other flags false ($\sum \text{flag}_i = 1$). Race conditions and concurrent approvals return `409 Conflict`.
+      - **6. Post-Approval Production Lock & Queue Clearance:** Permanently locks inspection editing (`400 Bad Request`) and production operations (furnace charges, stage progress, partial saves) on approved BOs (`Post-Production Lock Violation`). Clears the BO from active inspection queues and surfaces it exclusively in `GET /api/v1/production-jobs/waiting-for-dispatch`.
+      - **7. Dispatch Boundary Preservation:** Inspection strictly establishes `waitingForDispatch = true` and `dispatched = false`. Outward challans, delivery notes, and gate passes are reserved for the Dispatch Phase. Direct bypass transitions from `IN_INSPECTION` to `DISPATCHED` via generic `/transition` are prohibited (`Inspection Lock Violation`).
+      - **8. Audit Trail & Domain Event Publication:** Records immutable audit log `INSPECTION_APPROVED_FOR_DISPATCH` with approving user, timestamp, previous status (`IN_INSPECTION`), resulting status (`WAITING_FOR_DISPATCH`), delivered pieces, scrapped pieces, and publishes `DomainEvents.JOB_INSPECTION_APPROVED`.
     - `failInspection(tenantId, id, actorId, dto)`: Validates active inspection status, enforces exclusive ownership (`403 Forbidden`), atomically transitions BO to quarantined failure state `inspection: true` ($\sum \text{flag}_i = 1$), records defect category, rejection reason, and inspector notes, and publishes `Job.InspectionFailed`.
   - *Inspection Lock & Cross-Phase Protection Invariants (Prompt 3):*
     - **Queue Locking:** Taking a BO into inspection atomically excludes it from `GET /queue/waiting-for-inspection`.
@@ -3091,6 +3106,40 @@ The codebase features comprehensive test suites validating layer boundaries, dat
   - Invariant 16 (Blocks Dispatch Approval if Any Process Row is FAILED): Blocks dispatch approval with `400 Bad Request` if any process row has status `FAILED`.
   - Invariant 17 (Transitions Non-Compliant BO to Authoritative Failure Quarantine): Transitions non-compliant BO to authoritative `INSPECTION` failure quarantine state (`workflowState.inspection: true`) via `failInspection`.
   - Invariant 18 (Process Row Verification via Quality Inspection Route): Allows process row verification via `POST /api/v1/quality-inspections/:id/verify-process-row`.
+- `backend/tests/inspection-approval-dispatch.spec.ts` (33 tests — Prompt 6: Implement Inspection Approval for Dispatch):
+  - Invariant 1 (Eligibility - WAITING_FOR_PRODUCTION Rejection): Rejects approval when BO is in `WAITING_FOR_PRODUCTION` with `400 Bad Request`.
+  - Invariant 2 (Eligibility - IN_PRODUCTION Rejection): Rejects approval when BO is in `IN_PRODUCTION` with `400 Bad Request`.
+  - Invariant 3 (Eligibility - WAITING_FOR_INSPECTION Rejection): Rejects approval when BO is in `WAITING_FOR_INSPECTION` with `400 Bad Request`.
+  - Invariant 4 (Eligibility - Already WAITING_FOR_DISPATCH Rejection): Rejects approval when BO is already in `WAITING_FOR_DISPATCH` with `400 Bad Request`.
+  - Invariant 5 (Eligibility - DISPATCHED Rejection): Rejects approval when BO is in `DISPATCHED` with `400 Bad Request`.
+  - Invariant 6 (Eligibility - INSPECTION Rejection): Rejects approval when BO is in quarantined `INSPECTION` with `400 Bad Request`.
+  - Invariant 7 (Permission - Non-QA Role Rejection): Rejects approval attempts by unauthorized non-inspection roles with `403 Forbidden` enforced server-side.
+  - Invariant 8 (Permission - Authorized QC Inspector Acceptance): Grants approval to authorized QC Inspector with `200 OK`.
+  - Invariant 9 (Permission - Exclusive Ownership Enforcement): Rejects competing inspector from approving session with `403 Forbidden` (`Inspection Ownership Violation`).
+  - Invariant 10 (Permission - QA Lead / Metallurgist Override): Permits `QUALITY_LEAD` or `METALLURGIST` to override and approve claimed session with `200 OK`.
+  - Invariant 11 (Required Data - Missing Equipment Gating): Rejects approval when furnace/equipment identification is missing with `400 Bad Request`.
+  - Invariant 12 (Required Data - Unverified Equipment Master Rejection): Rejects approval when arbitrary unverified equipment not in master records is provided with `400 Bad Request`.
+  - Invariant 13 (Required Data - Missing Hardness Spec Gating): Rejects approval when hardness specification (`minHardness`/`maxHardness`) is missing with `400 Bad Request`.
+  - Invariant 14 (Required Data - Missing Actual Hardness Gating): Rejects approval when actual measured hardness is missing with `400 Bad Request`.
+  - Invariant 15 (Required Data - Missing Case Depth Gating): Rejects approval when case depth (`effectiveCaseDepthMm`) is missing with `400 Bad Request`.
+  - Invariant 16 (Required Data - Missing / Non-Positive Quantity Received Gating): Rejects approval when quantity received is missing or $\le 0$ with `400 Bad Request`.
+  - Invariant 17 (Required Data - Missing / Non-Positive Quantity Delivered Gating): Rejects approval when quantity delivered is missing or $\le 0$ with `400 Bad Request`.
+  - Invariant 18 (Required Data - Quantity Delivered Exceeding Received Gating): Rejects approval when quantity delivered exceeds quantity received with `400 Bad Request`.
+  - Invariant 19 (Process Validation - Out-of-Spec Hardness Rejection): Rejects approval when measured hardness is outside recipe specification range $[58, 62]$ HRC with `400 Bad Request`.
+  - Invariant 20 (Process Validation - Out-of-Spec Case Depth Rejection): Rejects approval when case depth is outside target limits with `400 Bad Request`.
+  - Invariant 21 (Process Validation - Failed Process Row Blocking): Rejects approval when any 15-position process detail row has status `FAILED` with `400 Bad Request`.
+  - Invariant 22 (Process Validation - Explicit Non-Compliant Hardness Flag Blocking): Rejects approval when `isHardnessCompliant` is explicitly false with `400 Bad Request`.
+  - Invariant 23 (Process Validation - Explicit Non-Compliant Case Depth Flag Blocking): Rejects approval when `isCaseDepthCompliant` is explicitly false with `400 Bad Request`.
+  - Invariant 24 (State Transition - Single Active Flag Invariant): Atomically transitions `inInspection = false` and `waitingForDispatch = true` with single active flag ($\sum \text{flag}_i = 1$).
+  - Invariant 25 (State Transition - Concurrency Collision Protection): Enforces concurrency collision protection (second simultaneous approval receives `409 Conflict`).
+  - Invariant 26 (Production Lock - Inspection Data Immutability): Prohibits editing inspection data after dispatch approval with `400 Bad Request`.
+  - Invariant 27 (Production Lock - Process Row Immutability): Prohibits process row verification after dispatch approval with `400 Bad Request`.
+  - Invariant 28 (Production Lock - Production Operations Lockout): Prohibits production operations (charge, progress, save) on approved BO with `Post-Production Lock Violation` (`400 Bad Request`).
+  - Invariant 29 (Dispatch Boundary - Zero Auto-Dispatch): Does not mark `dispatched = true` or create outward challan during inspection approval.
+  - Invariant 30 (Dispatch Boundary - Generic Transition Lockout): Prohibits direct status skipping from `IN_INSPECTION` to `DISPATCHED` via generic transition route with `400 Bad Request` (`Inspection Lock Violation`).
+  - Invariant 31 (Audit Trail & Event Publication): Records audit log `INSPECTION_APPROVED_FOR_DISPATCH` and publishes `DomainEvents.JOB_INSPECTION_APPROVED` with complete payload.
+  - Invariant 32 (Router Compatibility - Dedicated Route): Allows approval via dedicated route `/api/v1/quality-inspections/:id/approve-dispatch` with `200 OK`.
+  - Invariant 33 (Router Compatibility - Unified Route): Allows approval via unified endpoint `/api/v1/production-jobs/:id/approve-inspection` with `200 OK`.
 
 #### 4. Domain Integration Suites (48 Core Specs in `backend/tests/`)
 - Production Execution & Lifecycle: `production-job.spec.ts`, `production-execution-workflow.spec.ts`, `production-scheduling.spec.ts`, `plan-to-job-handoff.spec.ts`.
