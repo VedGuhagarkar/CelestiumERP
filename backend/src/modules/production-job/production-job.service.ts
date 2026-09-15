@@ -4793,6 +4793,25 @@ export class ProductionJobService {
       throw new NotFoundError(`Batch Order with identifier '${jobId}' not found.`);
     }
 
+    // Server-side Quality Inspection Permission Enforcement (Prompt 9 Requirement 1)
+    const isQualityAuthorized =
+      !actor.role ||
+      actor.role === 'QC_INSPECTOR' ||
+      actor.role === 'METALLURGIST' ||
+      actor.role === 'QUALITY_LEAD' ||
+      actor.role === 'PLANT_MANAGER' ||
+      actor.role === 'ADMIN' ||
+      actor.role === 'SUPER_ADMIN' ||
+      (actor as any).permissions?.includes('quality:inspection:record') ||
+      (actor as any).permissions?.includes('quality:inspection:verify') ||
+      (actor as any).permissions?.includes('quality:disposition:manage');
+
+    if (!isQualityAuthorized) {
+      throw new ForbiddenError(
+        `Permission Denied: User '${actor.userId}' with role '${actor.role}' does not possess Quality Inspection authority to claim Batch Orders.`
+      );
+    }
+
     // 1. Concurrency / Already in Inspection check
     if (
       this.isJobInInspection(job) ||
@@ -5052,6 +5071,25 @@ export class ProductionJobService {
     if (!this.isJobInInspection(job)) {
       throw new BadRequestError(
         `Cannot record inspection data: Batch Order '${job.boNumber || job.jobNumber}' is not in active inspection (current status: '${job.status}').`
+      );
+    }
+
+    // Server-side Quality Inspection Permission Enforcement (Prompt 9 Requirement 1)
+    const isQualityAuthorized =
+      !actor.role ||
+      actor.role === 'QC_INSPECTOR' ||
+      actor.role === 'METALLURGIST' ||
+      actor.role === 'QUALITY_LEAD' ||
+      actor.role === 'PLANT_MANAGER' ||
+      actor.role === 'ADMIN' ||
+      actor.role === 'SUPER_ADMIN' ||
+      (actor as any).permissions?.includes('quality:inspection:record') ||
+      (actor as any).permissions?.includes('quality:inspection:verify') ||
+      (actor as any).permissions?.includes('quality:disposition:manage');
+
+    if (!isQualityAuthorized) {
+      throw new ForbiddenError(
+        `Permission Denied: User '${actor.userId}' with role '${actor.role}' does not possess Quality Inspection authority to record inspection data.`
       );
     }
 
@@ -6285,6 +6323,25 @@ export class ProductionJobService {
     if (!this.isJobInInspection(job)) {
       throw new BadRequestError(
         `Cannot verify process row: Batch Order '${job.boNumber || job.jobNumber}' is not in active inspection (current status: '${job.status}').`
+      );
+    }
+
+    // Server-side Quality Inspection Permission Enforcement (Prompt 9 Requirement 1)
+    const isQualityAuthorized =
+      !actor.role ||
+      actor.role === 'QC_INSPECTOR' ||
+      actor.role === 'METALLURGIST' ||
+      actor.role === 'QUALITY_LEAD' ||
+      actor.role === 'PLANT_MANAGER' ||
+      actor.role === 'ADMIN' ||
+      actor.role === 'SUPER_ADMIN' ||
+      (actor as any).permissions?.includes('quality:inspection:record') ||
+      (actor as any).permissions?.includes('quality:inspection:verify') ||
+      (actor as any).permissions?.includes('quality:disposition:manage');
+
+    if (!isQualityAuthorized) {
+      throw new ForbiddenError(
+        `Permission Denied: User '${actor.userId}' with role '${actor.role}' does not possess Quality Inspection authority to verify process rows.`
       );
     }
 

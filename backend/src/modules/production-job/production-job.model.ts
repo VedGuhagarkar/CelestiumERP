@@ -601,6 +601,27 @@ const productionJobSchema = createBaseSchema<ProductionJobDocument>({
   notes: { type: String, default: null }
 });
 
+productionJobSchema.pre('validate', function (next) {
+  const activeFlags = [
+    this.waitingForProduction,
+    this.inProduction,
+    this.waitingForInspection,
+    this.inInspection,
+    this.waitingForDispatch,
+    this.dispatched,
+    this.inspection
+  ].filter(Boolean).length;
+
+  if (activeFlags > 1) {
+    return next(
+      new Error(
+        `Mutual Exclusivity Violation: Exactly one BO workflow state flag must be true at any moment (received ${activeFlags} active flags).`
+      )
+    );
+  }
+  next();
+});
+
 productionJobSchema.pre('save', function (next) {
   // If status was changed but workflow flags were not explicitly modified, keep them synchronized
   const anyFlagModified =
@@ -866,3 +887,5 @@ productionJobSchema.index({ tenantId: 1, idempotencyKey: 1 }, { sparse: true });
 export const ProductionJobModel =
   mongoose.models.ProductionJob ||
   mongoose.model<ProductionJobDocument>('ProductionJob', productionJobSchema);
+
+export const ProductionJob = ProductionJobModel;
