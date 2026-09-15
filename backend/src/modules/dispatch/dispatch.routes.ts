@@ -9,6 +9,7 @@ import { validateRequest } from '../../core/middleware/validate.middleware.js';
 import { PERMISSIONS } from '../rbac/rbac.constants.js';
 import {
   createDispatchSchema,
+  createOutwardChallanSchema,
   verifyDispatchQualitySchema,
   scheduleDispatchSchema,
   approveDispatchSchema,
@@ -21,6 +22,38 @@ import {
 export const dispatchRouter = Router();
 
 dispatchRouter.use(authenticateJwt);
+
+// Dedicated Dispatch Queue Route (Waiting for Dispatch)
+dispatchRouter.get(
+  '/queue',
+  requireAnyPermission(
+    PERMISSIONS.DISPATCH_DELIVERY_VIEW,
+    PERMISSIONS.INVENTORY_WAREHOUSE_VIEW,
+    PERMISSIONS.DISPATCH_DELIVERY_CREATE
+  ),
+  dispatchController.getDispatchQueue
+);
+
+dispatchRouter.get(
+  '/waiting-for-dispatch',
+  requireAnyPermission(
+    PERMISSIONS.DISPATCH_DELIVERY_VIEW,
+    PERMISSIONS.INVENTORY_WAREHOUSE_VIEW,
+    PERMISSIONS.DISPATCH_DELIVERY_CREATE
+  ),
+  dispatchController.getDispatchQueue
+);
+
+// Dedicated Outward Challan (OC) Creation Route (PO -> GRN -> BO -> OC)
+dispatchRouter.post(
+  '/outward-challan',
+  requireAnyPermission(
+    PERMISSIONS.DISPATCH_DELIVERY_CREATE,
+    PERMISSIONS.INVENTORY_WAREHOUSE_MANAGE
+  ),
+  validateRequest({ body: createOutwardChallanSchema }),
+  dispatchController.createOutwardChallan
+);
 
 // 1. Create Dispatch Consignment (DRAFT)
 dispatchRouter.post(

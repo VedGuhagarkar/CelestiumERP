@@ -490,6 +490,9 @@ export interface IProductionJob {
   grnNumber?: string | null;
   boNumber?: string | null;
   batchOrderNumber?: string | null;
+  outwardChallanId?: string | null;
+  outwardChallanNumber?: string | null;
+  outwardChallanDate?: Date | null;
   planId?: string | null;
   planNumber?: string | null;
   customer: {

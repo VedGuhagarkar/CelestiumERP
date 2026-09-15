@@ -89,6 +89,19 @@ export const cancelDispatchSchema = z.object({
   cancellationReason: z.string().min(5, 'A clear cancellation reason is mandatory (min 5 chars)')
 });
 
+export const createOutwardChallanSchema = z.object({
+  batchOrderId: z.string().min(1, 'Batch Order ID is required'),
+  grnId: z.string().optional(),
+  poId: z.string().optional(),
+  carrierName: z.string().optional(),
+  transportMode: TransportModeEnum.optional().default('ROAD'),
+  vehicleNumber: z.string().optional(),
+  driverName: z.string().optional(),
+  destinationAddress: z.string().optional(),
+  packageDetails: PackageDetailsSchema.optional(),
+  notes: z.string().optional()
+});
+
 export const queryDispatchesSchema = z.object({
   status: DispatchStatusEnum.optional(),
   customerId: z.string().optional(),
@@ -97,6 +110,11 @@ export const queryDispatchesSchema = z.object({
   heatLotNumber: z.string().optional(),
   dispatchNumber: z.string().optional(),
   deliveryChallanNumber: z.string().optional(),
+  outwardChallanNumber: z.string().optional(),
+  batchOrderId: z.string().optional(),
+  grnId: z.string().optional(),
+  poId: z.string().optional(),
+  isOutwardChallan: z.coerce.boolean().optional(),
   startDate: z.string().datetime().optional(),
   endDate: z.string().datetime().optional(),
   search: z.string().optional(),

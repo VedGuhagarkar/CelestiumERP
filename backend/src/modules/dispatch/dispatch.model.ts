@@ -175,11 +175,35 @@ const DispatchHistoryEntrySchema = new Schema(
   { _id: false }
 );
 
+const OutwardChallanHierarchySchema = new Schema(
+  {
+    poId: { type: String, required: true },
+    poNumber: { type: String, required: true, uppercase: true },
+    grnId: { type: String, required: true },
+    grnNumber: { type: String, required: true, uppercase: true },
+    batchOrderId: { type: String, required: true },
+    batchOrderNumber: { type: String, required: true, uppercase: true },
+    outwardChallanNumber: { type: String, required: true, uppercase: true },
+    ocDate: { type: Date, required: true }
+  },
+  { _id: false }
+);
+
 const DispatchConsignmentSchema = new Schema<DispatchConsignmentDocument>(
   {
     tenantId: { type: String, required: true, index: true },
     dispatchNumber: { type: String, required: true, uppercase: true },
     deliveryChallanNumber: { type: String, uppercase: true },
+    outwardChallanNumber: { type: String, uppercase: true, trim: true },
+    ocDate: { type: Date },
+    batchOrderId: { type: String },
+    batchOrderNumber: { type: String, uppercase: true },
+    grnId: { type: String },
+    grnNumber: { type: String, uppercase: true },
+    poId: { type: String },
+    poNumber: { type: String, uppercase: true },
+    hierarchy: { type: OutwardChallanHierarchySchema },
+    isOutwardChallan: { type: Boolean, default: false },
     status: {
       type: String,
       required: true,
@@ -229,6 +253,10 @@ const DispatchConsignmentSchema = new Schema<DispatchConsignmentDocument>(
 
 DispatchConsignmentSchema.index({ tenantId: 1, dispatchNumber: 1 }, { unique: true });
 DispatchConsignmentSchema.index({ tenantId: 1, deliveryChallanNumber: 1 });
+DispatchConsignmentSchema.index({ tenantId: 1, outwardChallanNumber: 1 });
+DispatchConsignmentSchema.index({ tenantId: 1, batchOrderId: 1 });
+DispatchConsignmentSchema.index({ tenantId: 1, grnId: 1 });
+DispatchConsignmentSchema.index({ tenantId: 1, poId: 1 });
 DispatchConsignmentSchema.index({ tenantId: 1, 'customer.customerId': 1, status: 1 });
 DispatchConsignmentSchema.index({ tenantId: 1, 'lines.jobId': 1 });
 DispatchConsignmentSchema.index({ tenantId: 1, 'lines.heatLotNumber': 1 });

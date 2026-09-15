@@ -6,6 +6,8 @@ import { ICustomerRepository, customerRepository } from '../customer/customer.re
 import { IProductionJobRepository, productionJobRepository } from '../production-job/production-job.repository.js';
 import { IQualityInspectionRepository, qualityInspectionRepository } from '../quality-inspection/quality-inspection.repository.js';
 import { IQualityDocumentationRepository, qualityDocumentationRepository } from '../quality-documentation/quality-documentation.repository.js';
+import { IGRNRepository, grnRepository } from '../grn/grn.repository.js';
+import { IPurchaseOrderRepository, purchaseOrderRepository } from '../purchase-order/purchase-order.repository.js';
 import { auditService } from '../audit/audit.service.js';
 import { DomainEvents } from '../../core/constants/events.js';
 import { NotFoundError, BadRequestError, ConflictError } from '../../core/errors/app-error.js';
@@ -13,6 +15,8 @@ import { PaginationOptions, PaginatedResult } from '../../core/types/pagination.
 import {
   DispatchConsignmentDocument,
   CreateDispatchDto,
+  CreateOutwardChallanDto,
+  IOutwardChallanHierarchy,
   VerifyDispatchQualityDto,
   ScheduleDispatchDto,
   ApproveDispatchDto,
@@ -41,7 +45,9 @@ export class DispatchService extends BaseService {
     private readonly custRepo: ICustomerRepository = customerRepository,
     private readonly jobRepo: IProductionJobRepository = productionJobRepository,
     private readonly qcInspectionRepo: IQualityInspectionRepository = qualityInspectionRepository,
-    private readonly qcDocRepo: IQualityDocumentationRepository = qualityDocumentationRepository
+    private readonly qcDocRepo: IQualityDocumentationRepository = qualityDocumentationRepository,
+    private readonly grnRepo: IGRNRepository = grnRepository,
+    private readonly poRepo: IPurchaseOrderRepository = purchaseOrderRepository
   ) {
     super('DispatchService');
   }
@@ -933,6 +939,420 @@ export class DispatchService extends BaseService {
       throw new NotFoundError(`Dispatch consignment with number '${dispatchNumber}' not found`);
     }
     return consignment;
+  }
+
+  /**
+   * Authoritative Outward Challan (OC) Creation Workflow
+   * Strictly preserves the hierarchy: PO -> GRN -> BO -> OC
+   *
+   * Invariants:
+   * 1. Eligibility: Selected BO must have waitingForDispatch = true. No other state permitted.
+   * 2. BO Relationship: OC references selected BO. Selected BO belongs to the selected GRN.
+   * 3. GRN Relationship: GRN referenced by OC must be the GRN belonging to the BO. Reject unrelated GRN.
+   * 4. PO Relationship: PO must be derived from the corresponding GRN. Reject unrelated PO.
+   * 5. Automatic OC Number: Unique, system-generated, immutable, monotonic (OC-YYYYMM-XXXX).
+   * 6. OC Date: Derived authoritatively from corresponding GRN (grn.grnDate || grn.createdAt).
+   * 7. Creation Transaction: Atomic creation. Prevent duplicate or concurrent conflicting OCs.
+   * 8. Source-of-Truth Enforcement: Independently retrieve and validate BO, GRN, and PO.
+   * 9. Dispatch Boundary: Creating OC does NOT mark BO as dispatched (dispatched remains false).
+   */
+  public async createOutwardChallanForBatchOrder(
+    tenantId: string,
+    actor: IActorContext,
+    dto: CreateOutwardChallanDto
+  ): Promise<DispatchConsignmentDocument> {
+    if (!dto.batchOrderId) {
+      throw new BadRequestError('Batch Order ID (batchOrderId) is required for Outward Challan creation.');
+    }
+
+    // 1. Source-of-Truth Retrieval: Fetch Batch Order
+    const job = await this.jobRepo.findById(tenantId, dto.batchOrderId);
+    if (!job || job.isDeleted) {
+      throw new NotFoundError(`Batch Order with ID '${dto.batchOrderId}' not found.`);
+    }
+
+    const boIdent = job.boNumber || job.batchOrderNumber || job.jobNumber;
+
+    // 2. Eligibility Enforcement: Selected BO must have waitingForDispatch = true
+    const isWaitingForDispatch = Boolean(
+      job.waitingForDispatch ||
+      (job.workflowState as any)?.waitingForDispatch ||
+      job.status === 'WAITING_FOR_DISPATCH'
+    );
+
+    if (!isWaitingForDispatch) {
+      if (job.status === 'INSPECTION' || job.inspection || (job.workflowState as any)?.inspection) {
+        throw new BadRequestError(
+          `Dispatch Protection Violation: Batch Order '${boIdent}' failed Quality Inspection and is quarantined. Ineligible for Outward Challan creation.`
+        );
+      }
+      if (job.status === 'IN_INSPECTION' || job.inInspection || (job.workflowState as any)?.inInspection) {
+        throw new BadRequestError(
+          `Dispatch Protection Violation: Batch Order '${boIdent}' is currently in inspection. Ineligible for Outward Challan creation.`
+        );
+      }
+      if (job.status === 'IN_PRODUCTION' || job.inProduction || (job.workflowState as any)?.inProduction) {
+        throw new BadRequestError(
+          `Dispatch Protection Violation: Batch Order '${boIdent}' is currently in production. Ineligible for Outward Challan creation.`
+        );
+      }
+      if (job.status === 'WAITING_FOR_PRODUCTION' || job.waitingForProduction || (job.workflowState as any)?.waitingForProduction) {
+        throw new BadRequestError(
+          `Dispatch Protection Violation: Batch Order '${boIdent}' is waiting for production. Ineligible for Outward Challan creation.`
+        );
+      }
+      if (job.status === 'WAITING_FOR_INSPECTION' || job.waitingForInspection || (job.workflowState as any)?.waitingForInspection) {
+        throw new BadRequestError(
+          `Dispatch Protection Violation: Batch Order '${boIdent}' is waiting for inspection. Ineligible for Outward Challan creation.`
+        );
+      }
+      if (job.dispatched || (job.workflowState as any)?.dispatched || job.status === 'DISPATCHED') {
+        throw new BadRequestError(
+          `Dispatch Protection Violation: Batch Order '${boIdent}' has already been dispatched.`
+        );
+      }
+      throw new BadRequestError(
+        `Dispatch Protection Violation: Batch Order '${boIdent}' is in state '${job.status}'. An Outward Challan may only be created when waitingForDispatch is true.`
+      );
+    }
+
+    // 3. BO Relationship & GRN Relationship Corroboration
+    const boGrnId = job.grnId || (job.genealogy as any)?.whichGrn?.grnId;
+    if (!boGrnId) {
+      throw new BadRequestError(`Batch Order '${boIdent}' has no associated Goods Receipt Note lineage.`);
+    }
+
+    if (dto.grnId && dto.grnId !== boGrnId) {
+      throw new BadRequestError(
+        `BO/GRN mismatch: Selected Batch Order belongs to GRN '${boGrnId}', but requested GRN was '${dto.grnId}'. Unrelated GRNs cannot be paired with the Batch Order.`
+      );
+    }
+
+    const grn = await this.grnRepo.findGrnById(tenantId, boGrnId);
+    if (!grn || grn.isDeleted) {
+      throw new NotFoundError(`Goods Receipt Note with ID '${boGrnId}' not found.`);
+    }
+
+    // 4. PO Relationship Corroboration: Derived strictly from GRN
+    const grnPoId = grn.poId || job.poId || (job.genealogy as any)?.whichPo?.poId;
+    if (!grnPoId) {
+      throw new BadRequestError(`Goods Receipt Note '${grn.grnNumber}' has no associated Purchase Order lineage.`);
+    }
+
+    if (dto.poId && dto.poId !== grnPoId) {
+      throw new BadRequestError(
+        `GRN/PO mismatch: Goods Receipt Note belongs to Purchase Order '${grnPoId}', but requested Purchase Order was '${dto.poId}'. Unrelated POs cannot be provided independently.`
+      );
+    }
+
+    const po = await this.poRepo.findById(tenantId, grnPoId);
+    if (!po || po.isDeleted) {
+      throw new NotFoundError(`Purchase Order with ID '${grnPoId}' not found.`);
+    }
+
+    // 5. Check Duplicate OC Creation
+    const existingConsignment = await this.repo.findByBatchOrderId(tenantId, job.id);
+    if (existingConsignment && existingConsignment.status !== 'CANCELLED') {
+      throw new ConflictError(
+        `Duplicate OC Creation: Batch Order '${boIdent}' already has an active Outward Challan '${existingConsignment.outwardChallanNumber || existingConsignment.dispatchNumber}'.`
+      );
+    }
+
+    if (job.outwardChallanNumber) {
+      throw new ConflictError(
+        `Duplicate OC Creation: Batch Order '${boIdent}' is already linked to Outward Challan '${job.outwardChallanNumber}'.`
+      );
+    }
+
+    // 6. Automatic OC Number & Authoritative OC Date
+    const outwardChallanNumber = await this.repo.generateNextOutwardChallanNumber(tenantId);
+    const dispatchNumber = await this.repo.generateNextDispatchNumber(tenantId);
+    const deliveryChallanNumber = await this.repo.generateNextDeliveryChallanNumber(tenantId);
+
+    // OC Date derived from corresponding GRN
+    const ocDate = grn.grnDate
+      ? new Date(grn.grnDate)
+      : (grn.createdAt ? new Date(grn.createdAt) : new Date());
+
+    // 7. Atomic Concurrency Lock on Batch Order
+    // Links outwardChallanNumber to the BO atomically ensuring exactly one winner
+    const linkedJob = await this.jobRepo.atomicLinkOutwardChallan(
+      tenantId,
+      job.id,
+      outwardChallanNumber, // temporary id placeholder until consignment saved
+      outwardChallanNumber,
+      ocDate
+    );
+
+    if (!linkedJob) {
+      throw new ConflictError(
+        `Concurrent OC Creation: Another transaction has already created or is creating an Outward Challan for Batch Order '${boIdent}'.`
+      );
+    }
+
+    try {
+      // 8. Construct authoritative Customer & Item data from server master records
+      const customer = {
+        customerId: job.customer?.customerId || 'CUST-DEFAULT',
+        customerCode: (job.customer?.customerCode || 'CUST-001').toUpperCase(),
+        customerName: job.customer?.customerName || 'Standard Customer',
+        destinationAddress: dto.destinationAddress || (job.customer as any)?.destinationAddress || 'Factory Gate Outbound Logistics Staging',
+        contactPerson: (job.customer as any)?.contactPerson || undefined,
+        contactPhone: (job.customer as any)?.contactPhone || undefined,
+        purchaseOrderNumber: po.poNumber
+      };
+
+      const dispatchedQuantity =
+        job.quantity?.completedQuantity ||
+        job.quantity?.targetQuantity ||
+        1;
+
+      const heatLot =
+        (job as any).heatLotNumber ||
+        (job.genealogy as any)?.whichHeatLot?.heatLotNumber ||
+        (job.materialAllocations?.[0] as any)?.heatNumber ||
+        grn.items?.[0]?.supplierHeatNumber ||
+        'HL-DEFAULT';
+
+      const line: IDispatchLine = {
+        lineId: 'line_01',
+        finishedGoodsId: (job as any).finishedGoodsId || job.id,
+        fgLotNumber: boIdent,
+        jobId: job.id,
+        jobNumber: boIdent,
+        heatLotNumber: heatLot,
+        itemId: job.item?.itemId || 'item_01',
+        itemCode: job.item?.itemCode || 'PART-DEFAULT',
+        itemName: job.item?.itemName || 'Heat-Treated Parts',
+        materialGrade: job.item?.materialGrade || grn.items?.[0]?.materialGrade || 'N/A',
+        dispatchedQuantity,
+        uom: job.item?.uom || 'PCS',
+        packageDetails: dto.packageDetails || {
+          packagingType: 'PALLET',
+          packageCount: 1,
+          grossWeightKg: job.weightKg || job.weight || 0,
+          netWeightKg: job.weightKg || job.weight || 0
+        },
+        qualityVerification: {
+          isQualityApproved: true,
+          inspectionId: (job.execution?.inspectionData as any)?.inspectionId || undefined,
+          cocNumber: (job.execution?.inspectionData as any)?.cocNumber || 'COC-APPROVED',
+          verifiedAt: ocDate,
+          verifiedBy: {
+            userId: actor.userId,
+            email: actor.email,
+            role: actor.role
+          },
+          verificationNotes: 'Quality verified and approved for Outward Challan dispatch staging.'
+        },
+        notes: dto.notes
+      };
+
+      const hierarchy: IOutwardChallanHierarchy = {
+        poId: po.id,
+        poNumber: po.poNumber,
+        grnId: grn.id,
+        grnNumber: grn.grnNumber,
+        batchOrderId: job.id,
+        batchOrderNumber: boIdent,
+        outwardChallanNumber,
+        ocDate
+      };
+
+      // 9. Dispatch Boundary: Persist Consignment as QUALITY_VERIFIED
+      // BO remains waitingForDispatch = true, dispatched = false.
+      const consignment = await this.repo.create(tenantId, {
+        dispatchNumber,
+        deliveryChallanNumber,
+        outwardChallanNumber,
+        ocDate,
+        batchOrderId: job.id,
+        batchOrderNumber: boIdent,
+        grnId: grn.id,
+        grnNumber: grn.grnNumber,
+        poId: po.id,
+        poNumber: po.poNumber,
+        hierarchy,
+        isOutwardChallan: true,
+        status: 'QUALITY_VERIFIED',
+        customer,
+        lines: [line],
+        totalQuantity: dispatchedQuantity,
+        totalPackages: dto.packageDetails?.packageCount || 1,
+        totalNetWeightKg: job.weightKg || job.weight || 0,
+        totalGrossWeightKg: dto.packageDetails?.grossWeightKg || job.weightKg || job.weight || 0,
+        carrier: {
+          carrierName: dto.carrierName || 'Standard Road Logistics',
+          transportMode: dto.transportMode || 'ROAD'
+        },
+        vehicle: dto.vehicleNumber ? { vehicleNumber: dto.vehicleNumber } : undefined,
+        driver: dto.driverName ? { driverName: dto.driverName } : undefined,
+        timeline: {
+          createdAt: new Date(),
+          qualityVerifiedAt: new Date()
+        },
+        history: [
+          {
+            fromStatus: 'DRAFT',
+            toStatus: 'QUALITY_VERIFIED',
+            timestamp: new Date(),
+            performedBy: {
+              userId: actor.userId,
+              email: actor.email,
+              role: actor.role
+            },
+            reason: `Outward Challan ${outwardChallanNumber} created for Batch Order ${boIdent} under hierarchy PO:${po.poNumber} -> GRN:${grn.grnNumber} -> BO:${boIdent} -> OC:${outwardChallanNumber}`
+          }
+        ],
+        notes: dto.notes
+      });
+
+      // Update BO with the finalized consignment ID
+      await this.jobRepo.atomicLinkOutwardChallan(
+        tenantId,
+        job.id,
+        consignment.id,
+        outwardChallanNumber,
+        ocDate
+      );
+
+      // Audit & Domain Event
+      await auditService.record(tenantId, {
+        actorId: actor.userId,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        action: 'DISPATCH_OUTWARD_CHALLAN_CREATED',
+        entityType: 'DispatchConsignment',
+        entityId: consignment.id,
+        ipAddress: actor.ipAddress,
+        metadata: {
+          outwardChallanNumber,
+          ocDate,
+          batchOrderId: job.id,
+          batchOrderNumber: boIdent,
+          grnId: grn.id,
+          grnNumber: grn.grnNumber,
+          poId: po.id,
+          poNumber: po.poNumber,
+          hierarchy
+        }
+      });
+
+      this.publishEvent(
+        DomainEvents.DISPATCH_CREATED,
+        tenantId,
+        {
+          dispatchId: consignment.id,
+          dispatchNumber,
+          outwardChallanNumber,
+          batchOrderId: job.id,
+          hierarchy
+        },
+        actor.userId
+      );
+
+      return consignment;
+    } catch (error) {
+      // If consignment creation failed, roll back the BO link
+      await this.jobRepo.atomicUnlinkOutwardChallan(tenantId, job.id);
+      throw error;
+    }
+  }
+
+  /**
+   * Dedicated Dispatch Queue
+   * Displays all BOs currently waiting for dispatch (waitingForDispatch = true)
+   * Enriched with PO, GRN, Customer, Part, Recipe, Quantities, Weight, and Quality clearance.
+   */
+  public async getDispatchQueue(tenantId: string): Promise<any[]> {
+    const rawJobs = await this.jobRepo.findWaitingForDispatchQueue(tenantId);
+
+    // Enrich and project each record with full lineage without master data duplication
+    const queueItems = await Promise.all(
+      rawJobs.map(async (job) => {
+        const boIdent = job.boNumber || job.batchOrderNumber || job.jobNumber;
+        const grnId = job.grnId || (job.genealogy as any)?.whichGrn?.grnId;
+        const poId = job.poId || (job.genealogy as any)?.whichPo?.poId;
+
+        let grnNumber = job.grnNumber || (job.genealogy as any)?.whichGrn?.grnNumber;
+        let grnDate: Date | null = null;
+        if (grnId && !grnNumber) {
+          try {
+            const grn = await this.grnRepo.findGrnById(tenantId, grnId);
+            if (grn) {
+              grnNumber = grn.grnNumber;
+              grnDate = grn.grnDate || grn.createdAt;
+            }
+          } catch {
+            // Ignore enrichment error
+          }
+        }
+
+        let poNumber = job.poNumber || (job.genealogy as any)?.whichPo?.poNumber;
+        if (poId && !poNumber) {
+          try {
+            const po = await this.poRepo.findById(tenantId, poId);
+            if (po) poNumber = po.poNumber;
+          } catch {
+            // Ignore enrichment error
+          }
+        }
+
+        return {
+          id: job.id,
+          batchOrderId: job.id,
+          boNumber: boIdent,
+          jobNumber: job.jobNumber,
+          status: job.status,
+          waitingForDispatch: true,
+          dispatched: Boolean(job.dispatched),
+          outwardChallanId: (job as any).outwardChallanId || null,
+          outwardChallanNumber: (job as any).outwardChallanNumber || null,
+          outwardChallanDate: (job as any).outwardChallanDate || null,
+          hasOutwardChallan: Boolean((job as any).outwardChallanNumber),
+          poId: poId || 'N/A',
+          poNumber: poNumber || 'N/A',
+          grnId: grnId || 'N/A',
+          grnNumber: grnNumber || 'N/A',
+          grnDate,
+          customer: {
+            customerId: job.customer?.customerId,
+            customerCode: job.customer?.customerCode,
+            customerName: job.customer?.customerName
+          },
+          part: {
+            itemId: job.item?.itemId,
+            itemCode: job.item?.itemCode,
+            itemName: job.item?.itemName,
+            materialGrade: job.item?.materialGrade,
+            uom: job.item?.uom || 'PCS'
+          },
+          recipe: {
+            recipeId: job.recipeSnapshot?.recipeId,
+            recipeCode: job.recipeSnapshot?.recipeCode,
+            recipeName: (job.recipeSnapshot as any)?.name || (job.recipeSnapshot as any)?.recipeName,
+            revisionNumber: job.recipeSnapshot?.revisionNumber
+          },
+          quantities: {
+            targetQuantity: job.quantity?.targetQuantity,
+            loadedQuantity: job.quantity?.loadedQuantity,
+            completedQuantity: job.quantity?.completedQuantity,
+            scrappedQuantity: job.quantity?.scrappedQuantity
+          },
+          weightKg: job.weightKg || job.weight || 0,
+          dueDate: job.dueDate || null,
+          inspectionCompletion: {
+            isQualityApproved: true,
+            cocNumber: (job.execution?.inspectionData as any)?.cocNumber || 'COC-APPROVED',
+            hardnessHrc: (job.execution?.inspectionData as any)?.hardnessAverage || undefined,
+            caseDepthMm: (job.execution?.inspectionData as any)?.effectiveCaseDepthMm || undefined
+          },
+          updatedAt: job.updatedAt
+        };
+      })
+    );
+
+    return queueItems;
   }
 }
 

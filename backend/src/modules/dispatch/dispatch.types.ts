@@ -136,10 +136,31 @@ export interface IDispatchHistoryEntry {
   metadata?: Record<string, any>;
 }
 
+export interface IOutwardChallanHierarchy {
+  poId: string;
+  poNumber: string;
+  grnId: string;
+  grnNumber: string;
+  batchOrderId: string;
+  batchOrderNumber: string;
+  outwardChallanNumber: string;
+  ocDate: Date;
+}
+
 export interface IDispatchConsignment {
   tenantId: string;
   dispatchNumber: string;
   deliveryChallanNumber?: string;
+  outwardChallanNumber?: string;
+  ocDate?: Date;
+  batchOrderId?: string;
+  batchOrderNumber?: string;
+  grnId?: string;
+  grnNumber?: string;
+  poId?: string;
+  poNumber?: string;
+  hierarchy?: IOutwardChallanHierarchy;
+  isOutwardChallan?: boolean;
   status: DispatchStatus;
   customer: IDispatchCustomer;
   lines: IDispatchLine[];
@@ -232,6 +253,19 @@ export interface CancelDispatchDto {
   cancellationReason: string;
 }
 
+export interface CreateOutwardChallanDto {
+  batchOrderId: string;
+  grnId?: string;
+  poId?: string;
+  carrierName?: string;
+  transportMode?: TransportMode;
+  vehicleNumber?: string;
+  driverName?: string;
+  destinationAddress?: string;
+  packageDetails?: IDispatchLinePackageDetails;
+  notes?: string;
+}
+
 export interface QueryDispatchesDto {
   status?: DispatchStatus;
   customerId?: string;
@@ -240,6 +274,11 @@ export interface QueryDispatchesDto {
   heatLotNumber?: string;
   dispatchNumber?: string;
   deliveryChallanNumber?: string;
+  outwardChallanNumber?: string;
+  batchOrderId?: string;
+  grnId?: string;
+  poId?: string;
+  isOutwardChallan?: boolean;
   startDate?: string;
   endDate?: string;
   search?: string;

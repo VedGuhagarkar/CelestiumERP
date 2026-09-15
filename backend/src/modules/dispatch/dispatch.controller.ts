@@ -34,6 +34,35 @@ export class DispatchController extends BaseController {
     }
   };
 
+  public createOutwardChallan = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const actor = this.getActorContext(req);
+      const result = await this.service.createOutwardChallanForBatchOrder(tenantId, actor, req.body);
+      this.sendCreated(res, result, 'Outward Challan created successfully under PO/GRN/BO hierarchy');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public getDispatchQueue = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const queue = await this.service.getDispatchQueue(tenantId);
+      this.sendSuccess(res, queue, 'Dispatch queue retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
   public verifyQuality = async (
     req: Request,
     res: Response,

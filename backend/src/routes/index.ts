@@ -135,6 +135,7 @@ v1Router.use('/maintenance', maintenanceRouter);
 v1Router.use('/pyrometry', pyrometryRouter);
 v1Router.use('/attendance', attendanceRouter);
 v1Router.use('/dispatches', dispatchRouter);
+v1Router.use('/dispatch', dispatchRouter);
 v1Router.use('/finance', financeRouter);
 v1Router.use('/costing', costingRouter);
 v1Router.use('/billing', billingRouter);

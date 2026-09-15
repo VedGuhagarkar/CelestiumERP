@@ -57,6 +57,14 @@ export interface IProductionJobRepository {
     jobId: string,
     updateData: any
   ): Promise<ProductionJobDocument | null>;
+  atomicLinkOutwardChallan(
+    tenantId: string,
+    jobId: string,
+    outwardChallanId: string,
+    outwardChallanNumber: string,
+    outwardChallanDate: Date
+  ): Promise<ProductionJobDocument | null>;
+  atomicUnlinkOutwardChallan(tenantId: string, jobId: string): Promise<void>;
   findConflictingJobs(
     tenantId: string,
     furnaceId: string,
@@ -82,6 +90,7 @@ export class ProductionJobRepository
     tenantId: string,
     id: string
   ): Promise<ProductionJobDocument | null> {
+    if (mongoose.connection.readyState === 0) return null;
     if (!id || typeof id !== 'string') return null;
     if (mongoose.isValidObjectId(id)) {
       const doc = await super.findById(tenantId, id);
@@ -813,6 +822,57 @@ export class ProductionJobRepository
     };
 
     return this.model.findOneAndUpdate(filter, updateData, { new: true }).exec();
+  }
+
+  public async atomicLinkOutwardChallan(
+    tenantId: string,
+    jobId: string,
+    outwardChallanId: string,
+    outwardChallanNumber: string,
+    outwardChallanDate: Date
+  ): Promise<ProductionJobDocument | null> {
+    const filter: any = {
+      _id: jobId,
+      tenantId,
+      $or: [
+        { waitingForDispatch: true },
+        { 'workflowState.waitingForDispatch': true },
+        { status: 'WAITING_FOR_DISPATCH' },
+        { status: 'STORAGE' },
+        { status: 'READY_FOR_DISPATCH' }
+      ],
+      outwardChallanNumber: { $in: [null, undefined, ''] },
+      isDeleted: false
+    };
+
+    return this.model
+      .findOneAndUpdate(
+        filter,
+        {
+          $set: {
+            outwardChallanId,
+            outwardChallanNumber,
+            outwardChallanDate
+          }
+        },
+        { new: true }
+      )
+      .exec();
+  }
+
+  public async atomicUnlinkOutwardChallan(tenantId: string, jobId: string): Promise<void> {
+    await this.model
+      .updateOne(
+        { _id: jobId, tenantId },
+        {
+          $set: {
+            outwardChallanId: null,
+            outwardChallanNumber: null,
+            outwardChallanDate: null
+          }
+        }
+      )
+      .exec();
   }
 
   public async findConflictingJobs(

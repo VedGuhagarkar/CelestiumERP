@@ -5,6 +5,7 @@ import {
   QueryDispatchesDto
 } from './dispatch.types.js';
 import { PaginationOptions, PaginatedResult } from '../../core/types/pagination.js';
+import { CounterModel } from '../../core/models/counter.model.js';
 
 export interface IDispatchRepository {
   create(
@@ -20,6 +21,14 @@ export interface IDispatchRepository {
     tenantId: string,
     deliveryChallanNumber: string
   ): Promise<DispatchConsignmentDocument | null>;
+  findByOutwardChallanNumber(
+    tenantId: string,
+    outwardChallanNumber: string
+  ): Promise<DispatchConsignmentDocument | null>;
+  findByBatchOrderId(
+    tenantId: string,
+    batchOrderId: string
+  ): Promise<DispatchConsignmentDocument | null>;
   update(
     tenantId: string,
     id: string,
@@ -33,6 +42,7 @@ export interface IDispatchRepository {
   generateNextDispatchNumber(tenantId: string): Promise<string>;
   generateNextDeliveryChallanNumber(tenantId: string): Promise<string>;
   generateNextGatePassNumber(tenantId: string): Promise<string>;
+  generateNextOutwardChallanNumber(tenantId: string): Promise<string>;
 }
 
 export class DispatchRepository implements IDispatchRepository {
@@ -90,6 +100,37 @@ export class DispatchRepository implements IDispatchRepository {
     });
   }
 
+  public async findByOutwardChallanNumber(
+    tenantId: string,
+    outwardChallanNumber: string
+  ): Promise<DispatchConsignmentDocument | null> {
+    if (mongoose.connection.readyState === 0) {
+      return null;
+    }
+    return await DispatchConsignmentModel.findOne({
+      tenantId,
+      outwardChallanNumber: outwardChallanNumber.toUpperCase(),
+      isDeleted: false
+    });
+  }
+
+  public async findByBatchOrderId(
+    tenantId: string,
+    batchOrderId: string
+  ): Promise<DispatchConsignmentDocument | null> {
+    if (mongoose.connection.readyState === 0) {
+      return null;
+    }
+    return await DispatchConsignmentModel.findOne({
+      tenantId,
+      $or: [
+        { batchOrderId },
+        { 'lines.jobId': batchOrderId }
+      ],
+      isDeleted: false
+    });
+  }
+
   public async update(
     tenantId: string,
     id: string,
@@ -117,6 +158,13 @@ export class DispatchRepository implements IDispatchRepository {
     if (query.customerCode) filter['customer.customerCode'] = query.customerCode.toUpperCase();
     if (query.dispatchNumber) filter.dispatchNumber = new RegExp(query.dispatchNumber, 'i');
     if (query.deliveryChallanNumber) filter.deliveryChallanNumber = new RegExp(query.deliveryChallanNumber, 'i');
+    if (query.outwardChallanNumber) filter.outwardChallanNumber = new RegExp(query.outwardChallanNumber, 'i');
+    if (query.batchOrderId) {
+      filter.$or = [{ batchOrderId: query.batchOrderId }, { 'lines.jobId': query.batchOrderId }];
+    }
+    if (query.grnId) filter.grnId = query.grnId;
+    if (query.poId) filter.poId = query.poId;
+    if (query.isOutwardChallan !== undefined) filter.isOutwardChallan = query.isOutwardChallan;
     if (query.jobNumber) filter['lines.jobNumber'] = new RegExp(query.jobNumber, 'i');
     if (query.heatLotNumber) filter['lines.heatLotNumber'] = new RegExp(query.heatLotNumber, 'i');
 
@@ -235,6 +283,51 @@ export class DispatchRepository implements IDispatchRepository {
     }
 
     return `${prefix}${String(seq).padStart(4, '0')}`;
+  }
+
+  public async generateNextOutwardChallanNumber(tenantId: string): Promise<string> {
+    const now = new Date();
+    const yearMonth = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const prefix = `OC-${yearMonth}-`;
+    const domain = `OC_${yearMonth}`;
+
+    if (mongoose.connection.readyState === 1) {
+      try {
+        const counter = await CounterModel.findOneAndUpdate(
+          { tenantId, domain },
+          { $inc: { seq: 1 } },
+          { new: true, upsert: true, setDefaultsOnInsert: true }
+        ).exec();
+
+        if (counter && typeof counter.seq === 'number') {
+          return `${prefix}${String(counter.seq).padStart(4, '0')}`;
+        }
+      } catch {
+        // Fallback to query
+      }
+
+      try {
+        const latest: any = await DispatchConsignmentModel.findOne({
+          tenantId,
+          outwardChallanNumber: new RegExp(`^${prefix}`)
+        })
+          .sort({ outwardChallanNumber: -1 })
+          .lean();
+
+        let seq = 1;
+        if (latest && latest.outwardChallanNumber) {
+          const parts = latest.outwardChallanNumber.split('-');
+          const lastSeq = parseInt(parts[parts.length - 1], 10);
+          if (!isNaN(lastSeq)) seq = lastSeq + 1;
+        }
+
+        return `${prefix}${String(seq).padStart(4, '0')}`;
+      } catch {
+        return `${prefix}0001`;
+      }
+    }
+
+    return `${prefix}0001`;
   }
 }
 
