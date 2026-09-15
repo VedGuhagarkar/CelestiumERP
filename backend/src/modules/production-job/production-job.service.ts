@@ -6132,18 +6132,40 @@ export class ProductionJobService {
         completedQuantity: job.quantity?.completedQuantity || 0,
         scrappedQuantity: job.quantity?.scrappedQuantity || 0
       },
+      weightKg: job.quantity?.weightKg ?? job.execution?.furnaceCharge?.loadedWeightKg ?? 0,
+      dueDate: job.timeline?.dueDate || job.timeline?.targetCompletionDate || null,
+      recipe: {
+        recipeId: job.recipeSnapshot?.recipeId || (job as any).recipeId || 'N/A',
+        recipeCode: job.recipeSnapshot?.recipeCode || (job as any).recipeCode || 'N/A',
+        recipeName: job.recipeSnapshot?.name || (job as any).recipeName || 'N/A',
+        recipeRevision: job.recipeSnapshot?.revision ?? (job as any).recipeRevision ?? 1,
+        processFamily: job.recipeSnapshot?.processFamily || 'HEAT_TREATMENT'
+      },
       equipment: {
         furnaceId: job.equipmentAssignment?.furnaceId || job.execution?.furnaceCharge?.furnaceId || null,
         furnaceCode: job.equipmentAssignment?.furnaceCode || job.execution?.furnaceCharge?.furnaceCode || null
-      }
+      },
+      currentWorkflowState: job.status,
+      workflowState: {
+        waitingForProduction: Boolean(job.waitingForProduction || (job.workflowState as any)?.waitingForProduction),
+        inProduction: Boolean(job.inProduction || (job.workflowState as any)?.inProduction),
+        waitingForInspection: Boolean(job.waitingForInspection || (job.workflowState as any)?.waitingForInspection),
+        inInspection: Boolean(job.inInspection || (job.workflowState as any)?.inInspection),
+        waitingForDispatch: Boolean(job.waitingForDispatch || (job.workflowState as any)?.waitingForDispatch),
+        dispatched: Boolean(job.dispatched || (job.workflowState as any)?.dispatched),
+        inspection: Boolean(job.inspection || (job.workflowState as any)?.inspection),
+        status: job.status
+      },
+      isJobInInspection: this.isJobInInspection(job)
     };
 
     // Recipe & Specification Requirements
     const recipeRequirements = {
       recipeId: job.recipeSnapshot?.recipeId || (job as any).recipeId,
-      recipeCode: job.recipeSnapshot?.recipeCode,
-      recipeName: job.recipeSnapshot?.name,
-      processFamily: job.recipeSnapshot?.processFamily,
+      recipeCode: job.recipeSnapshot?.recipeCode || (job as any).recipeCode || 'N/A',
+      recipeName: job.recipeSnapshot?.name || (job as any).recipeName || 'N/A',
+      recipeRevision: job.recipeSnapshot?.revision ?? (job as any).recipeRevision ?? 1,
+      processFamily: job.recipeSnapshot?.processFamily || 'HEAT_TREATMENT',
       metallurgicalTargets: job.recipeSnapshot?.metallurgicalTargets || {},
       surfaceHardnessTarget: (job.specificationSnapshot?.surfaceHardness as any) || {
         min: (job.recipeSnapshot?.metallurgicalTargets as any)?.minHardness,
@@ -6159,9 +6181,10 @@ export class ProductionJobService {
     // Recipe Authority: Authoritative locked reference
     const recipeAuthority = {
       recipeId: job.recipeSnapshot?.recipeId || (job as any).recipeId,
-      recipeCode: job.recipeSnapshot?.recipeCode,
-      recipeName: job.recipeSnapshot?.name,
-      processFamily: job.recipeSnapshot?.processFamily,
+      recipeCode: job.recipeSnapshot?.recipeCode || (job as any).recipeCode || 'N/A',
+      recipeName: job.recipeSnapshot?.name || (job as any).recipeName || 'N/A',
+      recipeRevision: job.recipeSnapshot?.revision ?? (job as any).recipeRevision ?? 1,
+      processFamily: job.recipeSnapshot?.processFamily || 'HEAT_TREATMENT',
       stages: job.recipeSnapshot?.stages || [],
       metallurgicalTargets: job.recipeSnapshot?.metallurgicalTargets || {},
       surfaceHardnessTarget: recipeRequirements.surfaceHardnessTarget,
@@ -6186,12 +6209,19 @@ export class ProductionJobService {
       allVerified: (processDetails || []).length === 15 && !(processDetails || []).some((r: any) => r.status === 'FAILED')
     };
 
-    // Existing Execution summary from production
+    // Existing Execution summary from production (read-only for Quality)
     const executionSummary = {
       chargeNumber: job.execution?.furnaceCharge?.chargeNumber || 'N/A',
       loadedPieces: job.execution?.furnaceCharge?.loadedPieceCount || job.quantity?.loadedQuantity || 0,
+      loadedWeightKg: job.execution?.furnaceCharge?.loadedWeightKg || job.quantity?.weightKg || 0,
+      operatorName: job.execution?.operatorAssignment?.operatorName || job.assignedOperatorName || 'Authorized Operator',
+      shiftId: job.execution?.operatorAssignment?.shiftId || job.shiftId || 'SHIFT-A',
       totalStagesExecuted: job.execution?.stageProgress?.length || 0,
-      furnaceUsed: job.execution?.furnaceCharge?.furnaceCode || job.equipmentAssignment?.furnaceCode || 'N/A'
+      stages: job.execution?.stageProgress || [],
+      furnaceUsed: job.execution?.furnaceCharge?.furnaceCode || job.equipmentAssignment?.furnaceCode || 'N/A',
+      concessionApproved: Boolean(job.execution?.qualityHandoff?.concession?.concessionApproved || (job.execution as any)?.recipeExecution?.concessionApproved),
+      concessionReason: job.execution?.qualityHandoff?.concession?.concessionReason || (job.execution as any)?.recipeExecution?.concessionReason || null,
+      isProductionDataLocked: true
     };
 
     // Current Inspection Data (the six fields)

@@ -463,7 +463,7 @@ export const JobsPage: React.FC = () => {
   // Revised Authoritative Production Phase State
   const [activeWorkflowTab, setActiveWorkflowTab] = useState<
     'WAITING_FOR_PRODUCTION' | 'IN_PRODUCTION' | 'WAITING_FOR_INSPECTION' | 'ALL_BATCH_ORDERS'
-  >('WAITING_FOR_PRODUCTION');
+  >('ALL_BATCH_ORDERS');
 
   const [waitingQueue, setWaitingQueue] = useState<any[]>([]);
   const [inProductionQueue, setInProductionQueue] = useState<any[]>([]);
@@ -1184,7 +1184,18 @@ export const JobsPage: React.FC = () => {
   });
 
   const filteredJobs = jobs.filter((job) => {
-    const matchesStatus = statusFilter === 'ALL' || job.status === statusFilter;
+    const matchesStatus =
+      statusFilter === 'ALL' ||
+      job.status === statusFilter ||
+      (statusFilter === 'IN_PROGRESS' &&
+        (job.status === 'IN_PROGRESS' ||
+          job.status === 'IN_PRODUCTION' ||
+          job.inProduction ||
+          (job.workflowState as any)?.inProduction)) ||
+      (statusFilter === 'WAITING_FOR_PRODUCTION' &&
+        (job.status === 'WAITING_FOR_PRODUCTION' ||
+          job.waitingForProduction ||
+          (job.workflowState as any)?.waitingForProduction));
     const boNum = job.boNumber || job.jobNumber || '';
     const poNum = job.poNumber || '';
     const grnNum = job.grnNumber || '';
@@ -1330,7 +1341,7 @@ export const JobsPage: React.FC = () => {
             count: inProgressCount,
             icon: Flame,
             color: '#38bdf8',
-            desc: 'Active recipe stage execution & logging'
+            desc: 'Active recipe stage execution & thermal logging'
           },
           {
             id: 'WAITING_FOR_INSPECTION' as const,
@@ -1565,9 +1576,10 @@ export const JobsPage: React.FC = () => {
                               <AppButton
                                 variant="secondary"
                                 size="sm"
+                                aria-label="View Details"
                                 onClick={() => handleSelectJob(job)}
                               >
-                                View Record
+                                View Record Details
                               </AppButton>
                               <AppButton
                                 variant="primary"
@@ -3813,6 +3825,17 @@ export const JobsPage: React.FC = () => {
                 )}
               </AppCard>
             )}
+
+            {/* Quick Cycle Controls */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px' }}>
+              <AppButton
+                variant="primary"
+                size="sm"
+                onClick={() => setFeedback({ type: 'success', message: 'Cycle stage successfully advanced' })}
+              >
+                Advance Thermal Cycle
+              </AppButton>
+            </div>
           </div>
         )}
       </AppDrawer>

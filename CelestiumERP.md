@@ -2033,22 +2033,56 @@ The frontend is built with React 19, Redux Toolkit, React Router 7, and a custom
     - **"Take for Inspection" Confirmation Modal (`AppDialog`):** Captures inspector claim notes, validates single-winner concurrency, and atomically transitions the BO from `waitingForInspection` $\rightarrow$ `inInspection`.
     - **Real-Time Concurrency Collision & Queue Refresh:** If two inspectors attempt to claim the same BO simultaneously, exactly one succeeds; the second receives an explicit `409 Conflict` alert notification and the UI automatically re-fetches server queue state.
     - **Server-Side Access Control Alert:** Displays access denied alert if unauthorized users (e.g. operators or coordinators lacking inspection permissions) attempt queue or take access.
-  - **Tab 2: In-Inspection Active Workbench & 6 Mandatory Heat-Treatment Fields:**
-    - Dedicated full-featured inspection workbench for batch orders actively undergoing evaluation:
-      - **Authoritative Lineage Header Context:** BO identity (`boNumber`, `jobNumber`), PO lineage, GRN lineage, Part specs (`itemCode`, `itemName`, `materialGrade`), target and completed quantities, and bound Recipe code/revision badge (`REV ${revisionNumber}`).
-      - **Recipe Specification Target Card:** Read-only master specification limits for surface hardness, core hardness, and case depth targets for immediate visual comparison.
-      - **The Six Mandatory Heat-Treatment Inspection Fields Editor:**
-        1. *Furnace / Equipment Identification:* Selects and verifies operating furnace (`furnaceCode`, `furnaceId`) against production charge logs.
-        2. *Hardness Specification:* Configures hardness limits (`minHardness`, `maxHardness`) and scale (`HRC`, `HBW`, `HV`, `HRB`).
-        3. *Actual Hardness Readings:* Records multi-point hardness readings with point identifiers and locations (`testPoints`), computes measured average, and evaluates compliance flag (`isHardnessCompliant`).
-        4. *Case Depth Evaluation:* Records Effective Case Depth (`effectiveCaseDepthMm`), Total Case Depth (`totalCaseDepthMm`), test method (`MICROHARDNESS_TRAVERSE`, `MACRO_ETCH`), and compliance verification (`isCaseDepthCompliant`).
+  - **Tab 2: In-Inspection Active Workbench & Authoritative Inspection Record View (`InspectionWorkbench.tsx`, Prompt 8 Implementation):**
+    - Features the authoritative `<InspectionWorkbench />` component (`frontend/src/components/inspection/InspectionWorkbench.tsx`) providing an integrated single-workspace heat-treatment inspection terminal:
+      - **1. 10-Point Authoritative BO Context Header:**
+        1. *BO Identity:* Batch Order number (`boNumber`) and internal Job Number (`jobNumber`).
+        2. *PO Lineage:* Customer Purchase Order reference (`poNumber`) and Customer Name (`customerName`).
+        3. *GRN Lineage:* Raw material Goods Receipt Note (`grnNumber`) and raw material heat/lot number (`heatLotNumber`).
+        4. *Part Specifications:* Part code (`itemCode`), part description (`itemName`), and material grade (`materialGrade`).
+        5. *Quantity:* Total target/allocated piece count (`targetQuantity` or `completedQuantity`).
+        6. *Weight:* Net charge weight in kilograms (`weightKg` or `loadedWeightKg`).
+        7. *Due Date:* Contractual delivery deadline (`dueDate`) with visual overdue indicators.
+        8. *Governing Recipe:* Pinned master recipe reference (`recipeCode`, `recipeName`).
+        9. *Recipe Revision:* Pinned recipe revision badge (`REV ${recipeRevision}`).
+        10. *Current Workflow State:* Real-time workflow state pill with status dot (`inInspection`, `waitingForProduction`, `inProduction`, `waitingForDispatch`, `inspection`).
+      - **2. Production Information Panel (Strictly Read-Only & Permanently Locked):**
+        - Surfaces authoritative furnace run telemetry required for quality evaluation: operating furnace code (`assignedFurnaceCode`), charge/load number (`chargeNumber`), assigned furnace operator (`assignedOperatorName`), active shift ID (`shiftId`), loaded pieces (`loadedQuantity`), loaded weight (`weightKg`), executed thermal stages, and concession warnings (`concessionApproved`, `concessionReason`).
+        - **Immutability Protection:** Production information is strictly read-only (`isProductionDataLocked: true`). The workbench permanently prevents the inspector from altering or rewriting historical production data.
+      - **3. Recipe Requirements vs Actual Inspection Results (Dual Grid):**
+        - Strictly distinguishes required process specifications from actual measured inspection results:
+          - *Required Specification Limits:* Hardness specification range $[H_{\min}, H_{\max}]$ (e.g. 58–62 HRC), core hardness limits, and Effective Case Depth range $[C_{\min}, C_{\max}]$ (e.g. 0.8–1.2 mm).
+          - *Actual Measured Results:* Average measured hardness across test points with real-time compliance badge (`COMPLIANT` / `OUT OF SPEC`), and measured effective case depth ($C_{\text{actual}}$) with tolerance conformance badge.
+      - **4. The Six Mandatory Heat-Treatment Inspection Fields:**
+        1. *Furnace / Equipment Identification:* Selects and verifies operating furnace (`furnaceCode`, `furnaceId`) against production charge records and equipment master.
+        2. *Hardness Specification Limits:* Minimum hardness (`minHardness`), maximum hardness (`maxHardness`), and scale (`HRC`, `HBW`, `HV`, `HRB`).
+        3. *Actual Hardness Multi-Point Traverse:* Multi-point readings with point identifiers ($P_1, P_2, \dots$), locations (Surface, Sub-surface, Mid-radius, Core), dynamic point addition/removal, auto-computed arithmetic average (`measuredAverage`), and compliance evaluation (`isHardnessCompliant`).
+        4. *Case Depth Evaluation:* Effective Case Depth (`effectiveCaseDepthMm`), Total Case Depth (`totalCaseDepthMm`), test method (`MICROHARDNESS_TRAVERSE`, `MACRO_ETCH`), and compliance verification (`isCaseDepthCompliant`).
         5. *Quantity Received:* Verified received piece count ($Q_{\text{received}} > 0$).
-        6. *Quantity Delivered & Scrapped Balance:* Delivered piece count ($0 < Q_{\text{delivered}} \le Q_{\text{received}}$) with automatic real-time calculation of rejected/quarantined quantity ($Q_{\text{rejected}} = Q_{\text{received}} - Q_{\text{delivered}}$).
-      - **Additional Metallurgical Evaluations:** Microstructure observation (ASTM grain size, martensite structure, retained austenite), visual inspection checks, and concession sign-off notes.
-      - **Actions:**
-        - "Save Progress" (`POST /api/v1/production-jobs/:id/inspection-data`): Persists intermediate readings without state mutation.
-        - "Approve & Stage for Dispatch" (`POST /api/v1/production-jobs/:id/approve-inspection`): Validates all 6 mandatory fields, transitions BO to `waitingForDispatch = true`, and emits `Job.InspectionApproved`.
-        - "Fail / Quarantine" (`POST /api/v1/production-jobs/:id/fail-inspection`): Launches rejection dialog, captures defect category (Hardness Out of Spec, Decarb Excursion, Cracking/Distortion, Visual Defect) and mandatory rejection reason, transitions BO to quarantine state `inspection = true`, and emits `Job.InspectionFailed`.
+        6. *Quantity Delivered & Scrapped Balance:* Verified delivered piece count ($0 < Q_{\text{delivered}} \le Q_{\text{received}}$) with automatic real-time balance calculation ($Q_{\text{rejected}} = Q_{\text{received}} - Q_{\text{delivered}}$). Delivered quantity cannot exceed received quantity.
+      - **5. 15-Position Sequential Process Table & Individual Row Verification:**
+        - Interactive 15-position process details grid displaying sequential positions (1..15), test locations, target specifications, and actual measurements.
+        - **Individual Row Verification (`verify-process-row`):** Each row features an individual "Verify Row" action triggering `POST /api/v1/production-jobs/:id/verify-process-row`, validating measured hardness against metallurgical targets, stamping compliance (`PASSED` or `FAILED`), and marking `isCompliant`.
+        - Any out-of-spec or failed process row immediately flags the entire BO as non-compliant and strictly blocks subsequent dispatch approval.
+      - **6. 7-Point Live Validation Checklist & Approval Gating:**
+        - Dynamically evaluates and displays seven pass/fail gating criteria:
+          1. *Furnace & Equipment Master Validated*
+          2. *Hardness Bounds Valid ($H_{\max} \ge H_{\min}$)*
+          3. *Measured Hardness Conforming ($H_{\min} \le H_{\text{actual}} \le H_{\max}$)*
+          4. *Effective Case Depth Conforming ($C_{\min} \le C_{\text{actual}} \le C_{\max}$)*
+          5. *Quantity Received Verified ($Q_{\text{received}} > 0$)*
+          6. *Quantity Delivered Valid ($0 < Q_{\text{delivered}} \le Q_{\text{received}}$)*
+          7. *15-Position Process Table Verified with Zero Non-Conformances*
+        - The primary "Approve for Dispatch" action is strictly disabled until all 7 validation criteria pass.
+      - **7. Authoritative Quality Actions & Modals:**
+        - *"Save Progress"* (`POST /api/v1/production-jobs/:id/inspection-data`): Incremental saving of partial readings without mutating workflow state.
+        - *"Approve for Dispatch"* (`POST /api/v1/production-jobs/:id/approve-inspection`): Explicit separate action with confirmation modal (`AppDialog`), transitioning BO to `WAITING_FOR_DISPATCH` (`waitingForDispatch = true`), clearing active inspection flags, and emitting `DomainEvents.JOB_INSPECTION_APPROVED`.
+        - *"Fail Inspection / Quarantine"* (`POST /api/v1/production-jobs/:id/fail-inspection`): Explicit separate failure action with confirmation modal (`AppDialog`), capturing mandatory defect category and non-empty rejection reason, atomically transitioning BO to quarantined `INSPECTION` (`inspection = true`), and emitting `DomainEvents.JOB_INSPECTION_FAILED`.
+      - **8. State Awareness & Immutable Historical Lock:**
+        - When the Batch Order is NOT in active inspection (`inInspection !== true`, e.g. when viewing historical, awaiting inspection, or dispatched jobs):
+          - A prominent Apple HIG warning banner is rendered: `🔒 Read-Only Mode: Batch Order is not in active inspection. All modification controls are permanently disabled.`
+          - All input fields, select dropdowns, test point additions, row verification buttons, save progress, approve, and quarantine buttons are strictly disabled.
+          - Mutation controls are active ONLY when `isJobInInspection === true`.
   - **Tab 3: Waiting for Dispatch Queue (Strict Read-Only Staging):**
     - Displays batch orders that have passed heat-treatment inspection and are staged awaiting outbound logistics dispatch (`waitingForDispatch: true`).
     - Surfaces inspected piece counts, conforming hardness averages, verified case depth, and inspector approval stamps.
@@ -2172,6 +2206,21 @@ The frontend features a cohesive, bespoke Apple Human Interface Guidelines (HIG)
 | **States** | `EmptyState.tsx` | Illustrative empty container with icon, message, and call to action. | Shown when tables or filter queries return zero results. |
 | **Surfaces** | `AppCard.tsx` | Squircle container card with glass, elevated, and outlined variants. | Form containers, dashboard KPI cards, summary widgets. |
 | **Surfaces** | `AppDrawer.tsx` | Slide-over side sheet with backdrop blur and spring slide animation. | Deep detail inspection without navigating away from tables. |
+
+#### Dedicated Domain Workbenches & Feature Components (`frontend/src/components/`)
+
+- **`InspectionWorkbench.tsx` (`frontend/src/components/inspection/InspectionWorkbench.tsx`, 24.8 KB):**
+  - **Role:** The authoritative single-workspace Heat-Treatment Quality Inspection Terminal.
+  - **Design System Integration:** Implements Apple HIG dark glassmorphic styling (`rgba(255, 255, 255, 0.03)` with `backdrop-filter: blur(16px)`), tactile hover states, and WCAG AA compliant contrast colors.
+  - **Core Sub-Panels:**
+    1. *10-Point BO Context Header:* Dynamic pill display of BO, PO, GRN, Part, Quantity, Weight, Due Date, Recipe, Revision, and Current Workflow State.
+    2. *Read-Only Production Run Information:* Operating furnace, charge/load number, operator, shift, pieces, weight, stages, and concession warnings; strictly locked against modification.
+    3. *Recipe Specification vs Actuals Dual Display:* Side-by-side contrast of required specifications ($[H_{\min}, H_{\max}]$, case depth $[C_{\min}, C_{\max}]$) and actual measurements.
+    4. *The Six Mandatory Heat-Treatment Fields:* Furnace verification, hardness spec, actual hardness with multi-point test traverse, case depth evaluation, quantity received, and quantity delivered with auto-calculated scrap/rejected balance.
+    5. *15-Position Sequential Process Table:* Multi-row test table with per-row "Verify Row" action triggering `POST /api/v1/production-jobs/:id/verify-process-row`.
+    6. *7-Point Live Validation Checklist:* Interactive status checklist gating the "Approve for Dispatch" button.
+    7. *Quality Action Modals (`AppDialog`):* "Approve for Dispatch" (`WAITING_FOR_DISPATCH`) and "Fail Inspection / Quarantine" (`INSPECTION`).
+    8. *State Awareness Lockout Banner:* Prominent warning banner disabling all mutation controls when the BO is outside active `inInspection`.
 
 ---
 
@@ -2489,11 +2538,29 @@ $$\mathbf{Production\ Completion} \longrightarrow \mathbf{Waiting\ for\ Inspecti
    - **Completeness Gating:** The BO is strictly prohibited from approval for Dispatch while any of the six required inspection fields is missing or invalid.
    - **Planned vs Actual Separation:** The system preserves the strict distinction between required specification (Recipe/process target range) and actual measured result. Requirements are never overwritten with actual inspection values.
 
-5. **Intermediate Progress Persistence (`POST /:id/inspection-data`):**
+5. **15-Position Sequential Process Table & Row Verification (`POST /:id/verify-process-row`):**
+   - The inspection engine features a dedicated 15-position sequential process verification grid mapping each critical metallurgical test location across the heat-treated lot.
+   - **Individual Row Verification Endpoint:** Inspectors verify individual positions via `POST /api/v1/production-jobs/:id/verify-process-row`, providing `serialNumber` (1..15), `actualHardness`, `testLocation`, and optional inspector notes.
+   - **Metallurgical Tolerance Checking:** The backend compares `actualHardness` against the governing specification $[H_{\min}, H_{\max}]$. If within tolerance, sets `status: 'PASSED'` and `isCompliant: true`. If out-of-tolerance, sets `status: 'FAILED'` and `isCompliant: false`.
+   - **Dispatch Approval Gating:** Any row with status `FAILED` or unverified state strictly blocks approval for dispatch release (`400 Bad Request`).
+   - **Silent Pass Prevention:** Attempting to force an out-of-range hardness value as conforming is rejected server-side.
+
+6. **7-Point Live Validation Checklist & Approval Gating:**
+   - Both backend and frontend enforce a comprehensive 7-point quality checklist before an active BO can be released to dispatch:
+     1. *Furnace & Equipment Master Validated:* Must match active furnace charge telemetry or equipment master registry.
+     2. *Hardness Bounds Valid:* Configured limits must satisfy $H_{\max} \ge H_{\min} \ge 0$.
+     3. *Measured Hardness Conforming:* Verified average hardness must satisfy $H_{\min} \le H_{\text{actual}} \le H_{\max}$.
+     4. *Effective Case Depth Conforming:* Measured case depth must satisfy $C_{\min} \le C_{\text{actual}} \le C_{\max}$.
+     5. *Quantity Received Verified:* Received piece count must be strictly positive ($Q_{\text{received}} > 0$).
+     6. *Quantity Delivered Valid:* Delivered count must satisfy $0 < Q_{\text{delivered}} \le Q_{\text{received}}$.
+     7. *15-Position Process Table Verified:* All positions verified with zero non-conforming rows.
+   - The primary "Approve for Dispatch" action is disabled until all 7 criteria are green.
+
+7. **Intermediate Progress Persistence (`POST /:id/inspection-data`):**
    - Inspectors can record partial laboratory test readings (e.g. initial surface hardness or partial traverse points) incrementally via `POST /api/v1/production-jobs/:id/inspection-data`.
    - Persists intermediate test values without advancing the workflow state, keeping `inInspection = true`.
 
-6. **Conforming Approval & Dispatch Staging (`in inspection` $\longrightarrow$ `waiting for dispatch`):**
+8. **Conforming Approval & Dispatch Staging (`in inspection` $\longrightarrow$ `waiting for dispatch`):**
    - Upon satisfying all Six Mandatory Fields and compliance verifications, the inspector submits approval via `POST /api/v1/production-jobs/:id/approve-inspection` (or `POST /api/v1/quality-inspections/:id/approve-dispatch`).
    - **Atomic State Mutation:**
      - Sets `workflowState.inInspection = false`.
@@ -2506,7 +2573,7 @@ $$\mathbf{Production\ Completion} \longrightarrow \mathbf{Waiting\ for\ Inspecti
      - Approval strictly places the BO into the `waitingForDispatch` staging queue (`GET /api/v1/production-jobs/waiting-for-dispatch`).
      - Physical consignment packaging, carrier assignment, gate clearance, and final delivery transition (`dispatched = true`) are exclusively owned and executed by the Outbound Dispatch Phase (`modules/dispatch`).
 
-7. **Non-Conformance, Rejection & Quarantine (`in inspection` $\longrightarrow$ `inspection`):**
+9. **Non-Conformance, Rejection & Quarantine (`in inspection` $\longrightarrow$ `inspection`):**
    - If test readings indicate metallurgical failure (e.g., hardness out of tolerance, decarburization excursion, quench cracks), the inspector rejects the BO via `POST /api/v1/production-jobs/:id/fail-inspection`.
    - **Rejection Validation:** Requires mandatory `defectCategory` (Hardness Out of Spec, Decarb Excursion, Cracking/Distortion, Visual Defect) and non-empty `rejectionReason`.
    - **Atomic Quarantine Transition:**
@@ -3200,4 +3267,15 @@ The codebase features comprehensive test suites validating layer boundaries, dat
   - Apple HIG component primitives (accessible buttons, inputs, dialogs, badges, drawers, tabs).
 - `services/apiClient.test.ts` (4 tests):
   - Single-flight token refresh mutex, authorization header injection, and 401 retry loops.
+- `inspection-workbench.test.tsx` (10 tests — Prompt 8: Build the Inspection Workbench and Record View):
+  - Invariant 1 (Authoritative BO Context Header): Renders all 10 context dimensions (BO, PO, GRN, Part, Quantity, Weight, Due Date, Recipe, Revision, Workflow State).
+  - Invariant 2 (Production Information Display & Locked Immutability): Renders operating furnace, charge number, operator, shift, pieces, weight, stages, and concession warnings; asserts production information is permanently read-only and locked against rewriting history.
+  - Invariant 3 (Recipe Requirements vs Actuals Distinction): Clearly distinguishes required specifications ($[H_{\min}, H_{\max}]$, case depth $[C_{\min}, C_{\max}]$) from actual measured results with real-time compliance indicators.
+  - Invariant 4 (The Six Mandatory Heat-Treatment Fields): Renders furnace equipment, hardness specification limits, actual hardness test points with multi-point traverse and dynamic additions, case depth evaluation, quantity received, and quantity delivered with auto-calculated scrap/rejected balance.
+  - Invariant 5 (15-Position Process Table Verification): Displays 15-position sequential table and verifies per-row verification action (`POST /api/v1/production-jobs/:id/verify-process-row`).
+  - Invariant 6 (Live Validation Checklist & Approval Gating): Evaluates 7-point validation checklist and gates/disables "Approve for Dispatch" button while validation is incomplete.
+  - Invariant 7 (Separate Authoritative Dispatch Approval Action): Executes explicit "Approve for Dispatch" dialog action triggering approval API and staging into `WAITING_FOR_DISPATCH`.
+  - Invariant 8 (Separate Authoritative Failure & Quarantine Action): Executes explicit "Fail Inspection / Quarantine" dialog action capturing defect category and non-empty rejection reason, triggering quarantine into `INSPECTION`.
+  - Invariant 9 (State-Aware Read-Only Lockout Protection): When BO is outside active `inInspection` (e.g. `WAITING_FOR_INSPECTION`, `WAITING_FOR_DISPATCH`, `INSPECTION`), renders read-only warning banner and permanently disables all mutation controls.
+  - Invariant 10 (Conflicting Interface Cleanup & Integrated Workflow): Verifies the unified flow $\text{BO} \longrightarrow \text{Recipe} \longrightarrow \text{Production Result} \longrightarrow \text{Inspection} \longrightarrow \text{Dispatch Eligibility}$ cleanly embedded within QualityPage Tab 2.
 
