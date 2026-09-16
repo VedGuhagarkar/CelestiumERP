@@ -1497,8 +1497,37 @@ export async function seedSampleDatabase() {
           completedQuantity: 300,
           scrappedQuantity: 0
         },
-        status: 'COMPLETED',
+        poId: purchaseOrders[0]._id.toString(),
+        poNumber: purchaseOrders[0].poNumber,
+        grnId: grns[0]._id.toString(),
+        grnNumber: grns[0].grnNumber,
+        boNumber: 'BO-202608-0008',
+        batchOrderNumber: 'BO-202608-0008',
+        outwardChallanNumber: 'OC-202608-0001',
+        status: 'DISPATCHED',
         priority: 'NORMAL',
+        waitingForProduction: false,
+        inProduction: false,
+        waitingForInspection: false,
+        inInspection: false,
+        waitingForDispatch: false,
+        dispatched: true,
+        inspection: false,
+        workflowState: {
+          waitingForProduction: false,
+          inProduction: false,
+          waitingForInspection: false,
+          inInspection: false,
+          waitingForDispatch: false,
+          dispatched: true,
+          inspection: false
+        },
+        dispatchedAt: new Date(Date.now() - 5 * 3600000),
+        dispatchedBy: {
+          userId: users[0]._id.toString(),
+          email: users[0].email,
+          role: 'ADMIN'
+        },
         recipeSnapshot: {
           recipeId: recipes[1]._id.toString(),
           recipeCode: recipes[1].recipeCode,
@@ -1572,6 +1601,97 @@ export async function seedSampleDatabase() {
           targetCompletionDate: new Date(Date.now() - 8 * 3600000),
           actualStartDate: new Date(Date.now() - 18 * 3600000),
           actualCompletionDate: new Date(Date.now() - 8 * 3600000)
+        }
+      },
+      {
+        tenantId: TENANT_ID,
+        jobNumber: 'JOB-202608-0012',
+        boNumber: 'BO-202608-0012',
+        batchOrderNumber: 'BO-202608-0012',
+        poId: purchaseOrders[0]._id.toString(),
+        poNumber: purchaseOrders[0].poNumber,
+        grnId: grns[0]._id.toString(),
+        grnNumber: grns[0].grnNumber,
+        customer: {
+          customerId: customers[0]._id.toString(),
+          customerCode: customers[0].customerCode,
+          customerName: customers[0].companyName
+        },
+        item: {
+          itemId: items[3]._id.toString(),
+          itemCode: items[3].itemCode,
+          itemName: items[3].name,
+          materialGrade: items[3].materialGrade,
+          uom: items[3].uom
+        },
+        quantity: {
+          targetQuantity: 150,
+          loadedQuantity: 150,
+          completedQuantity: 150,
+          scrappedQuantity: 0
+        },
+        status: 'WAITING_FOR_DISPATCH',
+        priority: 'HIGH',
+        waitingForProduction: false,
+        inProduction: false,
+        waitingForInspection: false,
+        inInspection: false,
+        waitingForDispatch: true,
+        dispatched: false,
+        inspection: false,
+        workflowState: {
+          waitingForProduction: false,
+          inProduction: false,
+          waitingForInspection: false,
+          inInspection: false,
+          waitingForDispatch: true,
+          dispatched: false,
+          inspection: false
+        },
+        recipeSnapshot: {
+          recipeId: recipes[0]._id.toString(),
+          recipeCode: recipes[0].recipeCode,
+          revisionNumber: 1,
+          processFamily: recipes[0].processFamily,
+          name: recipes[0].name,
+          applicableMaterialGrades: ['AISI 4340'],
+          stages: recipes[0].stages,
+          metallurgicalTargets: recipes[0].metallurgicalTargets,
+          machineRequirements: recipes[0].machineRequirements
+        },
+        specificationSnapshot: {
+          specificationId: specifications[0]._id.toString(),
+          specCode: specifications[0].specCode,
+          revisionNumber: 1,
+          title: specifications[0].title,
+          customerCode: customers[0].customerCode,
+          surfaceHardness: specifications[0].surfaceHardness
+        },
+        execution: {
+          furnaceCharge: {
+            chargeNumber: 'CHG-202608-0012',
+            loadedWeightKg: 950,
+            loadedPieceCount: 150,
+            initialFurnaceTempC: 25,
+            startedAt: new Date(Date.now() - 10 * 3600000)
+          },
+          inspectionData: {
+            furnaceEquipment: machines[0].name,
+            furnaceCode: machines[0].machineCode,
+            hardnessSpecification: '58 - 62 HRC',
+            actualHardness: '60.5 HRC',
+            caseDepth: '1.02 mm',
+            quantityReceived: 150,
+            quantityDelivered: 150,
+            disposition: 'CONFORMING',
+            isApproved: true,
+            approvedAt: new Date(Date.now() - 2 * 3600000),
+            inspectedBy: {
+              userId: users[0]._id.toString(),
+              email: users[0].email,
+              role: 'ADMIN'
+            }
+          }
         }
       }
     ]);
@@ -1766,7 +1886,22 @@ export async function seedSampleDatabase() {
       {
         tenantId: TENANT_ID,
         dispatchNumber: 'DSP-202608-0001',
+        outwardChallanNumber: 'OC-202608-0001',
         deliveryChallanNumber: 'DC-2026-0881',
+        isOutwardChallan: true,
+        batchOrderId: jobs[2]._id.toString(),
+        hierarchy: {
+          poId: purchaseOrders[0]._id.toString(),
+          poNumber: purchaseOrders[0].poNumber,
+          grnId: grns[0]._id.toString(),
+          grnNumber: grns[0].grnNumber,
+          batchOrderId: jobs[2]._id.toString(),
+          batchOrderNumber: 'BO-202608-0008',
+          outwardChallanNumber: 'OC-202608-0001'
+        },
+        transporter: 'Swift Heavy Logistics Inc.',
+        vehicleNumber: 'MH-12-AB-9901',
+        dispatchDate: new Date(Date.now() - 5 * 3600000),
         status: 'DISPATCHED',
         customer: {
           customerId: customers[2]._id.toString(),
@@ -1776,6 +1911,53 @@ export async function seedSampleDatabase() {
           contactPerson: 'Gianni Romano',
           contactPhone: '+1-555-773-2001'
         },
+        items: [
+          {
+            serialNumber: 1,
+            partName: items[4].name,
+            partDescription: items[4].description || items[4].name,
+            partNumber: items[4].itemCode,
+            materialGrade: items[4].materialGrade,
+            heatTreatmentProcess: recipes[1].name,
+            batchLotNumber: heatLots[1].heatLotNumber,
+            quantity: 300,
+            unitOfMeasure: 'PCS'
+          }
+        ],
+        heatTreatment: {
+          furnaceEquipment: machines[0].name,
+          furnaceCode: machines[0].machineCode,
+          hardnessSpecification: '58 - 62 HRC',
+          actualHardness: '60.2 HRC',
+          caseDepth: '1.05 mm',
+          quantityReceived: 300,
+          quantityDelivered: 300
+        },
+        preparedBy: {
+          userId: users[0]._id.toString(),
+          name: 'System Admin',
+          username: users[0].username,
+          email: users[0].email,
+          role: 'ADMIN',
+          designation: 'Plant Supervisor',
+          preparedAt: new Date(Date.now() - 6 * 3600000)
+        },
+        authorizedSignatory: {
+          userId: users[0]._id.toString(),
+          name: 'System Admin',
+          username: users[0].username,
+          email: users[0].email,
+          role: 'ADMIN',
+          designation: 'Plant Manager',
+          authorizedAt: new Date(Date.now() - 5.5 * 3600000),
+          signatureRef: 'SIG-ADMIN-01'
+        },
+        dispatchedBy: {
+          userId: users[0]._id.toString(),
+          email: users[0].email,
+          role: 'ADMIN'
+        },
+        dispatchedAt: new Date(Date.now() - 5 * 3600000),
         lines: [
           {
             lineId: 'LINE-01',

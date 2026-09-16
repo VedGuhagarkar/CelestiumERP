@@ -756,11 +756,17 @@ export class DispatchService extends BaseService {
       );
     }
 
-    const targetSignatoryId = dto.authorizedSignatoryId || dto.signatoryUserId || actor.userId;
+    const targetSignatoryId =
+      dto.authorizedSignatoryId ||
+      dto.signatoryUserId ||
+      (dto as any).authorizedSignatory?.userId ||
+      (dto as any).authorizedSignatory?.id ||
+      actor.userId;
+    const signatureRef = dto.signatureRef || (dto as any).authorizedSignatory?.signatureRef;
     const resolvedSignatory = await this.validateAndResolveSignatory(
       tenantId,
       targetSignatoryId,
-      dto.signatureRef,
+      signatureRef,
       actor
     );
 
@@ -877,9 +883,15 @@ export class DispatchService extends BaseService {
       userPermissions.includes('dispatch:delivery:dispatch');
 
     if (!isDispatchRole && !hasDispatchPermission) {
-      const permitted = await this.rbacServiceInstance
-        .userHasPermission(tenantId, actor.userId, PERMISSIONS.DISPATCH_DELIVERY_DISPATCH)
-        .catch(() => false);
+      const effectivePerms = await this.rbacServiceInstance
+        .getUserEffectivePermissions(tenantId, actor.userId, actor.role ? [actor.role] : [])
+        .catch(() => null);
+      const perms = effectivePerms?.permissions || [];
+      const permitted =
+        perms.includes(PERMISSIONS.DISPATCH_DELIVERY_DISPATCH) ||
+        perms.includes(PERMISSIONS.DISPATCH_PASS_GENERATE) ||
+        perms.includes('dispatch:manage') ||
+        perms.includes('dispatch:delivery:dispatch');
       if (!permitted) {
         throw new ForbiddenError(
           'Unauthorized: User lacks required dispatch permission to perform final physical dispatch operation.'
@@ -2050,7 +2062,9 @@ export class DispatchService extends BaseService {
 
     return {
       outwardChallan: consignment,
-      htmlReport
+      htmlReport,
+      htmlDocument: htmlReport,
+      printCount: consignment.printCount
     };
   }
 
@@ -2348,6 +2362,7 @@ export class DispatchService extends BaseService {
       // * quantity delivered.
       // All are required in the OC.
       const furnaceEquipment =
+        (job.execution as any)?.inspectionData?.furnaceEquipment ||
         (job.execution as any)?.inspectionData?.furnaceCode ||
         (job.execution as any)?.inspectionData?.equipment?.furnaceCode ||
         (job.execution as any)?.equipmentAssignment?.furnaceCode ||
@@ -2357,7 +2372,9 @@ export class DispatchService extends BaseService {
         (((job.execution as any)?.inspectionData as any)?.cocNumber ? 'FURNACE-IPSEN-01' : null);
 
       let hardnessSpecification: string | null = null;
-      if (job.execution?.inspectionData?.hardnessSpecification) {
+      if (typeof (job.execution as any)?.inspectionData?.hardnessSpecification === 'string') {
+        hardnessSpecification = (job.execution as any).inspectionData.hardnessSpecification;
+      } else if (job.execution?.inspectionData?.hardnessSpecification) {
         const spec = job.execution.inspectionData.hardnessSpecification;
         hardnessSpecification = `${spec.minHardness}-${spec.maxHardness} ${spec.scale || 'HRC'}`;
       } else if (job.execution?.inspectionData?.minHardness != null && job.execution?.inspectionData?.maxHardness != null) {
@@ -2374,7 +2391,9 @@ export class DispatchService extends BaseService {
       }
 
       let actualHardness: string | null = null;
-      if (job.execution?.inspectionData?.actualHardness?.measuredAverage != null) {
+      if (typeof (job.execution as any)?.inspectionData?.actualHardness === 'string') {
+        actualHardness = (job.execution as any).inspectionData.actualHardness;
+      } else if (job.execution?.inspectionData?.actualHardness?.measuredAverage != null) {
         actualHardness = `${job.execution.inspectionData.actualHardness.measuredAverage} ${job.execution.inspectionData.actualHardness.scale || 'HRC'}`;
       } else if (job.execution?.inspectionData?.measuredAverage != null) {
         actualHardness = `${job.execution.inspectionData.measuredAverage} ${job.execution.inspectionData.scale || 'HRC'}`;
@@ -2383,7 +2402,9 @@ export class DispatchService extends BaseService {
       }
 
       let caseDepth: string | null = null;
-      if (job.execution?.inspectionData?.caseDepth?.effectiveCaseDepthMm != null) {
+      if (typeof (job.execution as any)?.inspectionData?.caseDepth === 'string') {
+        caseDepth = (job.execution as any).inspectionData.caseDepth;
+      } else if (job.execution?.inspectionData?.caseDepth?.effectiveCaseDepthMm != null) {
         caseDepth = `${job.execution.inspectionData.caseDepth.effectiveCaseDepthMm} mm`;
       } else if (job.execution?.inspectionData?.effectiveCaseDepthMm != null) {
         caseDepth = `${job.execution.inspectionData.effectiveCaseDepthMm} mm`;
@@ -2424,13 +2445,16 @@ export class DispatchService extends BaseService {
         furnaceId: (job.execution?.inspectionData as any)?.furnaceId || undefined,
         furnaceCode: furnaceEquipment!,
         hardnessSpecification: hardnessSpecification!,
-        hardnessSpecificationDetails: job.execution?.inspectionData?.hardnessSpecification
-          ? {
-              minHardness: job.execution.inspectionData.hardnessSpecification.minHardness,
-              maxHardness: job.execution.inspectionData.hardnessSpecification.maxHardness,
-              scale: job.execution.inspectionData.hardnessSpecification.scale
-            }
-          : undefined,
+        hardnessSpecificationDetails:
+          typeof (job.execution?.inspectionData as any)?.hardnessSpecification === 'object' &&
+          (job.execution?.inspectionData as any)?.hardnessSpecification !== null &&
+          (job.execution?.inspectionData as any)?.hardnessSpecification?.minHardness !== undefined
+            ? {
+                minHardness: (job.execution!.inspectionData as any).hardnessSpecification.minHardness,
+                maxHardness: (job.execution!.inspectionData as any).hardnessSpecification.maxHardness,
+                scale: (job.execution!.inspectionData as any).hardnessSpecification.scale
+              }
+            : undefined,
         actualHardness: actualHardness!,
         actualHardnessValue:
           (job.execution?.inspectionData as any)?.actualHardness?.measuredAverage ??

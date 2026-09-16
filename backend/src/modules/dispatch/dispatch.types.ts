@@ -285,6 +285,8 @@ export interface IDispatchConsignment {
 export interface IPrintableOutwardChallanResult {
   outwardChallan: IDispatchConsignment;
   htmlReport: string;
+  htmlDocument?: string;
+  printCount?: number;
 }
 
 export interface DispatchConsignmentDocument extends IDispatchConsignment, Document {}

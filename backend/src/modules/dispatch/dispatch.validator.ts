@@ -209,6 +209,13 @@ export const departDispatchSchema = z
 export const authorizeDispatchSchema = z.object({
   signatoryUserId: z.string().optional(),
   authorizedSignatoryId: z.string().optional(),
+  authorizedSignatory: z
+    .object({
+      userId: z.string().optional(),
+      id: z.string().optional(),
+      signatureRef: z.string().optional()
+    })
+    .optional(),
   signatureRef: z.string().optional(),
   designation: z.string().optional(),
   approvalNotes: z.string().optional(),

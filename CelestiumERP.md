@@ -95,7 +95,7 @@
    - 8.1 Database Seeding Engine (`backend/src/scripts/seed.ts`)
    - 8.2 Centralized Configuration Subsystem (`backend/src/config/`)
    - 8.3 Operational Runbooks & Technical Specifications (`docs/`)
-   - 8.4 Automated Test Suite Matrix (83 Backend Specs + Frontend Suites)
+   - 8.4 Automated Test Suite Matrix (84 Backend Specs + Frontend Suites)
      - *Prompt 8:* `production-operator-workspace.spec.ts`
      - *Prompt 9:* `production-security-concurrency.spec.ts`
      - *Prompt 10:* `production-e2e-integration.spec.ts`
@@ -113,6 +113,7 @@
      - *Dispatch Prompt 7:* `dispatch-authorization.spec.ts`
      - *Dispatch Prompt 8:* `dispatch-oc-view-print.spec.ts`
      - *Dispatch Prompt 9:* `dispatch-final-state-inventory.spec.ts`
+     - *Dispatch Prompt 10:* `dispatch-e2e-integration.spec.ts`
 
 ---
 
@@ -2727,6 +2728,12 @@ $$\mathbf{Production\ Completion} \longrightarrow \mathbf{Waiting\ for\ Inspecti
 
 ### 7.9 Outbound Dispatch & Gate Clearance Workflow
 
+The ERP enforces exactly one authoritative Dispatch workflow:
+$$\text{waiting for dispatch} \longrightarrow \text{Authorized Dispatch user} \longrightarrow \text{BO selected} \longrightarrow \text{OC created (derived from GRN and BO)} \longrightarrow \text{Transport information completed} \longrightarrow \text{Authorization completed} \longrightarrow \text{Physical dispatch} \longrightarrow \text{Inventory/storage updated} \longrightarrow \text{dispatched}$$
+
+This workflow forms the terminal stage of the continuous manufacturing genealogy:
+$$\text{PO} \longrightarrow \text{GRN} \longrightarrow \text{BO} \longrightarrow \text{Production} \longrightarrow \text{Inspection} \longrightarrow \text{waiting for dispatch} \longrightarrow \text{OC} \longrightarrow \text{Physical Dispatch} \longrightarrow \text{dispatched}$$
+
 1. **Authoritative Dispatch Queue Staging (`GET /api/v1/dispatches/queue`):** Dispatch coordinators view the dedicated dispatch queue displaying only Batch Orders where `waitingForDispatch = true` and quality inspection approval has been granted. Jobs in production, inspection, or failure quarantine are strictly excluded.
 2. **Authoritative Outward Challan (OC) Creation (`POST /api/v1/dispatches/outward-challan`):**
    - **Hierarchy Corroboration:** Generates an OC for exactly one eligible BO while strictly preserving $\text{PO} \longrightarrow \text{GRN} \longrightarrow \text{BO} \longrightarrow \text{OC}$.
@@ -3012,10 +3019,10 @@ The platform includes 8 authoritative engineering specifications and operational
 7. **`PHASE_1_CERTIFICATION_REPORT.md`:** Verification findings for core platform stability, data boundary enforcement, and error resilience.
 8. **`FACTORY_ACCEPTANCE_REPORT.md`:** End-to-end metallurgical workflow verification and compliance sign-off.
 
-### 8.4 Automated Test Suite Matrix (83 Backend Specs + Frontend Suites)
+### 8.4 Automated Test Suite Matrix (84 Backend Specs + Frontend Suites)
 
 The codebase features comprehensive test suites validating layer boundaries, data integrity, and business logic:
-- **Backend Test Summary:** **83 Test Suites, 1158 Tests Passed (0 Failures, 100% Pass Rate)**
+- **Backend Test Summary:** **84 Test Suites, 1182 Tests Passed (0 Failures, 100% Pass Rate)**
 - **Frontend Test Summary:** **5 Test Suites, 69 Tests Passed (0 Failures, 100% Pass Rate)**
 
 #### 1. Backend Architecture Governance
@@ -3581,6 +3588,26 @@ The codebase features comprehensive test suites validating layer boundaries, dat
   - Invariant 9: Strictly rejects duplicate physical dispatch attempts on an already-dispatched BO or consignment (`400 Bad Request`).
   - Invariant 10: Prevents concurrent race conditions via single-winner atomic locking (`jobRepo.atomicMarkDispatched`), rolling back inventory deductions and returning `409 Conflict`.
   - Invariant 11: Preserves unbroken historical $\text{PO} \longrightarrow \text{GRN} \longrightarrow \text{BO} \longrightarrow \text{OC} \longrightarrow \text{dispatched material}$ traceability lineage after physical dispatch.
+- `dispatch-e2e-integration.spec.ts` (24 tests — Prompt 10: Complete Dispatch Phase Integration, End-to-End Verification & Final Cleanup):
+  - Invariant 1 (21-Step Authoritative Lifecycle Execution): Executes complete unbroken 21-step workflow from `WAITING_FOR_DISPATCH` staging through authorized signatory resolution, transport completion, atomic physical gate dispatch, inventory deduction without deletion, and final `DISPATCHED` state transition ($\text{PO} \to \text{GRN} \to \text{BO} \to \text{Production} \to \text{Inspection} \to \text{waiting for dispatch} \to \text{OC} \to \text{Physical Dispatch} \to \text{dispatched}$).
+  - Invariant 2 (Strict Relationship & Hierarchy Gating): Strictly rejects attempts to create Outward Challans when BO does not belong to GRN (`grnId !== bo.grnId`) or when referenced GRN does not belong to PO (`poId !== grn.poId`), returning `400 Bad Request`.
+  - Invariant 3 (Workflow State Precondition Gating): Strictly rejects OC creation when Batch Order is not in `waitingForDispatch` state (`waitingForProduction`, `inProduction`, `waitingForInspection`, `inInspection`, or `inspection` quarantine), returning `400 Bad Request`.
+  - Invariant 4 (Corrupted State Rejection): Strictly rejects OC creation when Batch Order has corrupted or multiple active workflow flags ($\sum \text{flag}_i > 1$), returning `400 Bad Request`.
+  - Invariant 5 (Source-of-Truth Integrity & Client Override Prevention): Strictly ignores or rejects client attempts to override derived delivery details (customer code, name, address, GSTIN) or derived item specs, guaranteeing that all 8 item fields and 6 metallurgical parameters originate exclusively from authoritative GRN and BO records.
+  - Invariant 6 (Incomplete Inspection Data Protection): Strictly blocks Outward Challan creation when inspection data or metallurgical parameters are incomplete or missing, returning `400 Bad Request`.
+  - Invariant 7 (Granular RBAC Authorization Enforcement): Rejects unauthenticated requests with `401 Unauthorized`; rejects requests from unprivileged users, Production-only operators, and Inspection-only inspectors lacking `DISPATCH_DELIVERY_DISPATCH` or `DISPATCH_PASS_GENERATE` with `403 Forbidden`; permits authorized Dispatch Officers and Plant Managers.
+  - Invariant 8 (Dual-Tier Signatory Gating): Prevents physical dispatch of an Outward Challan without prior authorized signatory approval (`400 Bad Request`); permits physical dispatch once authorized by a verified signatory holding valid dispatch credentials.
+  - Invariant 9 (Mandatory Transport Logistics Validation): Enforces valid transporter name (min 2 chars), valid vehicle registration number (min 5 chars), valid dispatch date, and optional 12-digit E-Way Bill format; rejects empty, placeholder, or invalid strings with `400 Bad Request`.
+  - Invariant 10 (Single-Active Workflow State Invariant): Upon physical dispatch, guarantees $\text{waitingForDispatch} = \text{false}$, $\text{dispatched} = \text{true}$, and all other 5 workflow flags are strictly `false` ($\sum \text{flag}_i = 1$).
+  - Invariant 11 (Warehouse Inventory Removal & Non-Deletion): Atomically deducts dispatched quantity from warehouse Finished Goods available and reserved quantities, marks status `FULLY_DISPATCHED`, and appends outward dispatch transfer to `movementHistory` while guaranteeing the Finished Goods document is never deleted.
+  - Invariant 12 (Negative Inventory Prevention): Strictly rejects physical dispatch when warehouse finished goods stock is insufficient ($\text{availableQuantity} < \text{dispatchedQuantity}$), returning `400 Bad Request`.
+  - Invariant 13 (Quantity Mismatch Protection): Strictly rejects physical dispatch when dispatched quantity does not match the authoritative BO delivered quantity (`400 Bad Request`).
+  - Invariant 14 (Duplicate Dispatch Prevention): Strictly rejects physical dispatch attempts on already-dispatched consignments or Batch Orders with `400 Bad Request`.
+  - Invariant 15 (Single-Winner Atomic Concurrency on OC Creation): Concurrently competing OC creation requests on the same eligible BO resolve via atomic lock (`jobRepo.atomicLinkOutwardChallan`), guaranteeing exactly one winner and returning `409 Conflict` to the loser.
+  - Invariant 16 (Single-Winner Atomic Concurrency on Physical Dispatch): Concurrently competing physical dispatch requests resolve atomically via single-winner lock (`jobRepo.atomicMarkDispatched`), rolling back inventory deductions and returning `409 Conflict` to competing requests.
+  - Invariant 17 (Reliable Nadcap AC7102 Document Generation & Auditing): Renders authoritative print-ready Outward Challan HTML document with complete genealogical metadata, atomically increments `printCount`, updates `printedAt`/`printedBy`, and writes permanent `DISPATCH_OC_PRINTED` audit record.
+  - Invariant 18 (Historical Immutability & Read-Only Protection): Rejects direct API mutation (`PUT`, `PATCH`) or deletion (`DELETE`) of finalized dispatched Outward Challans with `400 Bad Request`.
+  - Invariant 19 (Cross-Phase Boundary Preservation): Preserves clean architectural layer boundaries without circular dependencies or domain bleeding between Dispatch, Quality, Production, and Planning.
 - Metallurgical Lab & Quality: `quality-inspection.spec.ts`, `metallurgical-lab.spec.ts`, `ncr-capa.spec.ts`, `quality-documentation.spec.ts`, `pyrometry.spec.ts`.
 - Machine & Maintenance: `machine.spec.ts`, `maintenance.spec.ts`, `furnace-capacity.spec.ts`.
 - Traceability & Inventory: `heat-lot-traceability.spec.ts`, `inventory-ledger.spec.ts`, `warehouse.spec.ts`, `finished-goods.spec.ts`, `quarantine.spec.ts`.
