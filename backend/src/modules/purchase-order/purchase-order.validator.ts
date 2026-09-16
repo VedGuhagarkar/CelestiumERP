@@ -4,8 +4,8 @@ import { ValidationSchema } from '../../core/middleware/validate.middleware.js';
 export const createPurchaseOrderItemSchema = z.object({
   itemId: z.string().trim().min(1, 'Item ID is required'),
   recipeId: z.string().trim().min(1, 'Recipe ID is required'),
-  orderedQuantity: z.number().positive('Ordered quantity must be greater than zero'),
-  unitPrice: z.number().nonnegative('Unit price must be non-negative').optional(),
+  orderedQuantity: z.number().finite('Ordered quantity must be a finite number').positive('Ordered quantity must be greater than zero').max(1_000_000_000, 'Ordered quantity exceeds maximum allowable threshold'),
+  unitPrice: z.number().finite('Unit price must be a finite number').nonnegative('Unit price must be non-negative').max(1_000_000_000).optional(),
   processingRequirement: z.string().trim().max(500).optional(),
   lineNotes: z.string().trim().max(500).optional()
 });
@@ -23,7 +23,7 @@ export const createPurchaseOrderSchema: ValidationSchema = {
     currency: z.string().trim().min(3).max(3).optional(),
     paymentTerms: z.string().trim().max(100).optional(),
     deliveryTerms: z.string().trim().max(100).optional(),
-    taxAmount: z.number().nonnegative().optional(),
+    taxAmount: z.number().finite('Tax amount must be a finite number').nonnegative().max(1_000_000_000).optional(),
     notes: z.string().trim().max(1000).optional(),
     idempotencyKey: z.string().trim().max(128).optional()
   })

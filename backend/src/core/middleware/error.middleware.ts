@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { ZodError } from 'zod';
 import { config } from '../../config/app.config.js';
 import { logger } from '../../config/logger.config.js';
 import { AppError } from '../errors/app-error.js';
@@ -16,7 +17,7 @@ export function errorMiddleware(
   res: Response,
   _next: NextFunction
 ): Response {
-  let statusCode = err.statusCode || 500;
+  let statusCode = err.statusCode || err.status || 500;
   let message = err.message || 'Internal server error';
   let errorCode = err.errorCode || err.name || 'INTERNAL_ERROR';
   let details = err.details || null;
@@ -46,13 +47,43 @@ export function errorMiddleware(
       message: e.message
     }));
   }
-  // 4. Handle Mongoose CastError (Invalid ObjectId)
+  // 4. Handle Raw Zod Validation Error (if not captured in middleware)
+  else if (err instanceof ZodError || err.name === 'ZodError') {
+    statusCode = 422;
+    errorCode = 'VALIDATION_ERROR';
+    message = 'Request validation failed';
+    details = (err as any).errors?.map((e: any) => ({
+      path: Array.isArray(e.path) ? e.path.join('.') : String(e.path || ''),
+      message: e.message
+    }));
+  }
+  // 5. Handle Mongoose CastError (Invalid ObjectId or Type)
   else if (err.name === 'CastError') {
     statusCode = 400;
     errorCode = 'INVALID_IDENTIFIER';
-    message = `Invalid format for identifier '${err.value}'`;
+    const rawVal = typeof err.value === 'object' ? JSON.stringify(err.value) : String(err.value ?? '');
+    const safeVal = rawVal.length > 80 ? rawVal.substring(0, 80) + '...' : rawVal;
+    message = `Invalid format for identifier '${safeVal}'`;
   }
-  // 5. Handle JWT Authentication Errors
+  // 6. Handle BSON ObjectId Parsing Error
+  else if (err.name === 'BSONError') {
+    statusCode = 400;
+    errorCode = 'INVALID_IDENTIFIER';
+    message = 'Invalid identifier or ObjectId binary representation';
+  }
+  // 7. Handle URI Malformed Error (bad percent encoding in params)
+  else if (err instanceof URIError) {
+    statusCode = 400;
+    errorCode = 'MALFORMED_URI';
+    message = 'Malformed URI encoding in request path or query parameters';
+  }
+  // 8. Handle Payload Too Large
+  else if (err.type === 'entity.too.large' || err.name === 'PayloadTooLargeError' || err.status === 413) {
+    statusCode = 413;
+    errorCode = 'PAYLOAD_TOO_LARGE';
+    message = 'Request payload size exceeds the maximum allowable limit';
+  }
+  // 9. Handle JWT Authentication Errors
   else if (err.name === 'JsonWebTokenError') {
     statusCode = 401;
     errorCode = 'INVALID_TOKEN';
@@ -62,8 +93,8 @@ export function errorMiddleware(
     errorCode = 'TOKEN_EXPIRED';
     message = 'Authentication token has expired';
   }
-  // 6. Handle JSON Syntax Errors in Request Body
-  else if (err instanceof SyntaxError && 'body' in err) {
+  // 10. Handle JSON Syntax Errors in Request Body
+  else if (err instanceof SyntaxError && ('body' in err || err.status === 400)) {
     statusCode = 400;
     errorCode = 'MALFORMED_JSON';
     message = 'Malformed JSON in request payload';

@@ -15,31 +15,31 @@ export const DispatchStatusEnum = z.enum([
 ]);
 
 export const PackageDetailsSchema = z.object({
-  packagingType: z.string().min(1, 'Packaging type is required').default('PALLET'),
-  packageCount: z.number().int().positive('Package count must be a positive integer').default(1),
-  grossWeightKg: z.number().positive('Gross weight must be positive').optional(),
-  netWeightKg: z.number().positive('Net weight must be positive').optional(),
-  palletNumber: z.string().optional()
+  packagingType: z.string().trim().min(1, 'Packaging type is required').max(100).default('PALLET'),
+  packageCount: z.number().finite().int().positive('Package count must be a positive integer').max(1_000_000).default(1),
+  grossWeightKg: z.number().finite().positive('Gross weight must be positive').max(1_000_000_000).optional(),
+  netWeightKg: z.number().finite().positive('Net weight must be positive').max(1_000_000_000).optional(),
+  palletNumber: z.string().trim().max(100).optional()
 });
 
 export const CreateDispatchLineSchema = z.object({
-  finishedGoodsId: z.string().min(1, 'Finished goods ID is required'),
-  dispatchedQuantity: z.number().positive('Dispatched quantity must be greater than 0'),
+  finishedGoodsId: z.string().trim().min(1, 'Finished goods ID is required').max(100),
+  dispatchedQuantity: z.number().finite('Dispatched quantity must be a finite number').positive('Dispatched quantity must be greater than 0').max(1_000_000_000),
   packageDetails: PackageDetailsSchema.optional(),
-  notes: z.string().optional()
+  notes: z.string().trim().max(2000).optional()
 });
 
 export const createDispatchSchema = z.object({
-  customerId: z.string().min(1, 'Customer ID is required'),
-  purchaseOrderNumber: z.string().optional(),
-  destinationAddress: z.string().optional(),
-  contactPerson: z.string().optional(),
-  contactPhone: z.string().optional(),
+  customerId: z.string().trim().min(1, 'Customer ID is required').max(100),
+  purchaseOrderNumber: z.string().trim().max(100).optional(),
+  destinationAddress: z.string().trim().max(500).optional(),
+  contactPerson: z.string().trim().max(100).optional(),
+  contactPhone: z.string().trim().max(50).optional(),
   transportMode: TransportModeEnum.optional().default('ROAD'),
-  carrierName: z.string().optional(),
+  carrierName: z.string().trim().max(200).optional(),
   scheduledDepartureTime: z.string().datetime().optional(),
   lines: z.array(CreateDispatchLineSchema).min(1, 'At least one dispatch item line is required'),
-  notes: z.string().optional()
+  notes: z.string().trim().max(2000).optional()
 });
 
 export const verifyDispatchQualitySchema = z.object({

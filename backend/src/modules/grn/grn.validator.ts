@@ -4,11 +4,11 @@ import { ValidationSchema } from '../../core/middleware/validate.middleware.js';
 export const recordMaterialReceiptItemSchema = z.object({
   poLineItemId: z.string().trim().min(1, 'PO line item ID is required').optional(),
   itemId: z.string().trim().min(1, 'Item ID is required'),
-  receivedQuantity: z.number().positive('Received quantity must be greater than zero'),
+  receivedQuantity: z.number().finite('Received quantity must be a finite number').positive('Received quantity must be greater than zero').max(1_000_000_000),
   supplierHeatNumber: z.string().trim().min(1, 'Supplier Heat Number is required').max(100),
   supplierLotNumber: z.string().trim().max(100).optional(),
   mtrNumber: z.string().trim().max(100).optional(),
-  chemicalComposition: z.record(z.string(), z.number()).optional(),
+  chemicalComposition: z.record(z.string(), z.number().finite().min(0).max(100)).optional(),
   lineNotes: z.string().trim().max(500).optional()
 });
 
@@ -34,13 +34,13 @@ export const storeMaterialSchema: ValidationSchema = {
   body: z.object({
     warehouseId: z.string().trim().min(1, 'Warehouse ID is required'),
     storageLocationCode: z.string().trim().min(1, 'Storage location code (bay/bin) is required').max(100),
-    quantity: z.number().positive('Storage quantity must be greater than zero').optional(),
+    quantity: z.number().finite().positive('Storage quantity must be greater than zero').max(1_000_000_000).optional(),
     items: z
       .array(
         z.object({
           poLineItemId: z.string().trim().optional(),
           itemId: z.string().trim().optional(),
-          putawayQuantity: z.number().positive().optional()
+          putawayQuantity: z.number().finite().positive().max(1_000_000_000).optional()
         })
       )
       .optional(),
@@ -51,13 +51,13 @@ export const storeMaterialSchema: ValidationSchema = {
 export const createGrnItemSchema = z.object({
   poLineItemId: z.string().trim().optional(),
   itemId: z.string().trim().optional(),
-  challanQuantity: z.number().positive('Challan quantity must be greater than zero').optional(),
-  receivedQuantity: z.number().positive('Received quantity must be greater than zero').optional(),
-  acceptedQuantity: z.number().positive('Accepted quantity must be greater than zero').optional(),
+  challanQuantity: z.number().finite().positive('Challan quantity must be greater than zero').max(1_000_000_000).optional(),
+  receivedQuantity: z.number().finite().positive('Received quantity must be greater than zero').max(1_000_000_000).optional(),
+  acceptedQuantity: z.number().finite().positive('Accepted quantity must be greater than zero').max(1_000_000_000).optional(),
   supplierHeatNumber: z.string().trim().max(100).optional(),
   supplierLotNumber: z.string().trim().max(100).optional(),
   mtrNumber: z.string().trim().max(100).optional(),
-  chemicalComposition: z.record(z.string(), z.number()).optional()
+  chemicalComposition: z.record(z.string(), z.number().finite().min(0).max(100)).optional()
 }).refine((data) => Boolean(data.poLineItemId || data.itemId), {
   message: 'Either poLineItemId or itemId must be provided',
   path: ['poLineItemId']

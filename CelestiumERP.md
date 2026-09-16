@@ -171,12 +171,23 @@
   - `TenantIsolationError` (403)
   - `IdempotencyConflictError` (409)
   - `InternalServerError` (500)
+- **Centralized Error Translation Matrix (`errorMiddleware`):**
+  - `AppError` Hierarchy: Status codes 400 to 500 with domain-specific error codes.
+  - MongoDB `11000`: Translated to 409 `DUPLICATE_KEY_ERROR` with identified collision field.
+  - Mongoose `ValidationError`: Translated to 422 `MONGOOSE_VALIDATION_ERROR` with path-indexed detail list.
+  - Zod `ZodError`: Translated to 422 `VALIDATION_ERROR` with dotted path formatting and validation messages.
+  - Mongoose `CastError`: Translated to 400 `INVALID_IDENTIFIER` with input truncation to prevent buffer reflection or XSS injection.
+  - BSON `BSONError`: Translated to 400 `INVALID_IDENTIFIER`.
+  - Express `URIError`: Translated to 400 `MALFORMED_URI` when client submits invalid percent-encoded parameters.
+  - Body-parser `PayloadTooLargeError` (`entity.too.large`, 413): Translated to 413 `PAYLOAD_TOO_LARGE`.
+  - Body-parser `SyntaxError`: Translated to 400 `MALFORMED_JSON`.
+- **Zero Information Leakage Invariant:** Stack traces, internal operating system paths (`C:\...`, `/home/...`), and MongoDB driver internals are permanently suppressed from all client-facing responses across all environments.
 - **Unified API Response Standard (`ApiResponse`):** Standardizes all JSON HTTP responses across the platform:
   - `ApiResponse.success(res, data, message, statusCode)`
   - `ApiResponse.created(res, data, message)`
   - `ApiResponse.paginated(res, items, page, limit, total, message)`
   - `ApiResponse.noContent(res)`
-  - `ApiResponse.error(res, message, statusCode, errors, code)`
+  - `ApiResponse.error(res, message, statusCode, errorCode, details)`
 
 ### 1.7 Enterprise Idempotency Middleware
 - **Duplicate Mutation Filter (`idempotencyMiddleware`):** Inspects `Idempotency-Key` headers on mutating requests (`POST`, `PUT`, `PATCH`).
@@ -3616,7 +3627,21 @@ The codebase features comprehensive test suites validating layer boundaries, dat
 - Traceability & Inventory: `heat-lot-traceability.spec.ts`, `inventory-ledger.spec.ts`, `warehouse.spec.ts`, `finished-goods.spec.ts`, `quarantine.spec.ts`.
 - Workforce & Attendance: `workforce-attendance.spec.ts`, `workforce-capacity.spec.ts`.
 - Finance, Costing & Billing: `finance.spec.ts`, `costing.spec.ts`, `billing.spec.ts`.
-- Platform Core & Security: `auth.spec.ts`, `rbac.spec.ts`, `tenant-isolation.spec.ts`, `audit-logging.spec.ts`, `error-handling.spec.ts`, `database.spec.ts`, `health.spec.ts`, `database-integrity-destruction.spec.ts`.
+- Platform Core & Security: `auth.spec.ts`, `rbac.spec.ts`, `tenant-isolation.spec.ts`, `audit-logging.spec.ts`, `error-handling.spec.ts`, `database.spec.ts`, `health.spec.ts`, `database-integrity-destruction.spec.ts`, `api-form-validation-fuzz.spec.ts`.
+- `api-form-validation-fuzz.spec.ts` (28 tests — Prompt 3: Aggressive Form, API Validation & Edge-Case Fuzz Test Suite):
+  - Suite 1 (Empty, Whitespace-Only, and Missing Payloads): Rejects empty bodies, whitespace-only strings, and missing mandatory nested arrays with structured 422 `VALIDATION_ERROR`.
+  - Suite 2 (Null and Undefined Values in Required Paths): Rejects explicit null in non-nullable strings, numbers, and arrays with 422.
+  - Suite 3 (Unexpected & Malicious Extra Fields): Validates automatic stripping of unrecognized, injected, and prototype pollution fields (`__proto__`, `maliciousRootPayload`, `dropDatabase`) before reaching domain services.
+  - Suite 4 (Type Confusion & Coercion): Rejects arrays where objects are expected, objects where strings are expected, booleans where numbers are expected, and strings containing numeric values where strict numbers are required.
+  - Suite 5 (Numeric Boundaries, Infinity, Negative Numbers, and Overflows): Rejects negative quantities, zero quantities, `NaN`, `Infinity`, and extreme astronomical numbers (`1e12`+) with 422.
+  - Suite 6 (String Length & Buffer DoS Testing): Rejects 50,000+ character string attacks exceeding upper bounds without crashing or memory hanging.
+  - Suite 7 (Multi-Byte UTF-8, Unicode, Emojis, and Special Characters): Safely handles international character sets (Japanese, Arabic, Devanagari, Cyrillic), emojis, and punctuation without encoding failures.
+  - Suite 8 (HTML, XSS, and Script Injection Payloads): Intercepts and neutralizes malicious script payloads (`<script>`, `<img onerror>`, SVG payloads) ensuring no reflection or script execution.
+  - Suite 9 (Malformed JSON Syntax): Intercepts broken JSON syntax with 400 Bad Request `MALFORMED_JSON` without exposing Node/V8 stack traces.
+  - Suite 10 (Malformed URIs & URL Encoding Errors): Intercepts invalid percent-encoding in request URLs with 400 `MALFORMED_URI`.
+  - Suite 11 (Malformed & Boundary Dates): Rejects unparseable date strings with 422 while safely preserving timezone boundary timestamps (`+14:00`).
+  - Suite 12 (Invalid Identifiers & Mongoose CastError Safety): Intercepts non-existent and malformed ObjectIds with 400 `INVALID_IDENTIFIER`, preventing unhandled CastErrors.
+  - Suite 13 (Security Invariants & Zero Information Leakage): Verifies zero stack trace exposure, no filesystem leakage, 401 unauthenticated enforcement, and strict multi-tenant boundary isolation.
 - `database-integrity-destruction.spec.ts` (29 tests — Prompt 2: Aggressive Database & Data-Integrity Destruction Test Suite):
   - Suite 1 (Schema-Level Bounds, Nulls, Types, and Precision): Rejects missing required fields, nulls in non-nullable paths, negative quantities across transactional schemas, zero quantities where positive is required, decimal precision violations (min: 0.0001), incorrect types via CastError, invalid ObjectIds, and verifies uniform errorMiddleware translation to structured 400 and 422 HTTP responses.
   - Suite 2 (Atomic Counters & Monotonic Concurrency Stress Testing): Validates 0 collisions under 25 simultaneous concurrent requests across PO, GRN, Job, BO, Dispatch, Inspection, NCR, and CAPA identifiers; enforces unique compound indexes against duplicate business submissions.
