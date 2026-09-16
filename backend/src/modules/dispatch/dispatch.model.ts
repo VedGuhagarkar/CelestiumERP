@@ -120,6 +120,7 @@ const DispatchCustomerSchema = new Schema(
 const DispatchCarrierSchema = new Schema(
   {
     carrierName: { type: String },
+    transporter: { type: String },
     transportMode: {
       type: String,
       required: true,
@@ -290,9 +291,15 @@ const DispatchConsignmentSchema = new Schema<DispatchConsignmentDocument>(
     totalNetWeightKg: { type: Number },
     totalGrossWeightKg: { type: Number },
     carrier: { type: DispatchCarrierSchema, required: true, default: () => ({ transportMode: 'ROAD' }) },
+    transporter: { type: String },
     vehicle: { type: DispatchVehicleSchema },
+    vehicleNumber: { type: String },
+    dispatchDate: { type: Date },
+    ewayBillNumber: { type: String },
     driver: { type: DispatchDriverSchema },
     timeline: { type: DispatchTimelineSchema, required: true, default: () => ({ createdAt: new Date() }) },
+    dispatchedBy: { type: ActorSnapshotSchema },
+    dispatchedAt: { type: Date },
     approvals: { type: DispatchApprovalsSchema },
     gatePass: { type: DispatchGatePassSchema },
     proofOfDelivery: { type: DispatchProofOfDeliverySchema },

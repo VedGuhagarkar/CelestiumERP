@@ -1568,7 +1568,8 @@ _No direct HTTP routes mounted for this internal domain service._
 > **Business Purpose:** Manages the 6-stage dispatch lifecycle, grouping finished jobs into consignments, quality gate verification, carrier scheduling, departure, delivery confirmation, and the authoritative Outward Challan (OC) workflow strictly preserving the unbroken $\text{PO} \longrightarrow \text{GRN} \longrightarrow \text{BO} \longrightarrow \text{OC}$ hierarchy.
 
 #### Models & Schemas
-- **`dispatch.model.ts`** — Mongoose model: `DispatchConsignment`. Exported interfaces: `IDispatchConsignment`, `IOutwardChallanHierarchy`, `IOutwardChallanItem`, `IOutwardChallanHeatTreatment`, `IDispatchDeliveryInformation`, `IDispatchLine`. Encapsulates schema definitions, compound tenant indexes (`{ tenantId: 1, outwardChallanNumber: 1 }`, `{ tenantId: 1, batchOrderId: 1 }`, `{ tenantId: 1, grnId: 1 }`, `{ tenantId: 1, poId: 1 }`), and data validation rules.
+- **`dispatch.model.ts`** — Mongoose model: `DispatchConsignment`. Exported interfaces: `IDispatchConsignment`, `IOutwardChallanHierarchy`, `IOutwardChallanItem`, `IOutwardChallanHeatTreatment`, `IDispatchDeliveryInformation`, `IDispatchLine`, `IDispatchCarrier`. Encapsulates schema definitions, compound tenant indexes (`{ tenantId: 1, outwardChallanNumber: 1 }`, `{ tenantId: 1, batchOrderId: 1 }`, `{ tenantId: 1, grnId: 1 }`, `{ tenantId: 1, poId: 1 }`), and data validation rules.
+  - `IDispatchConsignment`: Stores authoritative consignment metadata, including `transporter`, `vehicleNumber`, `dispatchDate`, `ewayBillNumber`, `dispatchedBy` (`IActorSnapshot`), and `dispatchedAt`.
   - `IOutwardChallanItem`: Encapsulates the 8 authoritative item fields: `serialNumber` (number), `partName` (string), `partDescription` (string), `partNumber` (string), `materialGrade` (string), `heatTreatmentProcess` (string), `batchLotNumber` (string), `quantity` (number), `unitOfMeasure` (string).
   - `IOutwardChallanHeatTreatment`: Encapsulates the 6 required metallurgical inspection parameters: `furnaceEquipment` (string), `furnaceCode` (string), `hardnessSpecification` (string), `actualHardness` (string), `caseDepth` (string), `quantityReceived` (number), `quantityDelivered` (number).
   - `IDispatchDeliveryInformation`: Encapsulates authoritative delivery recipient data: `customerCode`, `customerName`, `deliveryAddress`, `gstNumber`, `contactPerson`, `contactPhone`.
@@ -1577,11 +1578,11 @@ _No direct HTTP routes mounted for this internal domain service._
 - **`DispatchRepository`** (`dispatch.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
   - Methods: `create()`, `findById()`, `findByDispatchNumber()`, `findByDeliveryChallanNumber()`, `findByOutwardChallanNumber()`, `findByBatchOrderId()`, `update()`, `query()`, `generateNextDispatchNumber()`, `generateNextDeliveryChallanNumber()`, `generateNextGatePassNumber()`, `generateNextOutwardChallanNumber()` (atomic monotonic counter `$inc`).
 - **`ProductionJobRepository`** (`production-job.repository.ts`):
-  - Methods: `atomicLinkOutwardChallan(tenantId, batchOrderId, outwardChallanNumber)` (two-phase atomic reservation under `waitingForDispatch = true`), `atomicUnlinkOutwardChallan(tenantId, batchOrderId, outwardChallanNumber)` (concurrency rollback protection supporting both ObjectId and string identifiers safely).
+  - Methods: `atomicLinkOutwardChallan(tenantId, batchOrderId, outwardChallanNumber)` (two-phase atomic reservation under `waitingForDispatch = true`), `atomicUnlinkOutwardChallan(tenantId, batchOrderId, outwardChallanNumber)` (concurrency rollback protection), `atomicMarkDispatched(tenantId, batchOrderId, updateData)` (single-winner atomic transition setting `status = 'DISPATCHED'`, `dispatched = true`, `waitingForDispatch = false`, `workflowState.dispatched = true`, `workflowState.waitingForDispatch = false`, `dispatchedAt`, `dispatchedBy`, and transition history).
 
 #### Services
 - **`DispatchService`** (`dispatch.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
-  - Methods: `createDispatch()`, `createOutwardChallanForBatchOrder()`, `getDispatchQueue()`, `verifyQuality()`, `scheduleDispatch()`, `approveDispatch()`, `recordDeparture()`, `confirmDelivery()`, `cancelDispatch()`, `queryDispatches()`, `getDispatchById()`, `getDispatchByNumber()`.
+  - Methods: `createDispatch()`, `createOutwardChallanForBatchOrder()`, `completePhysicalDispatch()`, `getDispatchQueue()`, `verifyQuality()`, `scheduleDispatch()`, `approveDispatch()`, `recordDeparture()`, `confirmDelivery()`, `cancelDispatch()`, `queryDispatches()`, `getDispatchById()`, `getDispatchByNumber()`.
   - **Authoritative Outward Challan (OC) Creation Invariant:** `createOutwardChallanForBatchOrder()` enforces the strict hierarchy $\text{PO} \longrightarrow \text{GRN} \longrightarrow \text{BO} \longrightarrow \text{OC}$:
     1. *Eligibility:* The selected Batch Order must have `waitingForDispatch = true`. All other states (`WAITING_FOR_PRODUCTION`, `IN_PRODUCTION`, `WAITING_FOR_INSPECTION`, `IN_INSPECTION`, `INSPECTION` quarantined, `DISPATCHED`) are rejected with `400 Bad Request`.
     2. *BO & GRN Relationship:* The OC references the selected BO, and the selected BO must belong to the referenced GRN (`grnId === bo.grnId`). Pairing an unrelated GRN is strictly rejected.
@@ -1595,18 +1596,26 @@ _No direct HTTP routes mounted for this internal domain service._
     10. *Recipe Mismatch Protection (Prompt 5):* Client attempts to submit mismatched recipe IDs or codes are strictly rejected with `400 Bad Request`.
     11. *Collision & Concurrency Protection:* Two-phase atomic claiming on `jobRepo.atomicLinkOutwardChallan` ensures exactly one winner in race conditions, returning `409 Conflict` on concurrent requests.
     12. *Dispatch Boundary:* Creating an OC does *not* prematurely mark the BO as dispatched (`dispatched = false`); the BO remains staged until physical factory gate departure.
+  - **Authoritative Transport & Physical Dispatch Invariant (Prompt 6):** `completePhysicalDispatch()` governs the physical departure of material and gate clearance:
+    1. *Required Transport Fields:* `transporter` (min 2 characters, non-empty, non-meaningless), `vehicleNumber` (min 5 characters, valid registration or fleet format), `dispatchDate` (valid parseable datetime).
+    2. *Optional Transport Fields:* `ewayBillNumber` (if provided, validated as 12-digit numeric `^\d{12}$` or authorized `EWB-...`).
+    3. *Authenticated User Attribution:* User identity is strictly derived from the authenticated session (`actor.userId`, `actor.email`, `actor.role`) and stamped into `dispatchedBy` and `dispatchedAt`. Client-supplied user identities are never trusted.
+    4. *Physical Dispatch vs OC Preparation Boundary:* Generating an OC leaves the BO in `waitingForDispatch: true, dispatched: false`; physical dispatch execution marks gate departure, transitioning the BO to `status = 'DISPATCHED'`, `dispatched = true`, `waitingForDispatch = false`.
+    5. *Inventory / Storage Deduction & Negative Stock Prevention:* Dispatched quantity is verified against warehouse Finished Goods stock. If requested dispatch quantity exceeds available warehouse stock, or exceeds total represented quantity, the operation is strictly rejected with `400 Bad Request` to prevent negative inventory. Upon validation, warehouse stock is permanently decremented.
+    6. *Atomicity & Conflict Rollback:* The system never produces a physical dispatch without an OC (`outwardChallanNumber`). Simultaneous dispatch attempts on the same BO resolve via single-winner atomic locking on `jobRepo.atomicMarkDispatched`, rolling back any inventory deductions and returning `409 Conflict`. Duplicate dispatches are rejected with `400 Bad Request`.
   - **Dispatch Protection & Inspection Clearance Invariant:** `createDispatch()` and `verifyQualityRelease()` strictly inspect linked Batch Orders. Any attempt to dispatch a job in quarantined `INSPECTION` (`workflowState.inspection: true`) or lacking quality approval is strictly rejected with `400 Bad Request` (`Dispatch Protection Violation`).
 
 #### Controllers
 - **`DispatchController`** (`dispatch.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
-  - Endpoints handled: `createDispatch()`, `createOutwardChallan()`, `getDispatchQueue()`, `verifyQuality()`, `schedule()`, `approve()`, `depart()`, `deliver()`, `cancel()`, `getAll()`, `getById()`, `getByNumber()`.
+  - Endpoints handled: `createDispatch()`, `createOutwardChallan()`, `completePhysicalDispatch()`, `getDispatchQueue()`, `verifyQuality()`, `schedule()`, `approve()`, `depart()`, `deliver()`, `cancel()`, `getAll()`, `getById()`, `getByNumber()`.
 
 #### Validators (Zod Schemas)
-- **`dispatch.validator.ts`**: Exported Zod validation schemas: `PackageDetailsSchema`, `CreateDispatchLineSchema`, `createDispatchSchema`, `createOutwardChallanSchema`, `verifyDispatchQualitySchema`, `scheduleDispatchSchema`, `approveDispatchSchema`, `departDispatchSchema`, `deliverDispatchSchema`, `cancelDispatchSchema`, `queryDispatchesSchema`.
+- **`dispatch.validator.ts`**: Exported Zod validation schemas and helpers: `validateTransporter()`, `validateVehicleNumber()`, `validateEwayBillNumber()`, `validateDispatchDate()`, `physicalDispatchSchema`, `PackageDetailsSchema`, `CreateDispatchLineSchema`, `createDispatchSchema`, `createOutwardChallanSchema`, `verifyDispatchQualitySchema`, `scheduleDispatchSchema`, `approveDispatchSchema`, `departDispatchSchema`, `deliverDispatchSchema`, `cancelDispatchSchema`, `queryDispatchesSchema`.
 
 #### API Endpoints & Routes
 - `POST /api/v1/dispatches` — Handled by `DispatchController`.
 - `POST /api/v1/dispatches/outward-challan` (alias `/api/v1/dispatch/outward-challan`) — Authoritative Outward Challan creation for single eligible BO.
+- `POST /api/v1/dispatches/:id/dispatch` (alias `/api/v1/dispatches/outward-challan/:id/dispatch`) — Complete physical dispatch with mandatory transport fields, stock deduction, and BO transition to `DISPATCHED`.
 - `GET /api/v1/dispatches/queue` (alias `/api/v1/dispatch/queue`, `/waiting-for-dispatch`) — Dedicated dispatch queue returning BOs with `waitingForDispatch = true`.
 - `GET /api/v1/dispatches` (alias `/api/v1/dispatch`) — Handled by `DispatchController`.
 - `GET /api/v1/dispatches/number/:dispatchNumber` — Handled by `DispatchController`.
@@ -2152,8 +2161,8 @@ The frontend is built with React 19, Redux Toolkit, React Router 7, and a custom
   - Shift Schedule Calendar: Monthly grid showing workforce coverage and scheduled shift allocations.
 
 #### 8. Outbound Dispatch Workbench (`DispatchPage.tsx`, 24.5 KB)
-- **Role:** Outbound shipping logistics, document compliance, delivery tracking, and authoritative Outward Challan creation maintaining $\text{PO} \longrightarrow \text{GRN} \longrightarrow \text{BO} \longrightarrow \text{OC}$.
-- **State & Actions:** `activeTab` ('all', 'queue', 'consignments'), `dispatchQueue`, `dispatches`, `selectedDispatch`, `selectedBOForOC`, `isOCModalOpen`, `isConsignmentModalOpen`, carrier, vehicle, driver, and logistics inputs.
+- **Role:** Outbound shipping logistics, document compliance, delivery tracking, authoritative Outward Challan creation maintaining $\text{PO} \longrightarrow \text{GRN} \longrightarrow \text{BO} \longrightarrow \text{OC}$, and physical dispatch execution with inventory stock deduction.
+- **State & Actions:** `activeTab` ('all', 'queue', 'consignments'), `dispatchQueue`, `dispatches`, `selectedDispatch`, `selectedBOForOC`, `isOCModalOpen`, `isConsignmentModalOpen`, `isPhysicalDispatchModalOpen`, `selectedDispatchForPhysical`, `transporterInput`, `vehicleNumberInput`, `dispatchDateInput`, `ewayBillInput`, `transportRemarksInput`, `formValidationErrors`.
 - **Key Capabilities:**
   - **Unified Dispatch Workbench:** Single operational command center rendering both the Dispatch Queue and the Active Consignments table, with flexible tab filtering.
   - **Dedicated Dispatch Queue (`waitingForDispatch = true`):** Apple HIG cards displaying eligible Batch Orders with unbroken traceability badges (`PO` ➔ `GRN` ➔ `BO`), customer names, part specifications (item code, material grade, UOM), verified quantities, lot numbers, and inspection clearance (`COC-APPROVED`).
@@ -2164,8 +2173,14 @@ The frontend is built with React 19, Redux Toolkit, React Router 7, and a custom
     - System-assigned monotonic Challan Number (`[AUTO-GENERATED: OC-YYYYMM-XXXX]`)
     - GRN-derived Authoritative OC Date
     - Carrier and transport inputs (carrier name, transport mode, vehicle number, driver contact, remarks)
-  - **Active Consignments Table:** Displays Outward Challan numbers, PO ➔ GRN ➔ BO hierarchy paths, customer destinations, carriers, vehicles, gate passes, and statuses.
-  - **Carrier & Gate Clearance:** Records carrier name, vehicle number, driver details, and gate departure authorization.
+  - **Active Consignments Table & Quick Dispatch Action:** Displays Outward Challan numbers, PO ➔ GRN ➔ BO hierarchy paths, customer destinations, carriers, vehicles, gate passes, and statuses. Features direct "Dispatch" action button on unfulfilled consignments.
+  - **Complete Physical Dispatch Modal Dialog:** Accessible from table action button and Drawer footer; captures authoritative transport details:
+    - Transporter / Logistics Carrier (Required, min 2 chars, non-empty, non-placeholder)
+    - Vehicle Registration Number (Required, min 5 chars, standard registration or fleet pattern)
+    - Dispatch Date & Time (Required, valid ISO datetime defaulting to local time)
+    - E-Way Bill Number (Optional, 12-digit numeric or authorized identifier)
+    - Authoritative Dispatch & Inventory Context banner showing OC number, linked BO, customer, and exact finished goods quantity to be deducted.
+  - **Selected Dispatch Details Drawer:** Renders complete traceability hierarchy, BO-derived item specification cards, metallurgical inspection parameters, physical dispatch record card with authenticated actor attribution, and gate pass print action.
   - **Proof of Delivery (PoD):** Confirms customer delivery receipt and records PoD document references.
 
 #### 9. Manufacturing Finance Workbench (`FinancePage.tsx`, 20.1 KB)
@@ -2684,12 +2699,19 @@ $$\mathbf{Production\ Completion} \longrightarrow \mathbf{Waiting\ for\ Inspecti
    - **Recipe Mismatch Protection (Prompt 5):** Client attempts to supply mismatched recipe IDs or codes throw `400 Bad Request`.
    - **Atomic Concurrency Protection:** Two-phase atomic claiming on the Batch Order (`jobRepo.atomicLinkOutwardChallan`) ensures race conditions result in exactly one winner and `409 Conflict` for competing requests.
    - **Dispatch Boundary:** Creating the OC does *not* mark the BO as dispatched (`dispatched: false`); the BO remains in dispatch staging until physical factory gate departure.
-3. **Consignment Drafting (`POST /api/v1/dispatches`):** Logistics coordinator can alternatively create a multi-line dispatch order selecting customer and destination. Generates `DISP-YYYYMM-XXXX`. Status is `DRAFT`.
-4. **Finished Goods Attachment:** Jobs in finished goods storage are attached to the consignment.
-5. **Quality Compliance Gate (`POST /api/v1/dispatches/:id/verify-quality`):** System validates that every attached job has an approved, signed Certificate of Conformance (CoC). If any job lacks a valid CoC, the shipment cannot proceed.
-6. **Carrier Scheduling (`POST /api/v1/dispatches/:id/schedule`):** Logistics attaches carrier name, vehicle number, driver name, and planned departure time. Status moves to `SCHEDULED`.
-7. **Gate Departure Authorization (`POST /api/v1/dispatches/:id/approve`, `POST /.../depart`):** Plant Manager authorizes gate pass. Vehicle departs plant; consignment status transitions to `IN_TRANSIT`, deducting inventory and setting `dispatched = true` upon gate clearance. Emits `Dispatch.Shipped`.
-8. **Customer Delivery & PoD (`POST /api/v1/dispatches/:id/deliver`):** Driver delivers shipment. Customer signs delivery challan; Proof of Delivery (PoD) is uploaded. Status transitions to `DELIVERED`. Emits `Dispatch.Delivered`.
+3. **Transport Information & Physical Dispatch Execution (`POST /api/v1/dispatches/:id/dispatch`):**
+   - **Mandatory Transport Fields (Prompt 6):** Enforces required `transporter` (min 2 characters, rejecting empty or meaningless strings like `""`, `"   "`, `"-"`, `"N/A"`), `vehicleNumber` (min 5 characters, conforming to standard Indian registration format or valid fleet IDs), and `dispatchDate` (valid parseable datetime).
+   - **Optional E-Way Bill:** `ewayBillNumber` is optional; if provided, it is validated strictly as a 12-digit numeric code (`^\d{12}$`) or standard authorized format (`EWB-...`).
+   - **Authenticated User Attribution:** Dispatched user attribution is strictly extracted from the authenticated session actor context (`actor.userId`, `actor.email`, `actor.role`) and recorded into `consignment.dispatchedBy`, `consignment.dispatchedAt`, and `bo.dispatchedBy`. Client-supplied user identities are never trusted.
+   - **Physical Dispatch vs OC Preparation Separation:** Distinguishes OC generation (`waitingForDispatch: true, dispatched: false`) from physical dispatch (`status: 'DISPATCHED'`, `dispatched: true`, `waitingForDispatch: false`).
+   - **Finished Goods Stock Deduction & Negative Inventory Prevention:** Dispatched quantities are validated against available warehouse stock. Requests exceeding available stock or exceeding the total represented quantity are strictly rejected with `400 Bad Request` to prevent negative inventory.
+   - **Strict Atomicity, Single-Winner Concurrency, and Conflict Rollback:** Physical dispatch is prohibited without an OC (`outwardChallanNumber`). Simultaneous dispatch attempts on the same BO resolve via single-winner atomic locking on `jobRepo.atomicMarkDispatched`. In conflict scenarios, any Finished Goods deductions are automatically rolled back, returning `409 Conflict`. Duplicate dispatches on already dispatched consignments or BOs are rejected with `400 Bad Request`. Emits `Dispatch.Shipped`.
+4. **Consignment Drafting (`POST /api/v1/dispatches`):** Logistics coordinator can alternatively create a multi-line dispatch order selecting customer and destination. Generates `DISP-YYYYMM-XXXX`. Status is `DRAFT`.
+5. **Finished Goods Attachment:** Jobs in finished goods storage are attached to the consignment.
+6. **Quality Compliance Gate (`POST /api/v1/dispatches/:id/verify-quality`):** System validates that every attached job has an approved, signed Certificate of Conformance (CoC). If any job lacks a valid CoC, the shipment cannot proceed.
+7. **Carrier Scheduling (`POST /api/v1/dispatches/:id/schedule`):** Logistics attaches carrier name, vehicle number, driver name, and planned departure time. Status moves to `SCHEDULED`.
+8. **Gate Departure Authorization (`POST /api/v1/dispatches/:id/approve`, `POST /.../depart`):** Plant Manager authorizes gate pass. Vehicle departs plant; consignment status transitions to `IN_TRANSIT` (or delegates to `completePhysicalDispatch` for OC consignments).
+9. **Customer Delivery & PoD (`POST /api/v1/dispatches/:id/deliver`):** Driver delivers shipment. Customer signs delivery challan; Proof of Delivery (PoD) is uploaded. Status transitions to `DELIVERED`. Emits `Dispatch.Delivered`.
 
 ---
 
@@ -2909,11 +2931,11 @@ The platform includes 8 authoritative engineering specifications and operational
 7. **`PHASE_1_CERTIFICATION_REPORT.md`:** Verification findings for core platform stability, data boundary enforcement, and error resilience.
 8. **`FACTORY_ACCEPTANCE_REPORT.md`:** End-to-end metallurgical workflow verification and compliance sign-off.
 
-### 8.4 Automated Test Suite Matrix (66 Backend Specs + Frontend Suites)
+### 8.4 Automated Test Suite Matrix (81 Backend Specs + Frontend Suites)
 
 The codebase features comprehensive test suites validating layer boundaries, data integrity, and business logic:
-- **Backend Test Summary:** **66 Test Suites, 809 Tests Passed (0 Failures, 100% Pass Rate)**
-- **Frontend Test Summary:** **3 Test Suites, 50 Tests Passed (0 Failures, 100% Pass Rate)**
+- **Backend Test Summary:** **81 Test Suites, 1127 Tests Passed (0 Failures, 100% Pass Rate)**
+- **Frontend Test Summary:** **5 Test Suites, 67 Tests Passed (0 Failures, 100% Pass Rate)**
 
 #### 1. Backend Architecture Governance
 - `tests/architecture-boundaries.spec.ts`: Automated AST scanner asserting 100% compliance with 14 layer-boundary rules (`check:arch`).
@@ -3415,6 +3437,20 @@ The codebase features comprehensive test suites validating layer boundaries, dat
   - Invariant 7: Strictly rejects OC creation if required heat-treatment data is missing in the BO (`400 Bad Request`).
   - Invariant 8: Formally verifies that OC creation preserves historical production logs, inspection records, and recipe snapshots unaltered.
   - Invariant 9: Enforces that the dedicated dispatch queue (`/api/v1/dispatches/queue`) projects complete BO items and heat-treatment parameters.
+- `dispatch-transport-physical.spec.ts` (13 tests — Prompt 6: Transport & Physical Dispatch Information):
+  - Invariant 1: Requires valid transporter name (min 2 non-whitespace characters) and strictly rejects empty, whitespace, and placeholder strings (`"-"`, `"N/A"`, `"none"`).
+  - Invariant 2: Requires valid vehicle registration number (min 5 non-whitespace characters) and rejects placeholder strings (`"123"`, `"car"`, `"invalid-veh"`, `"???"`).
+  - Invariant 3: Validates optional E-Way Bill Number format (12-digit numeric `^\d{12}$` or `EWB-...`) and rejects malformed values.
+  - Invariant 4: Requires valid parseable ISO dispatch date and rejects invalid date strings.
+  - Invariant 5: Records user identity and timestamp strictly from authenticated actor (`req.user`) in `dispatchedBy` and `dispatchedAt`, ignoring client-supplied user fields.
+  - Invariant 6: Deduces dispatched quantity from warehouse finished goods available stock and rejects physical dispatch if stock is insufficient to prevent negative inventory.
+  - Invariant 7: Transitions Batch Order from `waitingForDispatch: true, dispatched: false` to `dispatched: true, status: 'DISPATCHED'`, clearing `waitingForDispatch`.
+  - Invariant 8: Rejects physical dispatch attempt without an existing Outward Challan / Consignment record (`404 Not Found`).
+  - Invariant 9: Enforces single-winner atomic locking on physical dispatch (`jobRepo.atomicMarkDispatched`), rolling back inventory and returning `409 Conflict` on concurrent race.
+  - Invariant 10: Rejects duplicate physical dispatch attempts on already-dispatched consignments (`400 Bad Request`).
+  - Invariant 11: Emits `DomainEvents.DISPATCH_SHIPPED` event upon successful physical departure.
+  - Invariant 12: Verifies route alias parity between `/api/v1/dispatches/:id/dispatch` and `/api/v1/dispatches/outward-challan/:id/dispatch`.
+  - Invariant 13: Strictly prevents deducting more material than the BO / OC represents.
 - Metallurgical Lab & Quality: `quality-inspection.spec.ts`, `metallurgical-lab.spec.ts`, `ncr-capa.spec.ts`, `quality-documentation.spec.ts`, `pyrometry.spec.ts`.
 - Machine & Maintenance: `machine.spec.ts`, `maintenance.spec.ts`, `furnace-capacity.spec.ts`.
 - Traceability & Inventory: `heat-lot-traceability.spec.ts`, `inventory-ledger.spec.ts`, `warehouse.spec.ts`, `finished-goods.spec.ts`, `quarantine.spec.ts`.
@@ -3423,12 +3459,14 @@ The codebase features comprehensive test suites validating layer boundaries, dat
 - Platform Core & Security: `auth.spec.ts`, `rbac.spec.ts`, `tenant-isolation.spec.ts`, `audit-logging.spec.ts`, `error-handling.spec.ts`, `database.spec.ts`, `health.spec.ts`.
 
 #### 5. Frontend Integration Suites (`frontend/src/`)
-- `dispatch-page.test.tsx` (5 tests — Outward Challan Workflow, BO Items & Heat-Treatment UI):
+- `dispatch-page.test.tsx` (7 tests — Outward Challan Workflow, BO Items, Heat-Treatment & Physical Dispatch UI):
   - Renders Dispatch workspace with Dispatch Queue, Active Consignments, and Unified Workbench views.
   - Displays eligible Batch Orders in the queue with unbroken $\text{PO} \longrightarrow \text{GRN} \longrightarrow \text{BO}$ hierarchy badges and CoC approval.
   - Opens Create Outward Challan modal with read-only authoritative derived fields: PO, GRN, BO, auto OC number, GRN date, all 8 BO item fields, and all 6 heat-treatment parameters with no manual editing inputs.
   - Submits OC creation request with `batchOrderId` and updates UI upon success.
   - Allows switching to Active Consignments tab and displays hierarchy badges, drawer BO-derived items card, and metallurgical heat-treatment details.
+  - Validates required transport fields (transporter, vehicle number, dispatch date, optional e-way bill), rejects meaningless placeholder values, and completes physical dispatch upon valid submission.
+  - Confirms physical dispatch status transitions and warehouse stock deduction notifications in UI.
 - `e2e-workflows.test.tsx` (36 tests):
   - Multi-step Batch Order creation wizard (PO -> GRN -> Part -> BO).
   - Interactive BO drawer with hierarchy banner and 8-card source genealogy grid.

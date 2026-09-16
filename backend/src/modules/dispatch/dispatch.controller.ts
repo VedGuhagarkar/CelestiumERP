@@ -127,6 +127,22 @@ export class DispatchController extends BaseController {
     }
   };
 
+  public completePhysicalDispatch = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const actor = this.getActorContext(req);
+      const id = req.params.id as string;
+      const result = await this.service.completePhysicalDispatch(tenantId, actor, id, req.body);
+      this.sendSuccess(res, result, 'Physical dispatch completed successfully and material released from warehouse');
+    } catch (error) {
+      next(error);
+    }
+  };
+
   public confirmDelivery = async (
     req: Request,
     res: Response,

@@ -84,7 +84,7 @@ interface DispatchConsignment {
   poNumber?: string;
   hierarchy?: OutwardChallanHierarchy;
   isOutwardChallan?: boolean;
-  status: 'DRAFT' | 'PACKED' | 'SCHEDULED' | 'GATE_PASS_ISSUED' | 'IN_TRANSIT' | 'DELIVERED';
+  status: 'DRAFT' | 'PACKED' | 'SCHEDULED' | 'GATE_PASS_ISSUED' | 'IN_TRANSIT' | 'DISPATCHED' | 'DELIVERED' | 'APPROVED' | 'WAITING_FOR_DISPATCH';
   customer: {
     customerCode: string;
     customerName: string;
@@ -103,6 +103,16 @@ interface DispatchConsignment {
   }[];
   items?: OutwardChallanItem[];
   heatTreatmentInformation?: OutwardChallanHeatTreatment;
+  transporter?: string;
+  vehicleNumber?: string;
+  dispatchDate?: string;
+  ewayBillNumber?: string;
+  dispatchedBy?: {
+    userId: string;
+    email?: string;
+    role?: string;
+  };
+  dispatchedAt?: string;
   carrier?: {
     carrierName: string;
     transportMode: string;
@@ -433,6 +443,139 @@ export const DispatchPage: React.FC = () => {
   const [selectedDispatch, setSelectedDispatch] = useState<DispatchConsignment | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Physical Dispatch Modal State
+  const [isPhysicalDispatchModalOpen, setIsPhysicalDispatchModalOpen] = useState(false);
+  const [selectedDispatchForPhysical, setSelectedDispatchForPhysical] = useState<DispatchConsignment | null>(null);
+  const [transporterInput, setTransporterInput] = useState('');
+  const [vehicleNumberInput, setVehicleNumberInput] = useState('');
+  const [dispatchDateInput, setDispatchDateInput] = useState('');
+  const [ewayBillInput, setEwayBillInput] = useState('');
+  const [transportRemarksInput, setTransportRemarksInput] = useState('');
+  const [formValidationErrors, setFormValidationErrors] = useState<Record<string, string>>({});
+  const [isSubmittingPhysicalDispatch, setIsSubmittingPhysicalDispatch] = useState(false);
+
+  const openPhysicalDispatchModal = (dispatchItem: DispatchConsignment) => {
+    setSelectedDispatchForPhysical(dispatchItem);
+    setTransporterInput(dispatchItem.transporter || dispatchItem.carrier?.carrierName || '');
+    setVehicleNumberInput(dispatchItem.vehicleNumber || dispatchItem.carrier?.vehicleNumber || '');
+    const now = new Date();
+    const tzOffset = now.getTimezoneOffset() * 60000;
+    const localIso = new Date(now.getTime() - tzOffset).toISOString().slice(0, 16);
+    setDispatchDateInput(localIso);
+    setEwayBillInput(dispatchItem.ewayBillNumber || '');
+    setTransportRemarksInput('');
+    setFormValidationErrors({});
+    setIsPhysicalDispatchModalOpen(true);
+  };
+
+  const handleCompletePhysicalDispatch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedDispatchForPhysical) return;
+
+    const errors: Record<string, string> = {};
+    const trimmedTransporter = transporterInput.trim();
+    if (!trimmedTransporter || trimmedTransporter.length < 2) {
+      errors.transporter = 'Transporter name is required (minimum 2 characters)';
+    } else if (/^(na|n\/a|none|null|nil|unknown|test|---|--|\.\.\.|\.|\_)$/i.test(trimmedTransporter)) {
+      errors.transporter = 'Meaningless or placeholder transporter values are not permitted';
+    }
+
+    const trimmedVehicle = vehicleNumberInput.trim().toUpperCase();
+    if (!trimmedVehicle || trimmedVehicle.length < 5) {
+      errors.vehicleNumber = 'Vehicle number is required (minimum 5 characters, e.g. MH-12-AB-1234)';
+    } else if (/^(invalid|unknown|placeholder|vehicle|truck|car|none|null|n\/a|\?\?\?)$/i.test(trimmedVehicle)) {
+      errors.vehicleNumber = 'Invalid vehicle registration number';
+    }
+
+    if (!dispatchDateInput || isNaN(new Date(dispatchDateInput).getTime())) {
+      errors.dispatchDate = 'A valid dispatch date is required';
+    }
+
+    const trimmedEway = ewayBillInput.trim();
+    if (
+      trimmedEway &&
+      !(
+        /^\d{12}$/.test(trimmedEway) ||
+        /^EWB-[A-Z0-9-]{6,16}$/i.test(trimmedEway) ||
+        /^[A-Z0-9]{12,18}$/i.test(trimmedEway)
+      )
+    ) {
+      errors.ewayBillNumber = 'E-Way Bill must be a 12-digit numeric or standard E-Way Bill identifier';
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setFormValidationErrors(errors);
+      return;
+    }
+
+    setIsSubmittingPhysicalDispatch(true);
+    setFeedback(null);
+    setFormValidationErrors({});
+
+    try {
+      const payload = {
+        transporter: trimmedTransporter,
+        vehicleNumber: trimmedVehicle,
+        dispatchDate: new Date(dispatchDateInput).toISOString(),
+        ewayBillNumber: trimmedEway || undefined,
+        remarks: transportRemarksInput.trim() || undefined
+      };
+
+      const dispatchId = selectedDispatchForPhysical.id || selectedDispatchForPhysical._id || selectedDispatchForPhysical.dispatchNumber;
+      const res = await authenticatedFetch(
+        `${env.API_BASE_URL}/dispatches/${dispatchId}/dispatch`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        }
+      );
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || `Failed to dispatch consignment (status ${res.status})`);
+      }
+
+      setFeedback({
+        type: 'success',
+        message: `Physical dispatch completed for OC ${selectedDispatchForPhysical.outwardChallanNumber || selectedDispatchForPhysical.deliveryChallanNumber}! Transporter: ${trimmedTransporter}, Vehicle: ${trimmedVehicle}. Finished Goods stock deducted and Batch Order marked as DISPATCHED.`
+      });
+
+      setDispatches((prev) =>
+        prev.map((d) =>
+          d.dispatchNumber === selectedDispatchForPhysical.dispatchNumber || d.id === selectedDispatchForPhysical.id
+            ? { ...d, status: 'DISPATCHED', transporter: trimmedTransporter, vehicleNumber: trimmedVehicle, dispatchDate: payload.dispatchDate }
+            : d
+        )
+      );
+
+      setIsPhysicalDispatchModalOpen(false);
+      setSelectedDispatchForPhysical(null);
+      if (
+        selectedDispatch &&
+        (selectedDispatch.dispatchNumber === selectedDispatchForPhysical.dispatchNumber ||
+          selectedDispatch.id === selectedDispatchForPhysical.id)
+      ) {
+        setSelectedDispatch((prev: any) =>
+          prev
+            ? {
+                ...prev,
+                status: 'DISPATCHED',
+                transporter: trimmedTransporter,
+                vehicleNumber: trimmedVehicle,
+                dispatchDate: payload.dispatchDate
+              }
+            : null
+        );
+      }
+      await fetchQueueAndDispatches();
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Failed to complete physical dispatch' });
+    } finally {
+      setIsSubmittingPhysicalDispatch(false);
+    }
+  };
 
   // Outward Challan Modal State
   const [isOCModalOpen, setIsOCModalOpen] = useState(false);
@@ -1017,14 +1160,27 @@ export const DispatchPage: React.FC = () => {
                         </td>
 
                         <td style={{ padding: '14px 18px', textAlign: 'right' }}>
-                          <ActionButton
-                            variant="secondary"
-                            size="sm"
-                            rightIcon={<ChevronRight size={14} />}
-                            onClick={() => setSelectedDispatch(d)}
-                          >
-                            Details
-                          </ActionButton>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px' }}>
+                            {d.status !== 'DISPATCHED' && d.status !== 'DELIVERED' && (
+                              <AppButton
+                                variant="primary"
+                                size="sm"
+                                data-testid={`btn-dispatch-${d.dispatchNumber || d.id}`}
+                                leftIcon={<Send size={13} />}
+                                onClick={() => openPhysicalDispatchModal(d)}
+                              >
+                                Dispatch
+                              </AppButton>
+                            )}
+                            <ActionButton
+                              variant="secondary"
+                              size="sm"
+                              rightIcon={<ChevronRight size={14} />}
+                              onClick={() => setSelectedDispatch(d)}
+                            >
+                              Details
+                            </ActionButton>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -1048,8 +1204,18 @@ export const DispatchPage: React.FC = () => {
               <AppButton variant="secondary" onClick={() => setSelectedDispatch(null)}>
                 Close
               </AppButton>
+              {selectedDispatch.status !== 'DISPATCHED' && selectedDispatch.status !== 'DELIVERED' && (
+                <AppButton
+                  variant="primary"
+                  data-testid="btn-drawer-dispatch"
+                  leftIcon={<Send size={16} />}
+                  onClick={() => openPhysicalDispatchModal(selectedDispatch)}
+                >
+                  Complete Physical Dispatch
+                </AppButton>
+              )}
               <AppButton
-                variant="primary"
+                variant="secondary"
                 leftIcon={<Printer size={16} />}
                 onClick={handlePrintGatePass}
               >
@@ -1061,6 +1227,26 @@ export const DispatchPage: React.FC = () => {
       >
         {selectedDispatch && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            {/* Physical Dispatch Status Card if Dispatched */}
+            {selectedDispatch.status === 'DISPATCHED' && (
+              <AppCard style={{ padding: '16px', borderLeft: '4px solid #10b981', background: 'rgba(16, 185, 129, 0.05)' }}>
+                <div style={{ fontSize: '12px', fontWeight: 700, color: '#34d399', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <ShieldCheck size={16} /> AUTHORITATIVE PHYSICAL DISPATCH RECORD
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', fontSize: '13px' }}>
+                  <div><strong>Transporter:</strong> {selectedDispatch.transporter || selectedDispatch.carrier?.carrierName || 'N/A'}</div>
+                  <div><strong>Vehicle Number:</strong> {selectedDispatch.vehicleNumber || selectedDispatch.carrier?.vehicleNumber || 'N/A'}</div>
+                  <div><strong>Dispatch Date:</strong> {selectedDispatch.dispatchDate ? new Date(selectedDispatch.dispatchDate).toLocaleString() : 'Recorded at Gate'}</div>
+                  <div><strong>E-Way Bill:</strong> {selectedDispatch.ewayBillNumber || 'N/A (Exempt / Not provided)'}</div>
+                  {selectedDispatch.dispatchedBy && (
+                    <div style={{ gridColumn: 'span 2', color: '#94a3b8', fontSize: '12px' }}>
+                      <strong>Dispatched By (Authoritative Actor):</strong> {selectedDispatch.dispatchedBy.userId} ({selectedDispatch.dispatchedBy.role || 'Dispatch Officer'})
+                    </div>
+                  )}
+                </div>
+              </AppCard>
+            )}
+
             <AppCard style={{ padding: '16px' }}>
               <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--color-primary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <Layers size={14} /> AUTHORITATIVE TRACEABILITY HIERARCHY
@@ -1503,6 +1689,159 @@ export const DispatchPage: React.FC = () => {
             required
           />
         </form>
+      </AppDialog>
+
+      {/* Complete Physical Dispatch Modal Dialog */}
+      <AppDialog
+        isOpen={isPhysicalDispatchModalOpen}
+        onClose={() => setIsPhysicalDispatchModalOpen(false)}
+        title="Complete Physical Dispatch"
+        description="Provide transport information to record physical departure, deduct Finished Goods warehouse stock, and transition the Batch Order to DISPATCHED."
+        footer={
+          <>
+            <AppButton variant="secondary" onClick={() => setIsPhysicalDispatchModalOpen(false)}>
+              Cancel
+            </AppButton>
+            <AppButton
+              variant="primary"
+              type="submit"
+              form="physical-dispatch-form"
+              data-testid="btn-submit-physical-dispatch"
+              isLoading={isSubmittingPhysicalDispatch}
+              leftIcon={<Send size={16} />}
+            >
+              Confirm Physical Dispatch & Deduct Stock
+            </AppButton>
+          </>
+        }
+      >
+        {selectedDispatchForPhysical && (
+          <form
+            id="physical-dispatch-form"
+            onSubmit={handleCompletePhysicalDispatch}
+            style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}
+          >
+            {/* Authoritative Information Banner */}
+            <div
+              style={{
+                background: 'rgba(56, 189, 248, 0.08)',
+                border: '1px solid rgba(56, 189, 248, 0.3)',
+                padding: '12px',
+                borderRadius: '8px',
+                fontSize: '12px'
+              }}
+            >
+              <div style={{ fontWeight: 700, color: '#38bdf8', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Layers size={14} /> AUTHORITATIVE DISPATCH & INVENTORY CONTEXT
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px', color: '#e2e8f0' }}>
+                <div><strong>Outward Challan:</strong> {selectedDispatchForPhysical.outwardChallanNumber || selectedDispatchForPhysical.deliveryChallanNumber}</div>
+                <div><strong>Batch Order:</strong> {selectedDispatchForPhysical.hierarchy?.batchOrderNumber || selectedDispatchForPhysical.batchOrderNumber || 'N/A'}</div>
+                <div><strong>Customer:</strong> {selectedDispatchForPhysical.customer?.customerName}</div>
+                <div><strong>Dispatched Quantity:</strong> {selectedDispatchForPhysical.totalQuantity || selectedDispatchForPhysical.lines?.[0]?.dispatchedQuantity || 0} PCS</div>
+              </div>
+              <div style={{ marginTop: '8px', color: '#94a3b8', fontSize: '11px', lineHeight: 1.4 }}>
+                * Upon confirmation, warehouse Finished Goods stock is permanently deducted, and the Batch Order transitions to <strong>DISPATCHED</strong>.
+              </div>
+            </div>
+
+            {/* Required Field: Transporter */}
+            <div>
+              <AppInput
+                label="Transporter / Logistics Carrier *"
+                data-testid="input-transporter"
+                placeholder="e.g. VRL Logistics Ltd, Mahindra Logistics"
+                value={transporterInput}
+                onChange={(e) => {
+                  setTransporterInput(e.target.value);
+                  if (formValidationErrors.transporter) {
+                    setFormValidationErrors((prev) => ({ ...prev, transporter: '' }));
+                  }
+                }}
+                required
+              />
+              {formValidationErrors.transporter && (
+                <div style={{ color: '#ef4444', fontSize: '11px', marginTop: '4px' }}>
+                  {formValidationErrors.transporter}
+                </div>
+              )}
+            </div>
+
+            {/* Required Field: Vehicle Number */}
+            <div>
+              <AppInput
+                label="Vehicle Registration Number *"
+                data-testid="input-vehicle-number"
+                placeholder="e.g. MH-12-AB-1234, KA01AB1234"
+                value={vehicleNumberInput}
+                onChange={(e) => {
+                  setVehicleNumberInput(e.target.value);
+                  if (formValidationErrors.vehicleNumber) {
+                    setFormValidationErrors((prev) => ({ ...prev, vehicleNumber: '' }));
+                  }
+                }}
+                required
+              />
+              {formValidationErrors.vehicleNumber && (
+                <div style={{ color: '#ef4444', fontSize: '11px', marginTop: '4px' }}>
+                  {formValidationErrors.vehicleNumber}
+                </div>
+              )}
+            </div>
+
+            {/* Required Field: Dispatch Date */}
+            <div>
+              <AppInput
+                label="Dispatch Date & Time *"
+                type="datetime-local"
+                data-testid="input-dispatch-date"
+                value={dispatchDateInput}
+                onChange={(e) => {
+                  setDispatchDateInput(e.target.value);
+                  if (formValidationErrors.dispatchDate) {
+                    setFormValidationErrors((prev) => ({ ...prev, dispatchDate: '' }));
+                  }
+                }}
+                required
+              />
+              {formValidationErrors.dispatchDate && (
+                <div style={{ color: '#ef4444', fontSize: '11px', marginTop: '4px' }}>
+                  {formValidationErrors.dispatchDate}
+                </div>
+              )}
+            </div>
+
+            {/* Optional Field: E-Way Bill Number */}
+            <div>
+              <AppInput
+                label="E-Way Bill Number (Optional)"
+                data-testid="input-eway-bill"
+                placeholder="Optional: 12-digit numeric (e.g. 101234567890) or standard identifier"
+                value={ewayBillInput}
+                onChange={(e) => {
+                  setEwayBillInput(e.target.value);
+                  if (formValidationErrors.ewayBillNumber) {
+                    setFormValidationErrors((prev) => ({ ...prev, ewayBillNumber: '' }));
+                  }
+                }}
+              />
+              {formValidationErrors.ewayBillNumber && (
+                <div style={{ color: '#ef4444', fontSize: '11px', marginTop: '4px' }}>
+                  {formValidationErrors.ewayBillNumber}
+                </div>
+              )}
+            </div>
+
+            {/* Optional Field: Gate / Shipping Remarks */}
+            <AppInput
+              label="Gate Remarks (Optional)"
+              data-testid="input-transport-remarks"
+              placeholder="e.g. Cleared at North Gate, seals intact"
+              value={transportRemarksInput}
+              onChange={(e) => setTransportRemarksInput(e.target.value)}
+            />
+          </form>
+        )}
       </AppDialog>
     </PageContainer>
   );

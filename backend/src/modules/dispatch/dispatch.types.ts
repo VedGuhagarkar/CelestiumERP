@@ -117,6 +117,7 @@ export interface IDispatchDeliveryInformation {
 
 export interface IDispatchCarrier {
   carrierName?: string;
+  transporter?: string;
   transportMode: TransportMode;
   trackingNumber?: string;
   freightBillNumber?: string;
@@ -224,9 +225,15 @@ export interface IDispatchConsignment {
   totalNetWeightKg?: number;
   totalGrossWeightKg?: number;
   carrier: IDispatchCarrier;
+  transporter?: string;
   vehicle?: IDispatchVehicle;
+  vehicleNumber?: string;
+  dispatchDate?: Date;
+  ewayBillNumber?: string;
   driver?: IDispatchDriver;
   timeline: IDispatchTimeline;
+  dispatchedBy?: IActorSnapshot;
+  dispatchedAt?: Date;
   approvals?: IDispatchApprovals;
   gatePass?: IDispatchGatePass;
   proofOfDelivery?: IDispatchProofOfDelivery;
@@ -285,13 +292,32 @@ export interface ApproveDispatchDto {
   approvalNotes?: string;
 }
 
-export interface DepartDispatchDto {
-  securityOfficerName: string;
+export interface PhysicalDispatchDto {
+  transporter?: string;
+  carrierName?: string;
+  vehicleNumber?: string;
+  dispatchDate?: string | Date;
+  ewayBillNumber?: string;
+  securityOfficerName?: string;
+  sealNumber?: string;
+  remarks?: string;
+  driverName?: string;
+  driverPhone?: string;
+  driverLicenseNumber?: string;
+  transportMode?: TransportMode;
+  notes?: string;
+  dispatchedBy?: any; // Ignored if supplied by client in favor of authenticated actor
+}
+
+export interface DepartDispatchDto extends Partial<PhysicalDispatchDto> {
+  actualDepartureTime?: string | Date;
+  securityOfficerName?: string;
   sealNumber?: string;
   remarks?: string;
 }
 
 export interface DeliverDispatchDto {
+  actualDeliveryTime?: string | Date;
   receiverName: string;
   receiverSignatureRef?: string;
   podDocumentUrl?: string;

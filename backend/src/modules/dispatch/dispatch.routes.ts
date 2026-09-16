@@ -14,6 +14,7 @@ import {
   scheduleDispatchSchema,
   approveDispatchSchema,
   departDispatchSchema,
+  physicalDispatchSchema,
   deliverDispatchSchema,
   cancelDispatchSchema,
   queryDispatchesSchema
@@ -140,6 +141,27 @@ dispatchRouter.post(
   ),
   validateRequest({ body: departDispatchSchema }),
   dispatchController.recordDeparture
+);
+
+// 8b. Complete Physical Dispatch (Transport Validation, Storage Release & BO Dispatched Transition)
+dispatchRouter.post(
+  '/:id/dispatch',
+  requireAnyPermission(
+    PERMISSIONS.DISPATCH_DELIVERY_DISPATCH,
+    PERMISSIONS.DISPATCH_PASS_GENERATE
+  ),
+  validateRequest({ body: physicalDispatchSchema }),
+  dispatchController.completePhysicalDispatch
+);
+
+dispatchRouter.post(
+  '/outward-challan/:id/dispatch',
+  requireAnyPermission(
+    PERMISSIONS.DISPATCH_DELIVERY_DISPATCH,
+    PERMISSIONS.DISPATCH_PASS_GENERATE
+  ),
+  validateRequest({ body: physicalDispatchSchema }),
+  dispatchController.completePhysicalDispatch
 );
 
 // 9. Confirm Customer Delivery & Log POD

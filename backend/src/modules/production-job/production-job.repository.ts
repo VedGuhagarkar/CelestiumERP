@@ -65,6 +65,14 @@ export interface IProductionJobRepository {
     outwardChallanDate: Date
   ): Promise<ProductionJobDocument | null>;
   atomicUnlinkOutwardChallan(tenantId: string, jobId: string): Promise<void>;
+  atomicMarkDispatched(
+    tenantId: string,
+    jobId: string,
+    details: {
+      dispatchedAt: Date;
+      dispatchedBy: { userId: string; email?: string; role?: string };
+    }
+  ): Promise<ProductionJobDocument | null>;
   findConflictingJobs(
     tenantId: string,
     furnaceId: string,
@@ -875,6 +883,64 @@ export class ProductionJobRepository
             outwardChallanDate: null
           }
         }
+      )
+      .exec();
+  }
+
+  public async atomicMarkDispatched(
+    tenantId: string,
+    jobId: string,
+    details: {
+      dispatchedAt: Date;
+      dispatchedBy: { userId: string; email?: string; role?: string };
+    }
+  ): Promise<ProductionJobDocument | null> {
+    if (mongoose.connection.readyState === 0) return null;
+    const idFilter: any = mongoose.isValidObjectId(jobId)
+      ? { _id: jobId }
+      : { $or: [{ _id: jobId }, { jobNumber: jobId }, { boNumber: jobId }, { id: jobId }] };
+
+    const filter: any = {
+      ...idFilter,
+      tenantId,
+      status: { $ne: 'DISPATCHED' },
+      dispatched: { $ne: true },
+      'workflowState.dispatched': { $ne: true },
+      outwardChallanNumber: { $exists: true, $nin: [null, undefined, ''] },
+      $or: [
+        { waitingForDispatch: true },
+        { 'workflowState.waitingForDispatch': true },
+        { status: 'WAITING_FOR_DISPATCH' },
+        { status: 'STORAGE' },
+        { status: 'READY_FOR_DISPATCH' }
+      ],
+      isDeleted: false
+    };
+
+    return this.model
+      .findOneAndUpdate(
+        filter,
+        {
+          $set: {
+            status: 'DISPATCHED',
+            dispatched: true,
+            waitingForDispatch: false,
+            'workflowState.dispatched': true,
+            'workflowState.waitingForDispatch': false,
+            dispatchedAt: details.dispatchedAt,
+            dispatchedBy: details.dispatchedBy
+          },
+          $push: {
+            transitionHistory: {
+              fromStatus: 'WAITING_FOR_DISPATCH',
+              toStatus: 'DISPATCHED',
+              timestamp: details.dispatchedAt,
+              performedBy: details.dispatchedBy,
+              reason: 'Material physically dispatched to carrier and cleared factory gate.'
+            }
+          }
+        },
+        { new: true }
       )
       .exec();
   }

@@ -66,14 +66,145 @@ export const approveDispatchSchema = z.object({
   approvalNotes: z.string().optional()
 });
 
-export const departDispatchSchema = z.object({
-  securityOfficerName: z.string().min(2, 'Security officer name is required for gate clearance'),
-  sealNumber: z.string().optional(),
-  vehicleNumber: z.string().optional(),
-  driverName: z.string().optional(),
-  actualDepartureTime: z.string().datetime().optional(),
-  notes: z.string().optional()
-});
+export function validateTransporter(val?: string | null): boolean {
+  if (!val || typeof val !== 'string') return false;
+  const trimmed = val.trim();
+  if (trimmed.length < 2 || trimmed.length > 100) return false;
+  const meaningless = /^(na|n\/a|none|null|nil|unknown|test|---|--|\.\.\.|\.|\_)$/i;
+  if (meaningless.test(trimmed)) return false;
+  const alphanumericCount = (trimmed.match(/[a-zA-Z0-9]/g) || []).length;
+  return alphanumericCount >= 2;
+}
+
+export function validateVehicleNumber(val?: string | null): boolean {
+  if (!val || typeof val !== 'string') return false;
+  const trimmed = val.trim().toUpperCase();
+  if (trimmed.length < 5 || trimmed.length > 20) return false;
+  const meaningless = /^(invalid|unknown|placeholder|vehicle|truck|car|none|null|n\/a|\?\?\?)$/i;
+  if (meaningless.test(trimmed)) return false;
+
+  const indianFormat = /^[A-Z]{2}[ -]?[0-9]{1,2}(?:[ -]?[A-Z]{1,3})?[ -]?[0-9]{4}$/;
+  const fleetFormat = /^[A-Z0-9- ]{5,20}$/;
+  const hasLetters = /[A-Z]/.test(trimmed);
+  const hasDigits = /[0-9]/.test(trimmed);
+
+  return indianFormat.test(trimmed) || (fleetFormat.test(trimmed) && hasLetters && hasDigits);
+}
+
+export function validateEwayBillNumber(val?: string | null): boolean {
+  if (val === undefined || val === null || val === '') return true; // Optional
+  const trimmed = val.trim();
+  const numeric12 = /^\d{12}$/;
+  const ewbPattern = /^EWB-[A-Z0-9-]{6,16}$/i;
+  const alphanumeric12to18 = /^[A-Z0-9]{12,18}$/i;
+  return numeric12.test(trimmed) || ewbPattern.test(trimmed) || alphanumeric12to18.test(trimmed);
+}
+
+export function validateDispatchDate(val?: any): boolean {
+  if (!val) return false;
+  const d = new Date(val);
+  return !isNaN(d.getTime());
+}
+
+export const physicalDispatchSchema = z
+  .object({
+    transporter: z.string().optional(),
+    carrierName: z.string().optional(),
+    vehicleNumber: z.string({ required_error: 'Vehicle number is required' }).min(1, 'Vehicle number is required'),
+    dispatchDate: z.any({ required_error: 'Dispatch date is required' }),
+    ewayBillNumber: z.string().optional().nullable(),
+    securityOfficerName: z.string().optional(),
+    sealNumber: z.string().optional(),
+    remarks: z.string().optional(),
+    notes: z.string().optional(),
+    driverName: z.string().optional(),
+    driverPhone: z.string().optional(),
+    driverLicenseNumber: z.string().optional(),
+    transportMode: TransportModeEnum.optional().default('ROAD')
+  })
+  .passthrough()
+  .superRefine((data, ctx) => {
+    const rawTransporter = data.transporter || data.carrierName;
+    if (!rawTransporter || !validateTransporter(rawTransporter)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['transporter'],
+        message: 'A valid transporter name is required (min 2 meaningful characters, no placeholders)'
+      });
+    }
+
+    if (!data.vehicleNumber || !validateVehicleNumber(data.vehicleNumber)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['vehicleNumber'],
+        message: 'A valid vehicle registration number is required (e.g. MH-12-AB-9901 or standard fleet pattern)'
+      });
+    }
+
+    if (!validateDispatchDate(data.dispatchDate)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['dispatchDate'],
+        message: 'A valid dispatch date is required'
+      });
+    }
+
+    if (data.ewayBillNumber !== undefined && data.ewayBillNumber !== null && data.ewayBillNumber !== '') {
+      if (!validateEwayBillNumber(data.ewayBillNumber)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['ewayBillNumber'],
+          message: 'Invalid E-Way Bill format. Must be a 12-digit numeric or standard E-Way Bill identifier'
+        });
+      }
+    }
+  });
+
+export const departDispatchSchema = z
+  .object({
+    transporter: z.string().optional(),
+    carrierName: z.string().optional(),
+    vehicleNumber: z.string().optional(),
+    dispatchDate: z.any().optional(),
+    ewayBillNumber: z.string().optional().nullable(),
+    securityOfficerName: z.string().min(2, 'Security officer name is required for gate clearance').optional(),
+    sealNumber: z.string().optional(),
+    actualDepartureTime: z.string().optional(),
+    notes: z.string().optional(),
+    remarks: z.string().optional()
+  })
+  .passthrough()
+  .superRefine((data, ctx) => {
+    const rawTransporter = data.transporter || data.carrierName;
+    if (rawTransporter && !validateTransporter(rawTransporter)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['transporter'],
+        message: 'Invalid transporter name provided'
+      });
+    }
+    if (data.vehicleNumber && !validateVehicleNumber(data.vehicleNumber)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['vehicleNumber'],
+        message: 'Invalid vehicle number format provided'
+      });
+    }
+    if (data.dispatchDate && !validateDispatchDate(data.dispatchDate)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['dispatchDate'],
+        message: 'Invalid dispatch date provided'
+      });
+    }
+    if (data.ewayBillNumber && !validateEwayBillNumber(data.ewayBillNumber)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['ewayBillNumber'],
+        message: 'Invalid E-Way Bill format'
+      });
+    }
+  });
 
 export const deliverDispatchSchema = z.object({
   receiverName: z.string().min(2, 'Receiver name is required for Proof of Delivery'),
@@ -89,18 +220,50 @@ export const cancelDispatchSchema = z.object({
   cancellationReason: z.string().min(5, 'A clear cancellation reason is mandatory (min 5 chars)')
 });
 
-export const createOutwardChallanSchema = z.object({
-  batchOrderId: z.string().min(1, 'Batch Order ID is required'),
-  grnId: z.string().optional(),
-  poId: z.string().optional(),
-  carrierName: z.string().optional(),
-  transportMode: TransportModeEnum.optional().default('ROAD'),
-  vehicleNumber: z.string().optional(),
-  driverName: z.string().optional(),
-  destinationAddress: z.string().optional(),
-  packageDetails: PackageDetailsSchema.optional(),
-  notes: z.string().optional()
-}).passthrough();
+export const createOutwardChallanSchema = z
+  .object({
+    batchOrderId: z.string().min(1, 'Batch Order ID is required'),
+    grnId: z.string().optional(),
+    poId: z.string().optional(),
+    transporter: z.string().optional(),
+    carrierName: z.string().optional(),
+    transportMode: TransportModeEnum.optional().default('ROAD'),
+    vehicleNumber: z.string().optional(),
+    driverName: z.string().optional(),
+    destinationAddress: z.string().optional(),
+    packageDetails: PackageDetailsSchema.optional(),
+    notes: z.string().optional()
+  })
+  .passthrough()
+  .superRefine((data: any, ctx) => {
+    const rawTransporter = data.transporter || data.carrierName;
+    if (rawTransporter !== undefined && !validateTransporter(rawTransporter)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['transporter'],
+        message: 'Invalid transporter provided'
+      });
+    }
+    if (data.vehicleNumber !== undefined && !validateVehicleNumber(data.vehicleNumber)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['vehicleNumber'],
+        message: 'Invalid vehicle number format provided'
+      });
+    }
+    if (
+      data.ewayBillNumber !== undefined &&
+      data.ewayBillNumber !== null &&
+      data.ewayBillNumber !== '' &&
+      !validateEwayBillNumber(data.ewayBillNumber)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['ewayBillNumber'],
+        message: 'Invalid E-Way Bill format'
+      });
+    }
+  });
 
 export const queryDispatchesSchema = z.object({
   status: DispatchStatusEnum.optional(),

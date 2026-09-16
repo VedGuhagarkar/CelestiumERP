@@ -215,4 +215,125 @@ describe('DispatchPage & Outward Challan Workflow', () => {
       expect(screen.getByText(/METALLURGICAL HEAT-TREATMENT SPECIFICATIONS & RESULTS/i)).toBeDefined();
     });
   });
+
+  it('opens the Complete Physical Dispatch modal and displays required transport fields and authoritative banner', async () => {
+    render(
+      <MemoryRouter>
+        <DispatchPage />
+      </MemoryRouter>
+    );
+
+    const tabActiveConsignments = screen.getByTestId('tab-active-consignments');
+    fireEvent.click(tabActiveConsignments);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('btn-dispatch-DSP-202608-0001')).toBeDefined();
+    });
+
+    const dispatchBtn = screen.getByTestId('btn-dispatch-DSP-202608-0001');
+    fireEvent.click(dispatchBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Complete Physical Dispatch/i)).toBeDefined();
+      expect(screen.getByText(/AUTHORITATIVE DISPATCH & INVENTORY CONTEXT/i)).toBeDefined();
+    });
+
+    // Verify required inputs are present
+    expect(screen.getByTestId('input-transporter')).toBeDefined();
+    expect(screen.getByTestId('input-vehicle-number')).toBeDefined();
+    expect(screen.getByTestId('input-dispatch-date')).toBeDefined();
+    expect(screen.getByTestId('input-eway-bill')).toBeDefined();
+    expect(screen.getByTestId('input-transport-remarks')).toBeDefined();
+    expect(screen.getByTestId('btn-submit-physical-dispatch')).toBeDefined();
+  });
+
+  it('validates required transport fields, rejects meaningless values, and completes physical dispatch upon valid submission', async () => {
+    let capturedPayload: any = null;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      const urlStr = url.toString();
+      if (urlStr.includes('/dispatch') && init?.method === 'POST') {
+        capturedPayload = JSON.parse(init.body as string);
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            success: true,
+            data: {
+              dispatchNumber: 'DSP-202608-0001',
+              status: 'DISPATCHED',
+              transporter: capturedPayload.transporter,
+              vehicleNumber: capturedPayload.vehicleNumber,
+              dispatchDate: capturedPayload.dispatchDate,
+              ewayBillNumber: capturedPayload.ewayBillNumber
+            }
+          })
+        } as Response;
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: [] })
+      } as Response;
+    });
+
+    render(
+      <MemoryRouter>
+        <DispatchPage />
+      </MemoryRouter>
+    );
+
+    const tabActiveConsignments = screen.getByTestId('tab-active-consignments');
+    fireEvent.click(tabActiveConsignments);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('btn-dispatch-DSP-202608-0001')).toBeDefined();
+    });
+
+    const dispatchBtn = screen.getByTestId('btn-dispatch-DSP-202608-0001');
+    fireEvent.click(dispatchBtn);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('btn-submit-physical-dispatch')).toBeDefined();
+    });
+
+    // 1. Test validation failure on meaningless transporter
+    const transporterInput = screen.getByTestId('input-transporter');
+    const vehicleInput = screen.getByTestId('input-vehicle-number');
+    const submitBtn = screen.getByTestId('btn-submit-physical-dispatch');
+
+    fireEvent.change(transporterInput, { target: { value: 'N/A' } });
+    fireEvent.change(vehicleInput, { target: { value: 'MH-12-AB-1234' } });
+    fireEvent.click(submitBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Meaningless or placeholder transporter values are not permitted/i)).toBeDefined();
+    });
+
+    // 2. Test validation failure on invalid vehicle number
+    fireEvent.change(transporterInput, { target: { value: 'VRL Logistics Express' } });
+    fireEvent.change(vehicleInput, { target: { value: '123' } });
+    fireEvent.click(submitBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Vehicle number is required \(minimum 5 characters/i)).toBeDefined();
+    });
+
+    // 3. Valid submission
+    fireEvent.change(transporterInput, { target: { value: 'VRL Logistics Express Ltd' } });
+    fireEvent.change(vehicleInput, { target: { value: 'MH-12-AB-1234' } });
+    const ewayInput = screen.getByTestId('input-eway-bill');
+    fireEvent.change(ewayInput, { target: { value: '101234567890' } });
+
+    fireEvent.click(submitBtn);
+
+    await waitFor(() => {
+      expect(capturedPayload).not.toBeNull();
+      expect(capturedPayload.transporter).toBe('VRL Logistics Express Ltd');
+      expect(capturedPayload.vehicleNumber).toBe('MH-12-AB-1234');
+      expect(capturedPayload.ewayBillNumber).toBe('101234567890');
+      expect(screen.getByText(/Physical dispatch completed for OC/i)).toBeDefined();
+    });
+
+    fetchSpy.mockRestore();
+  });
 });

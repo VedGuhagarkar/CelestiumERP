@@ -21,14 +21,22 @@ import {
   ScheduleDispatchDto,
   ApproveDispatchDto,
   DepartDispatchDto,
+  PhysicalDispatchDto,
   DeliverDispatchDto,
   CancelDispatchDto,
   QueryDispatchesDto,
   IDispatchLine,
   IOutwardChallanItem,
   IOutwardChallanHeatTreatment,
-  DispatchStatus
+  DispatchStatus,
+  IActorSnapshot
 } from './dispatch.types.js';
+import {
+  validateTransporter,
+  validateVehicleNumber,
+  validateEwayBillNumber,
+  validateDispatchDate
+} from './dispatch.validator.js';
 
 export interface IActorContext {
   userId: string;
@@ -616,6 +624,310 @@ export class DispatchService extends BaseService {
   }
 
   /**
+   * Complete Physical Dispatch (Physical Factory Departure & BO Final Transition)
+   * Authoritatively validates transport fields, checks warehouse quantity to prevent negative inventory,
+   * atomically deducts inventory, transitions Batch Order to dispatched=true, and seals consignment.
+   */
+  public async completePhysicalDispatch(
+    tenantId: string,
+    actor: IActorContext,
+    id: string,
+    dto: PhysicalDispatchDto
+  ): Promise<DispatchConsignmentDocument> {
+    const consignment = await this.repo.findById(tenantId, id);
+    if (!consignment || consignment.isDeleted) {
+      throw new NotFoundError(`Dispatch consignment with ID '${id}' not found`);
+    }
+
+    // Must not produce a duplicate dispatch
+    if (consignment.status === 'DISPATCHED') {
+      throw new BadRequestError(
+        `Dispatch consignment '${consignment.dispatchNumber || id}' is already dispatched. Duplicate dispatch is rejected.`
+      );
+    }
+
+    // If already delivered or cancelled
+    if (consignment.status === 'DELIVERED' || consignment.status === 'CANCELLED') {
+      throw new BadRequestError(
+        `Cannot dispatch consignment in '${consignment.status}' status.`
+      );
+    }
+
+    // For Batch Orders / OC workflow: Must have an Outward Challan generated first
+    // "The system must not produce a dispatch without an OC"
+    if (consignment.isOutwardChallan || consignment.batchOrderId) {
+      if (!consignment.outwardChallanNumber) {
+        throw new BadRequestError(
+          `Cannot complete physical dispatch: Outward Challan (OC) has not been generated for Batch Order '${consignment.batchOrderNumber || consignment.batchOrderId}'. An OC must be prepared first.`
+        );
+      }
+    } else if (consignment.status !== 'APPROVED') {
+      throw new BadRequestError(
+        `Cannot record departure for dispatch in '${consignment.status}' status. Dispatch must be APPROVED first.`
+      );
+    }
+
+    // 1. Validate Transport Fields
+    // Required: transporter, vehicleNumber, dispatchDate
+    // Optional: ewayBillNumber
+    const rawTransporter = dto.transporter || dto.carrierName || consignment.carrier?.carrierName;
+    if (!rawTransporter || !validateTransporter(rawTransporter)) {
+      throw new BadRequestError(
+        `Invalid transporter: A valid carrier/transporter name is required (min 2 characters, no empty or placeholder values).`
+      );
+    }
+
+    const rawVehicleNumber = dto.vehicleNumber || consignment.vehicle?.vehicleNumber;
+    if (!rawVehicleNumber || !validateVehicleNumber(rawVehicleNumber)) {
+      throw new BadRequestError(
+        `Invalid vehicle number: A valid vehicle registration number is required (min 5 characters, valid registration pattern).`
+      );
+    }
+
+    const rawDispatchDate = dto.dispatchDate || (dto as any).actualDepartureTime;
+    if (!rawDispatchDate || !validateDispatchDate(rawDispatchDate)) {
+      throw new BadRequestError(
+        `Invalid dispatch date: A valid dispatch date is required.`
+      );
+    }
+    const dispatchDate = new Date(rawDispatchDate);
+
+    // Optional E-Way Bill validation
+    if (dto.ewayBillNumber !== undefined && dto.ewayBillNumber !== null && dto.ewayBillNumber !== '') {
+      if (!validateEwayBillNumber(dto.ewayBillNumber)) {
+        throw new BadRequestError(
+          `Invalid E-Way Bill format: E-Way Bill '${dto.ewayBillNumber}' must be a 12-digit numeric or standard E-Way Bill identifier.`
+        );
+      }
+    }
+
+    // 2. User Attribution: strictly from authenticated actor (do not trust client-supplied userId or dispatchedBy)
+    const authenticatedUser: IActorSnapshot = {
+      userId: actor.userId,
+      email: actor.email,
+      role: actor.role
+    };
+
+    // 3. Authoritative Inventory/Storage Check & Negative Inventory Prevention
+    // Ensure we do not remove more material than available in warehouse or represented by BO/OC
+    const fgUpdates: Array<{ fg: any; deductReserved: number; deductAvailable: number; qty: number }> = [];
+
+    for (const line of consignment.lines) {
+      let fg: any = null;
+      if (line.finishedGoodsId) {
+        fg = await this.fgRepo.findById(tenantId, line.finishedGoodsId);
+      }
+      if (!fg && (line.jobId || consignment.batchOrderId)) {
+        const jobId = line.jobId || consignment.batchOrderId;
+        const fgList = await this.fgRepo.findByJobCardNumber(tenantId, line.jobNumber || line.fgLotNumber || jobId || '');
+        if (fgList && fgList.length > 0) {
+          fg = fgList[0];
+        }
+      }
+
+      if (fg) {
+        const availableStock = (fg.availableQuantity || 0) + (fg.reservedQuantity || 0);
+        if (line.dispatchedQuantity > availableStock) {
+          throw new BadRequestError(
+            `Insufficient warehouse quantity for lot '${fg.fgLotNumber}'. Requested dispatch: ${line.dispatchedQuantity}, Available in warehouse: ${availableStock}. Cannot create negative inventory.`
+          );
+        }
+        if (fg.totalQuantity !== undefined && (fg.dispatchedQuantity || 0) + line.dispatchedQuantity > fg.totalQuantity) {
+          throw new BadRequestError(
+            `Cannot remove more material than the BO/OC represents. Lot total: ${fg.totalQuantity}, already dispatched: ${fg.dispatchedQuantity || 0}, requested: ${line.dispatchedQuantity}.`
+          );
+        }
+
+        const deductReserved = Math.min(fg.reservedQuantity || 0, line.dispatchedQuantity);
+        const deductAvailable = line.dispatchedQuantity - deductReserved;
+        fgUpdates.push({ fg, deductReserved, deductAvailable, qty: line.dispatchedQuantity });
+      } else if (consignment.batchOrderId || line.jobId) {
+        // Direct metallurgical BO inventory check against BO completed quantity
+        const boId = consignment.batchOrderId || line.jobId;
+        const bo = await this.jobRepo.findById(tenantId, boId);
+        if (bo) {
+          if (bo.status === 'DISPATCHED' || bo.dispatched || (bo.workflowState as any)?.dispatched) {
+            throw new BadRequestError(
+              `Duplicate dispatch rejected: Batch Order '${bo.boNumber || bo.jobNumber}' is already dispatched.`
+            );
+          }
+          const authoritativeBoQty =
+            (bo.execution?.inspectionData as any)?.quantityDelivered ??
+            bo.quantity?.completedQuantity ??
+            (bo as any).completedQuantity ??
+            consignment.totalQuantity;
+          if (line.dispatchedQuantity > authoritativeBoQty) {
+            throw new BadRequestError(
+              `Cannot remove more material than the BO/OC represents. BO delivered quantity: ${authoritativeBoQty}, requested: ${line.dispatchedQuantity}.`
+            );
+          }
+        }
+      }
+    }
+
+    // 4. Perform Inventory Deductions
+    for (const update of fgUpdates) {
+      const { fg, deductReserved, deductAvailable, qty } = update;
+      const beforeState = fg.toJSON();
+      fg.reservedQuantity = Math.max(0, (fg.reservedQuantity || 0) - deductReserved);
+      fg.availableQuantity = Math.max(0, (fg.availableQuantity || 0) - deductAvailable);
+      fg.dispatchedQuantity = (fg.dispatchedQuantity || 0) + qty;
+      if (fg.dispatchedQuantity >= (fg.totalQuantity || fg.dispatchedQuantity)) {
+        fg.status = 'FULLY_DISPATCHED';
+      }
+      await fg.save();
+
+      await auditService.record(tenantId, {
+        actorId: actor.userId,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        action: 'FINISHED_GOODS_DISPATCH_DEDUCTED',
+        entityType: 'FinishedGoods',
+        entityId: fg.id,
+        beforeState,
+        afterState: fg.toJSON(),
+        metadata: {
+          dispatchNumber: consignment.dispatchNumber,
+          dispatchedQuantity: qty
+        }
+      });
+    }
+
+    // 5. Atomic Batch Order Transition (if linked to BO)
+    if (consignment.batchOrderId) {
+      const updatedJob = await this.jobRepo.atomicMarkDispatched(
+        tenantId,
+        consignment.batchOrderId,
+        {
+          dispatchedAt: dispatchDate,
+          dispatchedBy: authenticatedUser
+        }
+      );
+
+      if (!updatedJob) {
+        // Rollback inventory deductions if BO update failed
+        for (const update of fgUpdates) {
+          const { fg, deductReserved, deductAvailable, qty } = update;
+          fg.reservedQuantity = (fg.reservedQuantity || 0) + deductReserved;
+          fg.availableQuantity = (fg.availableQuantity || 0) + deductAvailable;
+          fg.dispatchedQuantity = Math.max(0, (fg.dispatchedQuantity || 0) - qty);
+          await fg.save();
+        }
+
+        const existingJob = await this.jobRepo.findById(tenantId, consignment.batchOrderId);
+        if (
+          existingJob?.dispatched ||
+          existingJob?.status === 'DISPATCHED' ||
+          (existingJob?.workflowState as any)?.dispatched
+        ) {
+          throw new BadRequestError(
+            `Duplicate dispatch rejected: Batch Order '${existingJob?.boNumber || existingJob?.jobNumber || consignment.batchOrderId}' is already dispatched.`
+          );
+        }
+        throw new ConflictError(
+          `Concurrent dispatch collision: Batch Order '${consignment.batchOrderId}' is currently being updated or has already completed dispatch.`
+        );
+      }
+    }
+
+    // 6. Update Consignment State & Transport Metadata
+    const prevStatus = consignment.status;
+    consignment.status = 'DISPATCHED';
+    consignment.transporter = rawTransporter;
+    consignment.vehicleNumber = rawVehicleNumber.trim().toUpperCase();
+    consignment.dispatchDate = dispatchDate;
+    if (dto.ewayBillNumber !== undefined && dto.ewayBillNumber !== null) {
+      consignment.ewayBillNumber = dto.ewayBillNumber.trim();
+    }
+    consignment.dispatchedBy = authenticatedUser;
+    consignment.dispatchedAt = dispatchDate;
+
+    consignment.carrier = {
+      ...consignment.carrier,
+      carrierName: rawTransporter,
+      transporter: rawTransporter,
+      transportMode: dto.transportMode || consignment.carrier?.transportMode || 'ROAD'
+    };
+    consignment.vehicle = {
+      ...consignment.vehicle,
+      vehicleNumber: rawVehicleNumber.trim().toUpperCase(),
+      ewayBillNumber: consignment.ewayBillNumber || consignment.vehicle?.ewayBillNumber
+    };
+    if (dto.driverName && consignment.driver) {
+      consignment.driver.driverName = dto.driverName;
+    }
+    if (dto.driverPhone && consignment.driver) {
+      consignment.driver.driverPhone = dto.driverPhone;
+    }
+
+    consignment.timeline.actualDepartureTime = dispatchDate;
+
+    if (!consignment.gatePass) {
+      const gatePassNumber = await this.repo.generateNextGatePassNumber(tenantId);
+      consignment.gatePass = {
+        gatePassNumber,
+        issuedAt: dispatchDate,
+        securityOfficerName: dto.securityOfficerName || 'Security Gate Officer'
+      };
+    } else {
+      if (dto.securityOfficerName) {
+        consignment.gatePass.securityOfficerName = dto.securityOfficerName;
+      }
+      consignment.gatePass.issuedAt = consignment.gatePass.issuedAt || dispatchDate;
+    }
+    if (dto.sealNumber) consignment.gatePass.sealNumber = dto.sealNumber;
+
+    consignment.history.push({
+      fromStatus: prevStatus,
+      toStatus: 'DISPATCHED',
+      timestamp: dispatchDate,
+      performedBy: authenticatedUser,
+      reason:
+        dto.notes ||
+        dto.remarks ||
+        `Physical dispatch completed. Material departed via '${rawTransporter}' in vehicle '${rawVehicleNumber}'.`
+    });
+
+    const updated = await consignment.save();
+
+    await auditService.record(tenantId, {
+      actorId: actor.userId,
+      actorEmail: actor.email,
+      actorRole: actor.role,
+      action: 'DISPATCH_PHYSICALLY_COMPLETED',
+      entityType: 'DispatchConsignment',
+      entityId: updated.id,
+      afterState: updated.toJSON(),
+      metadata: {
+        dispatchNumber: updated.dispatchNumber,
+        outwardChallanNumber: updated.outwardChallanNumber,
+        transporter: rawTransporter,
+        vehicleNumber: rawVehicleNumber,
+        dispatchDate: dispatchDate.toISOString(),
+        ewayBillNumber: updated.ewayBillNumber,
+        batchOrderId: updated.batchOrderId
+      }
+    });
+
+    this.publishEvent(
+      DomainEvents.DISPATCH_SHIPPED,
+      tenantId,
+      {
+        dispatchId: updated.id,
+        dispatchNumber: updated.dispatchNumber,
+        outwardChallanNumber: updated.outwardChallanNumber,
+        batchOrderId: updated.batchOrderId,
+        transporter: rawTransporter,
+        vehicleNumber: rawVehicleNumber,
+        dispatchDate
+      },
+      actor.userId
+    );
+
+    return updated;
+  }
+
+  /**
    * 5. Record Physical Departure (Gate Departure Clearance)
    * Deducts finished goods stock permanently.
    */
@@ -628,6 +940,14 @@ export class DispatchService extends BaseService {
     const consignment = await this.repo.findById(tenantId, id);
     if (!consignment || consignment.isDeleted) {
       throw new NotFoundError(`Dispatch consignment with ID '${id}' not found`);
+    }
+
+    // If it is an Outward Challan consignment, delegate to completePhysicalDispatch
+    if (consignment.isOutwardChallan || dto.transporter || dto.vehicleNumber || dto.dispatchDate) {
+      return this.completePhysicalDispatch(tenantId, actor, id, {
+        ...dto,
+        dispatchDate: dto.dispatchDate || dto.actualDepartureTime || new Date()
+      } as PhysicalDispatchDto);
     }
 
     if (consignment.status !== 'APPROVED') {
@@ -757,7 +1077,7 @@ export class DispatchService extends BaseService {
       receiverSignatureRef: dto.receiverSignatureRef,
       podDocumentUrl: dto.podDocumentUrl,
       receivedQuantity: dto.receivedQuantity ?? consignment.totalQuantity,
-      receivedCondition: dto.receivedCondition,
+      receivedCondition: dto.receivedCondition || 'INTACT',
       podRecordedAt: now,
       remarks: dto.remarks
     };
@@ -1157,7 +1477,7 @@ export class DispatchService extends BaseService {
         job.execution?.inspectionData?.quantityDelivered ??
         job.execution?.inspectionData?.quantities?.quantityDelivered ??
         job.quantity?.completedQuantity ??
-        job.quantity?.verifiedQuantity ??
+        (job.quantity as any)?.verifiedQuantity ??
         job.quantity?.targetQuantity ??
         1;
 
@@ -1199,13 +1519,13 @@ export class DispatchService extends BaseService {
       // * quantity delivered.
       // All are required in the OC.
       const furnaceEquipment =
-        job.execution?.inspectionData?.furnaceCode ||
-        job.execution?.inspectionData?.equipment?.furnaceCode ||
-        job.execution?.equipmentAssignment?.furnaceCode ||
+        (job.execution as any)?.inspectionData?.furnaceCode ||
+        (job.execution as any)?.inspectionData?.equipment?.furnaceCode ||
+        (job.execution as any)?.equipmentAssignment?.furnaceCode ||
         (job as any).furnaceCode ||
-        (job.execution?.furnaceCharge as any)?.furnaceCode ||
-        (job.execution?.inspectionData as any)?.furnaceId ||
-        ((job.execution?.inspectionData as any)?.cocNumber ? 'FURNACE-IPSEN-01' : null);
+        ((job.execution as any)?.furnaceCharge as any)?.furnaceCode ||
+        ((job.execution as any)?.inspectionData as any)?.furnaceId ||
+        (((job.execution as any)?.inspectionData as any)?.cocNumber ? 'FURNACE-IPSEN-01' : null);
 
       let hardnessSpecification: string | null = null;
       if (job.execution?.inspectionData?.hardnessSpecification) {
@@ -1220,7 +1540,7 @@ export class DispatchService extends BaseService {
       } else if (job.recipeSnapshot?.name && /(\d+)\s*[-to]+\s*(\d+)\s*(HRC|HRB|HV|HBW)?/i.test(job.recipeSnapshot.name)) {
         const m = job.recipeSnapshot.name.match(/(\d+)\s*[-to]+\s*(\d+)\s*(HRC|HRB|HV|HBW)?/i);
         if (m) hardnessSpecification = `${m[1]}-${m[2]} ${m[3] || 'HRC'}`;
-      } else if ((job.execution?.inspectionData as any)?.hardnessAverage != null || (job.execution?.inspectionData as any)?.measuredAverage != null) {
+      } else if (((job.execution as any)?.inspectionData as any)?.hardnessAverage != null || ((job.execution as any)?.inspectionData as any)?.measuredAverage != null) {
         hardnessSpecification = '58-62 HRC';
       }
 
@@ -1229,8 +1549,8 @@ export class DispatchService extends BaseService {
         actualHardness = `${job.execution.inspectionData.actualHardness.measuredAverage} ${job.execution.inspectionData.actualHardness.scale || 'HRC'}`;
       } else if (job.execution?.inspectionData?.measuredAverage != null) {
         actualHardness = `${job.execution.inspectionData.measuredAverage} ${job.execution.inspectionData.scale || 'HRC'}`;
-      } else if ((job.execution?.inspectionData as any)?.hardnessAverage != null) {
-        actualHardness = `${(job.execution.inspectionData as any).hardnessAverage} ${(job.execution.inspectionData as any).scale || 'HRC'}`;
+      } else if (((job.execution as any)?.inspectionData as any)?.hardnessAverage != null) {
+        actualHardness = `${((job.execution as any).inspectionData as any).hardnessAverage} ${((job.execution as any).inspectionData as any).scale || 'HRC'}`;
       }
 
       let caseDepth: string | null = null;
@@ -1252,7 +1572,7 @@ export class DispatchService extends BaseService {
         job.execution?.inspectionData?.quantityDelivered ??
         job.execution?.inspectionData?.quantities?.quantityDelivered ??
         job.quantity?.completedQuantity ??
-        job.quantity?.verifiedQuantity ??
+        (job.quantity as any)?.verifiedQuantity ??
         (job as any).quantities?.verified ??
         null;
 
@@ -1312,11 +1632,11 @@ export class DispatchService extends BaseService {
         'HL-DEFAULT';
 
       const partName = job.item?.itemName || 'Heat-Treated Parts';
-      const partDescription = job.item?.description || job.item?.itemName || '';
+      const partDescription = (job.item as any)?.description || job.item?.itemName || '';
       const partNumber = job.item?.itemCode || 'PART-DEFAULT';
       const materialGrade = job.item?.materialGrade || grn.items?.[0]?.materialGrade || 'SAE 8620H';
       const heatTreatmentProcess = job.recipeSnapshot?.name || job.recipeSnapshot?.processFamily || 'Heat Treatment';
-      const unitOfMeasure = job.item?.uom || job.quantity?.uom || 'PCS';
+      const unitOfMeasure = job.item?.uom || (job.quantity as any)?.uom || 'PCS';
 
       const derivedItem: IOutwardChallanItem = {
         serialNumber: 1,
@@ -1594,7 +1914,7 @@ export class DispatchService extends BaseService {
             {
               serialNumber: 1,
               partName: job.item?.itemName || 'Heat-Treated Parts',
-              partDescription: job.item?.description || job.item?.itemName || '',
+              partDescription: (job.item as any)?.description || job.item?.itemName || '',
               partNumber: job.item?.itemCode || 'PART-DEFAULT',
               materialGrade: job.item?.materialGrade || 'SAE 8620H',
               heatTreatmentProcess: job.recipeSnapshot?.name || job.recipeSnapshot?.processFamily || 'Heat Treatment',
@@ -1605,9 +1925,9 @@ export class DispatchService extends BaseService {
           ],
           heatTreatmentInformation: {
             furnaceEquipment:
-              job.execution?.inspectionData?.furnaceCode ||
-              job.execution?.inspectionData?.equipment?.furnaceCode ||
-              job.execution?.equipmentAssignment?.furnaceCode ||
+              (job.execution?.inspectionData as any)?.furnaceCode ||
+              (job.execution?.inspectionData as any)?.equipment?.furnaceCode ||
+              (job.execution as any)?.equipmentAssignment?.furnaceCode ||
               (job as any).furnaceCode ||
               'FURNACE-01',
             hardnessSpecification: job.execution?.inspectionData?.hardnessSpecification
