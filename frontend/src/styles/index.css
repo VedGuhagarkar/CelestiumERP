@@ -167,11 +167,14 @@ html, body, #root {
   }
 
   #printable-grn-container,
-  #printable-grn-container * {
+  #printable-grn-container *,
+  #printable-oc-container,
+  #printable-oc-container * {
     visibility: visible;
   }
 
-  #printable-grn-container {
+  #printable-grn-container,
+  #printable-oc-container {
     position: absolute;
     left: 0;
     top: 0;

@@ -95,7 +95,7 @@
    - 8.1 Database Seeding Engine (`backend/src/scripts/seed.ts`)
    - 8.2 Centralized Configuration Subsystem (`backend/src/config/`)
    - 8.3 Operational Runbooks & Technical Specifications (`docs/`)
-   - 8.4 Automated Test Suite Matrix (70 Backend Specs + Frontend Suites)
+   - 8.4 Automated Test Suite Matrix (82 Backend Specs + Frontend Suites)
      - *Prompt 8:* `production-operator-workspace.spec.ts`
      - *Prompt 9:* `production-security-concurrency.spec.ts`
      - *Prompt 10:* `production-e2e-integration.spec.ts`
@@ -107,6 +107,11 @@
      - *Inspection Prompt 7:* `inspection-failure-handling.spec.ts`
      - *Inspection Prompt 9:* `inspection-security-concurrency.spec.ts`
      - *Inspection Prompt 10:* `inspection-e2e-integration.spec.ts`
+     - *Dispatch Prompt 4:* `dispatch-grn-delivery.spec.ts`
+     - *Dispatch Prompt 5:* `dispatch-bo-items.spec.ts`
+     - *Dispatch Prompt 6:* `dispatch-transport-physical.spec.ts`
+     - *Dispatch Prompt 7:* `dispatch-authorization.spec.ts`
+     - *Dispatch Prompt 8:* `dispatch-oc-view-print.spec.ts`
 
 ---
 
@@ -1570,24 +1575,25 @@ _No direct HTTP routes mounted for this internal domain service._
 > **Business Purpose:** Manages the 6-stage dispatch lifecycle, grouping finished jobs into consignments, quality gate verification, carrier scheduling, departure, delivery confirmation, and the authoritative Outward Challan (OC) workflow strictly preserving the unbroken $\text{PO} \longrightarrow \text{GRN} \longrightarrow \text{BO} \longrightarrow \text{OC}$ hierarchy.
 
 #### Models & Schemas
-- **`dispatch.model.ts`** — Mongoose model: `DispatchConsignment`. Exported interfaces: `IDispatchConsignment`, `IOutwardChallanHierarchy`, `IOutwardChallanItem`, `IOutwardChallanHeatTreatment`, `IDispatchDeliveryInformation`, `IDispatchLine`, `IDispatchCarrier`, `IOCUserReference`, `IOCAuthorizedSignatory`, `ICustomerAcknowledgement`. Encapsulates schema definitions, compound tenant indexes (`{ tenantId: 1, outwardChallanNumber: 1 }`, `{ tenantId: 1, batchOrderId: 1 }`, `{ tenantId: 1, grnId: 1 }`, `{ tenantId: 1, poId: 1 }`, `{ tenantId: 1, 'authorizedSignatory.userId': 1 }`, `{ tenantId: 1, 'preparedBy.userId': 1 }`), and data validation rules.
-  - `IDispatchConsignment`: Stores authoritative consignment metadata, including `transporter`, `vehicleNumber`, `dispatchDate`, `ewayBillNumber`, `dispatchedBy` (`IActorSnapshot`), `dispatchedAt`, `preparedBy` (`IOCUserReference`), `authorizedSignatory` (`IOCAuthorizedSignatory`), and `customerAcknowledgement` (`ICustomerAcknowledgement`).
+- **`dispatch.model.ts`** — Mongoose model: `DispatchConsignment`. Exported interfaces: `IDispatchConsignment`, `IOutwardChallanHierarchy`, `IOutwardChallanItem`, `IOutwardChallanHeatTreatment`, `IDispatchDeliveryInformation`, `IDispatchLine`, `IDispatchCarrier`, `IOCUserReference`, `IOCAuthorizedSignatory`, `ICustomerAcknowledgement`, `IPrintableOutwardChallanResult`. Encapsulates schema definitions, compound tenant indexes (`{ tenantId: 1, outwardChallanNumber: 1 }`, `{ tenantId: 1, batchOrderId: 1 }`, `{ tenantId: 1, grnId: 1 }`, `{ tenantId: 1, poId: 1 }`, `{ tenantId: 1, 'authorizedSignatory.userId': 1 }`, `{ tenantId: 1, 'preparedBy.userId': 1 }`), and data validation rules.
+  - `IDispatchConsignment`: Stores authoritative consignment metadata, including `transporter`, `vehicleNumber`, `dispatchDate`, `ewayBillNumber`, `dispatchedBy` (`IActorSnapshot`), `dispatchedAt`, `preparedBy` (`IOCUserReference`), `authorizedSignatory` (`IOCAuthorizedSignatory`), `customerAcknowledgement` (`ICustomerAcknowledgement`), `printCount` (number), `printedAt` (Date), and `printedBy` (string).
   - `IOCUserReference`: Records the user responsible for preparing the OC: `userId` (valid User ObjectId reference), `name`, `username`, `email`, `role`, `designation`, `preparedAt`.
   - `IOCAuthorizedSignatory`: Records the authorized signatory validated by the ERP RBAC system: `userId` (valid User ObjectId reference), `name`, `username`, `email`, `role`, `designation`, `authorizedAt`, `signatureRef`.
   - `ICustomerAcknowledgement`: Encapsulates optional recipient proof: `receivedBy`, `signatureStampRef` (or `signatureRef` / `stampRef`), `date` / `acknowledgedDate`, `remarks`.
   - `IOutwardChallanItem`: Encapsulates the 8 authoritative item fields: `serialNumber` (number), `partName` (string), `partDescription` (string), `partNumber` (string), `materialGrade` (string), `heatTreatmentProcess` (string), `batchLotNumber` (string), `quantity` (number), `unitOfMeasure` (string).
   - `IOutwardChallanHeatTreatment`: Encapsulates the 6 required metallurgical inspection parameters: `furnaceEquipment` (string), `furnaceCode` (string), `hardnessSpecification` (string), `actualHardness` (string), `caseDepth` (string), `quantityReceived` (number), `quantityDelivered` (number).
   - `IDispatchDeliveryInformation`: Encapsulates authoritative delivery recipient data: `customerCode`, `customerName`, `deliveryAddress`, `gstNumber`, `contactPerson`, `contactPhone`.
+  - `IPrintableOutwardChallanResult`: Encapsulates printable document generation results: `consignmentId`, `outwardChallanNumber`, `printCount`, `printedAt`, `printedBy`, `htmlDocument`, `challanData`.
 
 #### Repositories
 - **`DispatchRepository`** (`dispatch.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
-  - Methods: `create()`, `findById()`, `findByDispatchNumber()`, `findByDeliveryChallanNumber()`, `findByOutwardChallanNumber()`, `findByBatchOrderId()`, `update()`, `query()`, `generateNextDispatchNumber()`, `generateNextDeliveryChallanNumber()`, `generateNextGatePassNumber()`, `generateNextOutwardChallanNumber()` (atomic monotonic counter `$inc`).
+  - Methods: `create()`, `findById()` (supports `_id`, `id`, `dispatchNumber`, `outwardChallanNumber`, `deliveryChallanNumber`), `findByDispatchNumber()`, `findByDeliveryChallanNumber()`, `findByOutwardChallanNumber()`, `findByBatchOrderId()`, `update()`, `query()`, `generateNextDispatchNumber()`, `generateNextDeliveryChallanNumber()`, `generateNextGatePassNumber()`, `generateNextOutwardChallanNumber()` (atomic monotonic counter `$inc`).
 - **`ProductionJobRepository`** (`production-job.repository.ts`):
   - Methods: `atomicLinkOutwardChallan(tenantId, batchOrderId, outwardChallanNumber)` (two-phase atomic reservation under `waitingForDispatch = true`), `atomicUnlinkOutwardChallan(tenantId, batchOrderId, outwardChallanNumber)` (concurrency rollback protection), `atomicMarkDispatched(tenantId, batchOrderId, updateData)` (single-winner atomic transition setting `status = 'DISPATCHED'`, `dispatched = true`, `waitingForDispatch = false`, `workflowState.dispatched = true`, `workflowState.waitingForDispatch = false`, `dispatchedAt`, `dispatchedBy`, and transition history).
 
 #### Services
 - **`DispatchService`** (`dispatch.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
-  - Methods: `createDispatch()`, `createOutwardChallanForBatchOrder()`, `authorizeOutwardChallan()`, `recordCustomerAcknowledgement()`, `completePhysicalDispatch()`, `getDispatchQueue()`, `verifyQuality()`, `scheduleDispatch()`, `approveDispatch()`, `recordDeparture()`, `confirmDelivery()`, `cancelDispatch()`, `queryDispatches()`, `getDispatchById()`, `getDispatchByNumber()`.
+  - Methods: `createDispatch()`, `createOutwardChallanForBatchOrder()`, `authorizeOutwardChallan()`, `recordCustomerAcknowledgement()`, `completePhysicalDispatch()`, `getOutwardChallan()`, `generatePrintableOutwardChallan()`, `updateOutwardChallan()`, `deleteOutwardChallan()`, `getDispatchQueue()`, `verifyQuality()`, `scheduleDispatch()`, `approveDispatch()`, `recordDeparture()`, `confirmDelivery()`, `cancelDispatch()`, `queryDispatches()`, `getDispatchById()`, `getDispatchByNumber()`.
   - **Authoritative Outward Challan (OC) Creation Invariant:** `createOutwardChallanForBatchOrder()` enforces the strict hierarchy $\text{PO} \longrightarrow \text{GRN} \longrightarrow \text{BO} \longrightarrow \text{OC}$:
     1. *Eligibility:* The selected Batch Order must have `waitingForDispatch = true`. All other states (`WAITING_FOR_PRODUCTION`, `IN_PRODUCTION`, `WAITING_FOR_INSPECTION`, `IN_INSPECTION`, `INSPECTION` quarantined, `DISPATCHED`) are rejected with `400 Bad Request`.
     2. *BO & GRN Relationship:* The OC references the selected BO, and the selected BO must belong to the referenced GRN (`grnId === bo.grnId`). Pairing an unrelated GRN is strictly rejected.
@@ -1615,11 +1621,17 @@ _No direct HTTP routes mounted for this internal domain service._
     4. *Physical Dispatch vs OC Preparation Boundary:* Generating an OC leaves the BO in `waitingForDispatch: true, dispatched: false`; physical dispatch execution marks gate departure, transitioning the BO to `status = 'DISPATCHED'`, `dispatched = true`, `waitingForDispatch = false`.
     5. *Inventory / Storage Deduction & Negative Stock Prevention:* Dispatched quantity is verified against warehouse Finished Goods stock. If requested dispatch quantity exceeds available warehouse stock, or exceeds total represented quantity, the operation is strictly rejected with `400 Bad Request` to prevent negative inventory. Upon validation, warehouse stock is permanently decremented.
     6. *Atomicity & Conflict Rollback:* The system never produces a physical dispatch without an OC (`outwardChallanNumber`). Simultaneous dispatch attempts on the same BO resolve via single-winner atomic locking on `jobRepo.atomicMarkDispatched`, rolling back any inventory deductions and returning `409 Conflict`. Duplicate dispatches are rejected with `400 Bad Request`.
+  - **Authoritative OC Record View & Reliable Printing Invariants (Prompt 8):**
+    1. *Authoritative OC Record View:* `getOutwardChallan(tenantId, idOrNumber)` resolves consignments by MongoDB ObjectId, internal ID, `dispatchNumber`, `outwardChallanNumber`, or `deliveryChallanNumber`. Returns complete record displaying: OC identity, PO, GRN, BO, OC date, customer/delivery information, transport details, all 8 BO-derived item specs, all 6 metallurgical heat-treatment inspection parameters, two-tier authorization (`preparedBy` and `authorizedSignatory`), and customer acknowledgement.
+    2. *Source Relationships Maintenance:* Strictly preserves and displays the unbroken $\text{PO} \longrightarrow \text{GRN} \longrightarrow \text{BO} \longrightarrow \text{OC}$ production genealogy. The OC never appears disconnected from its manufacturing lineage.
+    3. *Reliable Printable Document Generation:* `generatePrintableOutwardChallan(tenantId, idOrNumber, actor)` compiles an authoritative, Nadcap AC7102-compliant HTML document preview without creating secondary editable business records. Increments monotonic `printCount`, updates `printedAt` and `printedBy`, and writes a `DISPATCH_OC_PRINTED` audit log entry.
+    4. *Historical OC Viewing & Traceability:* Dispatched and delivered consignments remain permanently accessible, queryable, viewable, and printable by authorized users across all active and historical lifecycle stages.
+    5. *Dispatched Record Immutability Guard:* Once a consignment achieves `DISPATCHED` or `DELIVERED` status, `updateOutwardChallan()` and `deleteOutwardChallan()` strictly reject direct modification or deletion (`400 Bad Request`), permanently locking historical production, metallurgical, and transport records.
   - **Dispatch Protection & Inspection Clearance Invariant:** `createDispatch()` and `verifyQualityRelease()` strictly inspect linked Batch Orders. Any attempt to dispatch a job in quarantined `INSPECTION` (`workflowState.inspection: true`) or lacking quality approval is strictly rejected with `400 Bad Request` (`Dispatch Protection Violation`).
 
 #### Controllers
 - **`DispatchController`** (`dispatch.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
-  - Endpoints handled: `createDispatch()`, `createOutwardChallan()`, `authorizeOutwardChallan()`, `recordCustomerAcknowledgement()`, `completePhysicalDispatch()`, `getDispatchQueue()`, `verifyQuality()`, `schedule()`, `approve()`, `depart()`, `deliver()`, `cancel()`, `getAll()`, `getById()`, `getByNumber()`.
+  - Endpoints handled: `createDispatch()`, `createOutwardChallan()`, `authorizeOutwardChallan()`, `recordCustomerAcknowledgement()`, `completePhysicalDispatch()`, `getOutwardChallan()`, `printOutwardChallan()`, `updateOutwardChallan()`, `deleteOutwardChallan()`, `getDispatchQueue()`, `verifyQuality()`, `schedule()`, `approve()`, `depart()`, `deliver()`, `cancel()`, `getAll()`, `getById()`, `getByNumber()`.
 
 #### Validators (Zod Schemas)
 - **`dispatch.validator.ts`**: Exported Zod validation schemas and helpers: `authorizeDispatchSchema`, `customerAcknowledgementSchema`, `validateTransporter()`, `validateVehicleNumber()`, `validateEwayBillNumber()`, `validateDispatchDate()`, `physicalDispatchSchema`, `PackageDetailsSchema`, `CreateDispatchLineSchema`, `createDispatchSchema`, `createOutwardChallanSchema`, `verifyDispatchQualitySchema`, `scheduleDispatchSchema`, `approveDispatchSchema`, `departDispatchSchema`, `deliverDispatchSchema`, `cancelDispatchSchema`, `queryDispatchesSchema`.
@@ -1627,6 +1639,11 @@ _No direct HTTP routes mounted for this internal domain service._
 #### API Endpoints & Routes
 - `POST /api/v1/dispatches` — Handled by `DispatchController`.
 - `POST /api/v1/dispatches/outward-challan` (alias `/api/v1/dispatch/outward-challan`) — Authoritative Outward Challan creation for single eligible BO.
+- `GET /api/v1/dispatches/outward-challan/:idOrNumber` (alias `/api/v1/dispatches/:id/outward-challan`) — Authoritative Outward Challan record view with complete genealogy, BO items, metallurgical inspection, authorization, and acknowledgement.
+- `GET /api/v1/dispatches/outward-challan/:idOrNumber/print` (alias `/api/v1/dispatches/:id/print`, `/api/v1/dispatches/:id/outward-challan/print`) — Generate printable Nadcap-compliant Outward Challan document, increment `printCount`, record audit entry, and return printable HTML report.
+- `POST /api/v1/dispatches/outward-challan/:idOrNumber/print` (alias `/api/v1/dispatches/:id/print`) — Print action execution logging and metadata retrieval.
+- `PUT /api/v1/dispatches/outward-challan/:idOrNumber` (alias `PATCH`) — Update Outward Challan (strictly rejected with `400 Bad Request` if dispatched).
+- `DELETE /api/v1/dispatches/outward-challan/:idOrNumber` — Delete Outward Challan (strictly rejected with `400 Bad Request` if dispatched).
 - `POST /api/v1/dispatches/:id/authorize` (alias `/api/v1/dispatches/outward-challan/:id/authorize`) — Authorize Outward Challan with validated authorized signatory credentials.
 - `POST /api/v1/dispatches/:id/acknowledge` (alias `/api/v1/dispatches/outward-challan/:id/acknowledge`) — Record customer receiving acknowledgement and optional signature/stamp proof.
 - `POST /api/v1/dispatches/:id/dispatch` (alias `/api/v1/dispatches/outward-challan/:id/dispatch`) — Complete physical dispatch with mandatory transport fields, stock deduction, and BO transition to `DISPATCHED` (gated by prior authorized signatory validation).
@@ -2729,12 +2746,30 @@ $$\mathbf{Production\ Completion} \longrightarrow \mathbf{Waiting\ for\ Inspecti
    - **Authoritative Receipt Confirmation (Prompt 7):** Consignee receipt and delivery confirmation are captured via `customerAcknowledgement` (`receivedBy`, `signatureStampRef` / `signatureRef` / `stampRef`, `date` / `acknowledgedDate`, `remarks`). Fields are strictly optional proof of delivery records embedded directly into the authoritative Outward Challan document.
    - **Status Transition & Billing Handoff:** Updates consignment status to `DELIVERED`. Emits `Dispatch.CustomerAcknowledged` and `Dispatch.Delivered`, notifying billing and accounts receivable subsystems.
    - **Unified Architecture:** The legacy `confirmDelivery()` endpoint delegates directly to `recordCustomerAcknowledgement()`, maintaining a single unified customer delivery and acknowledgement pipeline.
-6. **Consignment Drafting (`POST /api/v1/dispatches`):** Logistics coordinator can alternatively create a multi-line dispatch order selecting customer and destination. Generates `DISP-YYYYMM-XXXX`. Status is `DRAFT`.
-7. **Finished Goods Attachment:** Jobs in finished goods storage are attached to the consignment.
-8. **Quality Compliance Gate (`POST /api/v1/dispatches/:id/verify-quality`):** System validates that every attached job has an approved, signed Certificate of Conformance (CoC). If any job lacks a valid CoC, the shipment cannot proceed.
-9. **Carrier Scheduling (`POST /api/v1/dispatches/:id/schedule`):** Logistics attaches carrier name, vehicle number, driver name, and planned departure time. Status moves to `SCHEDULED`.
-10. **Gate Departure Authorization (`POST /api/v1/dispatches/:id/approve`, `POST /.../depart`):** Plant Manager authorizes gate pass (delegating to `authorizeOutwardChallan`). Vehicle departs plant; consignment status transitions to `IN_TRANSIT` (or delegates to `completePhysicalDispatch` for OC consignments).
-11. **Customer Delivery & PoD (`POST /api/v1/dispatches/:id/deliver`):** Driver delivers shipment. Customer signs delivery challan; Proof of Delivery (PoD) is uploaded (delegating to `recordCustomerAcknowledgement`). Status transitions to `DELIVERED`. Emits `Dispatch.Delivered`.
+6. **Authoritative Outward Challan Record View & Reliable Printing (Prompt 8):**
+   - **Full Authoritative OC Record View (`GET /api/v1/dispatches/outward-challan/:idOrNumber`):** Displays all mandatory components:
+     1. *OC Identity:* `outwardChallanNumber`, `dispatchNumber`, and `deliveryChallanNumber`.
+     2. *Source Relationships:* Unbroken lineage displaying derived `poNumber`, `grnNumber`, `batchOrderNumber`, and `outwardChallanNumber`. The OC never appears disconnected from production genealogy.
+     3. *OC Date:* Authoritatively derived from the corresponding GRN date (`grn.grnDate || grn.createdAt`).
+     4. *Customer / Consignee Information:* Customer code, customer name, destination delivery address, GSTIN, contact person.
+     5. *Transport & Gate Logistics:* Transporter, vehicle number, dispatch date/time, e-way bill number, gate pass number, security officer clearance.
+     6. *BO-Derived Item Information:* Table rendering all 8 authoritative fields (`serialNumber`, `partNumber`, `partName` / description, `materialGrade`, `heatTreatmentProcess`, `batchLotNumber`, `quantity`, `unitOfMeasure`) with zero manual duplicate entry.
+     7. *Metallurgical Heat-Treatment Specifications & Inspection Outcomes:* Table rendering all 6 mandatory parameters (`furnaceEquipment`, `hardnessSpecification`, `actualHardness`, `caseDepth`, `quantityReceived`, `quantityDelivered`) derived from the BO's inspection records.
+     8. *Dual-Tier Authorization:* Prepared By attribution (`userId`, `name`, `designation`, timestamp) and Authorized Signatory verification (`userId`, `name`, `designation`, digital signature reference, authorization timestamp).
+     9. *Customer Acknowledgement:* Consignee receiving proof (`receivedBy`, signature/stamp reference, date, customer remarks), gracefully null-safe when pending delivery.
+   - **Reliable Printing & Audit Trail (`GET /api/v1/dispatches/outward-challan/:idOrNumber/print` & `POST /.../print`):**
+     1. Dedicated print routes render an authoritative, Nadcap AC7102-compliant HTML document view without creating a second editable business record.
+     2. Monotonically increments `printCount`, records `printedAt` and `printedBy` from the authenticated session actor, and writes a permanent `DISPATCH_OC_PRINTED` audit record.
+     3. Dedicated `#printable-oc-container` with `@media print` style sheet isolates the document for crisp physical print or PDF generation without surrounding UI chrome.
+   - **Historical OC Accessibility & Read-Only Immutability Guard:**
+     1. Dispatched and delivered historical records remain fully accessible, queryable, viewable, and printable.
+     2. Immutability protection: Once dispatched, direct API modifications (`PUT`, `PATCH`) or deletion (`DELETE`) are strictly rejected with `400 Bad Request`, permanently locking historical production, metallurgical, and transport data.
+7. **Consignment Drafting (`POST /api/v1/dispatches`):** Logistics coordinator can alternatively create a multi-line dispatch order selecting customer and destination. Generates `DISP-YYYYMM-XXXX`. Status is `DRAFT`.
+8. **Finished Goods Attachment:** Jobs in finished goods storage are attached to the consignment.
+9. **Quality Compliance Gate (`POST /api/v1/dispatches/:id/verify-quality`):** System validates that every attached job has an approved, signed Certificate of Conformance (CoC). If any job lacks a valid CoC, the shipment cannot proceed.
+10. **Carrier Scheduling (`POST /api/v1/dispatches/:id/schedule`):** Logistics attaches carrier name, vehicle number, driver name, and planned departure time. Status moves to `SCHEDULED`.
+11. **Gate Departure Authorization (`POST /api/v1/dispatches/:id/approve`, `POST /.../depart`):** Plant Manager authorizes gate pass (delegating to `authorizeOutwardChallan`). Vehicle departs plant; consignment status transitions to `IN_TRANSIT` (or delegates to `completePhysicalDispatch` for OC consignments).
+12. **Customer Delivery & PoD (`POST /api/v1/dispatches/:id/deliver`):** Driver delivers shipment. Customer signs delivery challan; Proof of Delivery (PoD) is uploaded (delegating to `recordCustomerAcknowledgement`). Status transitions to `DELIVERED`. Emits `Dispatch.Delivered`.
 
 ---
 
@@ -2954,11 +2989,11 @@ The platform includes 8 authoritative engineering specifications and operational
 7. **`PHASE_1_CERTIFICATION_REPORT.md`:** Verification findings for core platform stability, data boundary enforcement, and error resilience.
 8. **`FACTORY_ACCEPTANCE_REPORT.md`:** End-to-end metallurgical workflow verification and compliance sign-off.
 
-### 8.4 Automated Test Suite Matrix (81 Backend Specs + Frontend Suites)
+### 8.4 Automated Test Suite Matrix (82 Backend Specs + Frontend Suites)
 
 The codebase features comprehensive test suites validating layer boundaries, data integrity, and business logic:
-- **Backend Test Summary:** **81 Test Suites, 1127 Tests Passed (0 Failures, 100% Pass Rate)**
-- **Frontend Test Summary:** **5 Test Suites, 67 Tests Passed (0 Failures, 100% Pass Rate)**
+- **Backend Test Summary:** **82 Test Suites, 1147 Tests Passed (0 Failures, 100% Pass Rate)**
+- **Frontend Test Summary:** **5 Test Suites, 69 Tests Passed (0 Failures, 100% Pass Rate)**
 
 #### 1. Backend Architecture Governance
 - `tests/architecture-boundaries.spec.ts`: Automated AST scanner asserting 100% compliance with 14 layer-boundary rules (`check:arch`).
@@ -3490,6 +3525,27 @@ The codebase features comprehensive test suites validating layer boundaries, dat
   - Invariant 13: Emits `DomainEvents.DISPATCH_CUSTOMER_ACKNOWLEDGED` upon customer acknowledgement recording.
   - Invariant 14: Verifies route alias parity for authorization (`/api/v1/dispatches/:id/authorize` and `/api/v1/dispatches/outward-challan/:id/authorize`).
   - Invariant 15: Verifies route alias parity for customer acknowledgement (`/api/v1/dispatches/:id/acknowledge` and `/api/v1/dispatches/outward-challan/:id/acknowledge`).
+- `dispatch-oc-view-print.spec.ts` (20 tests — Prompt 8: OC Viewing, Printing and Dispatch Documentation):
+  - Invariant 1: Rejects unauthenticated requests to view Outward Challan with `401 Unauthorized`.
+  - Invariant 2: Rejects unprivileged user lacking `DISPATCH_DELIVERY_VIEW` with `403 Forbidden`.
+  - Invariant 3: Rejects unprivileged user attempting to print Outward Challan with `403 Forbidden`.
+  - Invariant 4: Rejects view-only operator attempting to print without `DISPATCH_CHALLAN_PRINT` permission with `403 Forbidden`.
+  - Invariant 5: Permits authorized `DISPATCH_OFFICER` with `DISPATCH_DELIVERY_VIEW` to view Outward Challan.
+  - Invariant 6: Permits authorized `DISPATCH_OFFICER` / `PLANT_MANAGER` with `DISPATCH_CHALLAN_PRINT` to execute formal OC printing.
+  - Invariant 7: Returns complete authoritative OC record displaying all required sections (OC identity, PO, GRN, BO, OC date, customer info, transport info, 8 BO item fields, 6 metallurgical specs, preparedBy, authorizedSignatory, customerAcknowledgement).
+  - Invariant 8: Resolves Outward Challan by human-readable `outwardChallanNumber` or internal `dispatchNumber` directly.
+  - Invariant 9: Supports looking up OC via route alias `/api/v1/dispatches/:id/outward-challan`.
+  - Invariant 10: Returns `404 Not Found` for non-existent or invalid OC identifiers without data leakage.
+  - Invariant 11: Gracefully handles incomplete OC with missing optional customer acknowledgement (null-safe rendering).
+  - Invariant 12: Executes formal OC printing, atomically increments `printCount`, updates `printedAt` / `printedBy`, and records `DISPATCH_OC_PRINTED` in audit trail.
+  - Invariant 13: Supports `POST /outward-challan/:id/print` to record print action idempotently.
+  - Invariant 14: Renders full Nadcap AC7102-certified HTML document matching authoritative OC record.
+  - Invariant 15: Returns direct HTML content when `Accept: text/html` is requested.
+  - Invariant 16: Allows viewing and printing historical `DISPATCHED` and `DELIVERED` OCs without modifying downstream states.
+  - Invariant 17: Guarantees viewing and printing operations are read-only and never alter items, recipe, or quantities.
+  - Invariant 18: Rejects direct API modification (`PUT`, `PATCH`) of finalized dispatched Outward Challans with `400 Bad Request` (`Outward Challan is finalized and dispatched. Historical manufacturing and dispatch data is permanently immutable`).
+  - Invariant 19: Rejects direct API deletion (`DELETE`) of dispatched Outward Challans with `400 Bad Request`.
+  - Invariant 20: Rejects cancellation of dispatched Outward Challans with `400 Bad Request`.
 - Metallurgical Lab & Quality: `quality-inspection.spec.ts`, `metallurgical-lab.spec.ts`, `ncr-capa.spec.ts`, `quality-documentation.spec.ts`, `pyrometry.spec.ts`.
 - Machine & Maintenance: `machine.spec.ts`, `maintenance.spec.ts`, `furnace-capacity.spec.ts`.
 - Traceability & Inventory: `heat-lot-traceability.spec.ts`, `inventory-ledger.spec.ts`, `warehouse.spec.ts`, `finished-goods.spec.ts`, `quarantine.spec.ts`.
@@ -3498,7 +3554,7 @@ The codebase features comprehensive test suites validating layer boundaries, dat
 - Platform Core & Security: `auth.spec.ts`, `rbac.spec.ts`, `tenant-isolation.spec.ts`, `audit-logging.spec.ts`, `error-handling.spec.ts`, `database.spec.ts`, `health.spec.ts`.
 
 #### 5. Frontend Integration Suites (`frontend/src/`)
-- `dispatch-page.test.tsx` (9 tests — Outward Challan Workflow, BO Items, Heat-Treatment, Physical Dispatch, Authorization & Customer Acknowledgement UI):
+- `dispatch-page.test.tsx` (11 tests — Outward Challan Workflow, BO Items, Heat-Treatment, Physical Dispatch, Authorization, Customer Acknowledgement, OC Viewing & Reliable Printing UI):
   - Renders Dispatch workspace with Dispatch Queue, Active Consignments, and Unified Workbench views.
   - Displays eligible Batch Orders in the queue with unbroken $\text{PO} \longrightarrow \text{GRN} \longrightarrow \text{BO}$ hierarchy badges and CoC approval.
   - Opens Create Outward Challan modal with read-only authoritative derived fields: PO, GRN, BO, auto OC number, GRN date, all 8 BO item fields, and all 6 heat-treatment parameters with no manual editing inputs.
@@ -3508,6 +3564,8 @@ The codebase features comprehensive test suites validating layer boundaries, dat
   - Confirms physical dispatch status transitions and warehouse stock deduction notifications in UI.
   - Opens Authorize Outward Challan modal, validates signatory user ID, and submits signatory credentials to ERP backend.
   - Opens Customer Acknowledgement modal, submits customer receipt and stamp reference, and renders updated Prepared By, Authorized Signatory, and Customer Acknowledgement cards in Drawer.
+  - Opens authoritative Outward Challan Print/View modal displaying complete unbroken genealogy ($\text{PO} \longrightarrow \text{GRN} \longrightarrow \text{BO} \longrightarrow \text{OC}$), all 8 BO-derived item specs, all 6 metallurgical heat-treatment parameters, dual-tier authorization, customer acknowledgement, print run count, and read-only immutability notice for dispatched consignments.
+  - Triggers document print action, increments `printCount`, calls ERP print endpoint, triggers `window.print()` with `@media print` CSS isolation, and functions seamlessly from both table row actions and details drawer footer.
 - `e2e-workflows.test.tsx` (36 tests):
   - Multi-step Batch Order creation wizard (PO -> GRN -> Part -> BO).
   - Interactive BO drawer with hierarchy banner and 8-card source genealogy grid.

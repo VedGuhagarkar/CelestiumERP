@@ -498,5 +498,239 @@ describe('DispatchPage & Outward Challan Workflow', () => {
 
     fetchSpy.mockRestore();
   });
+
+  it('opens authoritative Outward Challan Print/View modal, displaying complete genealogy, 8 BO item specs, 6 metallurgical parameters, dual authorization, customer acknowledgement, and immutability notice', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const urlStr = url.toString();
+      if (urlStr.includes('/dispatches/outward-challan/')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            success: true,
+            data: {
+              id: 'dsp_01',
+              dispatchNumber: 'DSP-202608-0001',
+              deliveryChallanNumber: 'DC-2026-0881',
+              outwardChallanNumber: 'OC-202608-0001',
+              ocDate: '2026-08-20T00:00:00.000Z',
+              poNumber: 'PO-TITAN-8891',
+              grnNumber: 'GRN-2026-0042',
+              batchOrderNumber: 'BO-202608-001',
+              status: 'IN_TRANSIT',
+              printCount: 2,
+              printedAt: '2026-08-20T10:00:00.000Z',
+              printedBy: 'devin.vance',
+              customer: {
+                customerCode: 'CUST-APEX-03',
+                customerName: 'Apex Automotive Drivetrains',
+                destinationAddress: '400 Industrial Way, Detroit, MI 48201'
+              },
+              carrier: {
+                carrierName: 'Swift Heavy Haul Logistics',
+                vehicleNumber: 'MH-12-QC-8821'
+              },
+              items: [
+                {
+                  serialNumber: 1,
+                  partName: 'Case-Hardened Pinion Gears',
+                  partDescription: 'Case-Hardened Pinion Gears',
+                  partNumber: 'PART-GEAR-8620',
+                  materialGrade: 'SAE 8620H',
+                  heatTreatmentProcess: 'Carburizing & Quench 60HRC',
+                  batchLotNumber: 'HL-8620-2026B',
+                  quantity: 300,
+                  unitOfMeasure: 'PCS'
+                }
+              ],
+              heatTreatmentInformation: {
+                furnaceEquipment: 'FURNACE-PIT-01 (Integral Quench Furnace)',
+                hardnessSpecification: '58-62 HRC',
+                actualHardness: '60.5 HRC',
+                caseDepth: '1.15 mm',
+                quantityReceived: 300,
+                quantityDelivered: 300
+              },
+              preparedBy: {
+                userId: 'usr_prep_01',
+                name: 'Devin Vance',
+                designation: 'Dispatch Lead',
+                preparedAt: '2026-08-20T08:30:00Z'
+              },
+              authorizedSignatory: {
+                userId: 'usr_sign_01',
+                name: 'Elena Rostova',
+                designation: 'Plant Operations Director',
+                signatureRef: 'SIG-AUTH-9081',
+                authorizedAt: '2026-08-20T09:15:00Z'
+              },
+              customerAcknowledgement: {
+                receivedBy: 'Marcus Sterling',
+                signatureStampRef: 'STAMP-APEX-REC-01',
+                date: '2026-08-21T14:00:00Z',
+                remarks: 'Consignment received in full with verified CoC.'
+              }
+            }
+          })
+        } as Response;
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: [] })
+      } as Response;
+    });
+
+    render(
+      <MemoryRouter>
+        <DispatchPage />
+      </MemoryRouter>
+    );
+
+    const tabActiveConsignments = screen.getByTestId('tab-active-consignments');
+    fireEvent.click(tabActiveConsignments);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('btn-print-oc-DSP-202608-0001')).toBeDefined();
+    });
+
+    const printOcBtn = screen.getByTestId('btn-print-oc-DSP-202608-0001');
+    fireEvent.click(printOcBtn);
+
+    await waitFor(() => {
+      // Check Document Title & Headers
+      expect(screen.getByText(/Authoritative Outward Challan: OC-202608-0001/i)).toBeDefined();
+      const printContainer = document.getElementById('printable-oc-container')!;
+      expect(printContainer).toBeDefined();
+
+      expect(within(printContainer).getByText(/CELESTIUM PRECISION HEAT TREATING/i)).toBeDefined();
+      expect(within(printContainer).getByText(/OUTWARD DELIVERY CHALLAN/i)).toBeDefined();
+
+      // Check Traceability Genealogy Banner (PO -> GRN -> BO -> OC)
+      expect(within(printContainer).getByText(/Authoritative Traceability Genealogy \(PO ➔ GRN ➔ BO ➔ OC\)/i)).toBeDefined();
+      expect(within(printContainer).getByText('PO-TITAN-8891')).toBeDefined();
+      expect(within(printContainer).getByText('GRN-2026-0042')).toBeDefined();
+      expect(within(printContainer).getByText('BO-202608-001')).toBeDefined();
+
+      // Check Customer & Transport Info
+      expect(within(printContainer).getByText(/Consignee \/ Deliver To/i)).toBeDefined();
+      expect(within(printContainer).getByText(/Apex Automotive Drivetrains/i)).toBeDefined();
+      expect(within(printContainer).getByText(/Transport & Gate Logistics/i)).toBeDefined();
+      expect(within(printContainer).getByText(/Swift Heavy Haul Logistics/i)).toBeDefined();
+
+      // Check 8 BO-derived Item fields
+      expect(within(printContainer).getByText(/Processed Item Details \(Derived From Batch Order\)/i)).toBeDefined();
+      expect(within(printContainer).getByText('PART-GEAR-8620')).toBeDefined();
+      expect(within(printContainer).getByText('Case-Hardened Pinion Gears')).toBeDefined();
+      expect(within(printContainer).getByText('SAE 8620H')).toBeDefined();
+      expect(within(printContainer).getByText('Carburizing & Quench 60HRC')).toBeDefined();
+      expect(within(printContainer).getByText('HL-8620-2026B')).toBeDefined();
+      expect(within(printContainer).getAllByText('300').length).toBeGreaterThan(0);
+      expect(within(printContainer).getAllByText('PCS').length).toBeGreaterThan(0);
+
+      // Check 6 Heat-treatment parameters
+      expect(within(printContainer).getByText(/Heat-Treatment Specifications & Inspection Outcomes/i)).toBeDefined();
+      expect(within(printContainer).getByText(/FURNACE-PIT-01 \(Integral Quench Furnace\)/i)).toBeDefined();
+      expect(within(printContainer).getByText('58-62 HRC')).toBeDefined();
+      expect(within(printContainer).getByText('60.5 HRC')).toBeDefined();
+      expect(within(printContainer).getByText('1.15 mm')).toBeDefined();
+
+      // Check Dual-Tier Authorization
+      expect(within(printContainer).getByText(/Prepared By \(Dispatch Officer\)/i)).toBeDefined();
+      expect(within(printContainer).getByText(/Elena Rostova/i)).toBeDefined();
+      expect(within(printContainer).getByText(/Plant Operations Director/i)).toBeDefined();
+      expect(within(printContainer).getByText(/SIG-AUTH-9081/i)).toBeDefined();
+
+      // Check Customer Acknowledgement
+      expect(within(printContainer).getByText(/Customer Consignment Acknowledgement/i)).toBeDefined();
+      expect(within(printContainer).getByText(/Marcus Sterling/i)).toBeDefined();
+      expect(within(printContainer).getByText(/STAMP-APEX-REC-01/i)).toBeDefined();
+    });
+
+    fetchSpy.mockRestore();
+  });
+
+  it('triggers document print action, increments print count, calls ERP print endpoint, and functions from drawer footer', async () => {
+    let printEndpointCalled = false;
+    const windowPrintMock = vi.fn();
+    vi.stubGlobal('print', windowPrintMock);
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      const urlStr = url.toString();
+      if (urlStr.includes('/dispatches/outward-challan/') && init?.method === 'POST') {
+        printEndpointCalled = true;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            success: true,
+            message: 'Outward Challan generated and logged for printing',
+            data: {
+              outwardChallanNumber: 'OC-202608-0001',
+              printCount: 3,
+              printedAt: new Date().toISOString(),
+              printedBy: 'Plant Operations Director'
+            }
+          })
+        } as Response;
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: [] })
+      } as Response;
+    });
+
+    render(
+      <MemoryRouter>
+        <DispatchPage />
+      </MemoryRouter>
+    );
+
+    const tabActiveConsignments = screen.getByTestId('tab-active-consignments');
+    fireEvent.click(tabActiveConsignments);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('btn-print-oc-DSP-202608-0001')).toBeDefined();
+    });
+
+    // Open Print Modal from table row
+    fireEvent.click(screen.getByTestId('btn-print-oc-DSP-202608-0001'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('btn-confirm-print-oc')).toBeDefined();
+    });
+
+    // Click Print Document in modal
+    fireEvent.click(screen.getByTestId('btn-confirm-print-oc'));
+
+    await waitFor(() => {
+      expect(printEndpointCalled).toBe(true);
+      expect(windowPrintMock).toHaveBeenCalled();
+      expect(screen.getByText(/printed successfully. Print record logged to ERP audit trail./i)).toBeDefined();
+    });
+
+    // Close print modal
+    const closeButtons = screen.getAllByRole('button', { name: /Close/i });
+    fireEvent.click(closeButtons[closeButtons.length - 1]);
+
+    // Open Details Drawer and verify drawer print button triggers modal
+    const detailsButtons = screen.getAllByRole('button', { name: /Details/i });
+    fireEvent.click(detailsButtons[0]);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('btn-drawer-print-oc')).toBeDefined();
+      expect(screen.getByText(/OUTWARD CHALLAN PRINT AUDIT TRAIL/i)).toBeDefined();
+    });
+
+    fireEvent.click(screen.getByTestId('btn-drawer-print-oc'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('btn-confirm-print-oc')).toBeDefined();
+    });
+
+    fetchSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
 });
 

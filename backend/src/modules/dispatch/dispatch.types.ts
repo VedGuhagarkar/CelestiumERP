@@ -274,9 +274,17 @@ export interface IDispatchConsignment {
   cancellation?: IDispatchCancellation;
   history: IDispatchHistoryEntry[];
   notes?: string;
+  printCount?: number;
+  printedAt?: Date;
+  printedBy?: string;
   isDeleted: boolean;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface IPrintableOutwardChallanResult {
+  outwardChallan: IDispatchConsignment;
+  htmlReport: string;
 }
 
 export interface DispatchConsignmentDocument extends IDispatchConsignment, Document {}

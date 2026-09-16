@@ -349,6 +349,9 @@ const DispatchConsignmentSchema = new Schema<DispatchConsignmentDocument>(
     cancellation: { type: DispatchCancellationSchema },
     history: { type: [DispatchHistoryEntrySchema], default: [] },
     notes: { type: String },
+    printCount: { type: Number, default: 0 },
+    printedAt: { type: Date },
+    printedBy: { type: String },
     isDeleted: { type: Boolean, required: true, default: false, index: true }
   },
   {

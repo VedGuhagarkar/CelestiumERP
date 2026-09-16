@@ -58,6 +58,66 @@ dispatchRouter.post(
   dispatchController.createOutwardChallan
 );
 
+// Dedicated Outward Challan (OC) Print Routes
+dispatchRouter.get(
+  '/outward-challan/:idOrNumber/print',
+  requireAnyPermission(
+    PERMISSIONS.DISPATCH_CHALLAN_PRINT,
+    PERMISSIONS.DISPATCH_DELIVERY_DISPATCH,
+    PERMISSIONS.DISPATCH_PASS_GENERATE
+  ),
+  dispatchController.printOutwardChallan
+);
+
+dispatchRouter.post(
+  '/outward-challan/:idOrNumber/print',
+  requireAnyPermission(
+    PERMISSIONS.DISPATCH_CHALLAN_PRINT,
+    PERMISSIONS.DISPATCH_DELIVERY_DISPATCH,
+    PERMISSIONS.DISPATCH_PASS_GENERATE
+  ),
+  dispatchController.printOutwardChallan
+);
+
+// Dedicated Outward Challan (OC) View Route
+dispatchRouter.get(
+  '/outward-challan/:idOrNumber',
+  requireAnyPermission(
+    PERMISSIONS.DISPATCH_DELIVERY_VIEW,
+    PERMISSIONS.INVENTORY_WAREHOUSE_VIEW,
+    PERMISSIONS.DISPATCH_DELIVERY_CREATE
+  ),
+  dispatchController.getOutwardChallan
+);
+
+// Dedicated Outward Challan (OC) Protected Mutation & Deletion Routes
+dispatchRouter.put(
+  '/outward-challan/:idOrNumber',
+  requireAnyPermission(
+    PERMISSIONS.DISPATCH_DELIVERY_CREATE,
+    PERMISSIONS.DISPATCH_DELIVERY_DISPATCH
+  ),
+  dispatchController.updateOutwardChallan
+);
+
+dispatchRouter.patch(
+  '/outward-challan/:idOrNumber',
+  requireAnyPermission(
+    PERMISSIONS.DISPATCH_DELIVERY_CREATE,
+    PERMISSIONS.DISPATCH_DELIVERY_DISPATCH
+  ),
+  dispatchController.updateOutwardChallan
+);
+
+dispatchRouter.delete(
+  '/outward-challan/:idOrNumber',
+  requireAnyPermission(
+    PERMISSIONS.DISPATCH_DELIVERY_CREATE,
+    PERMISSIONS.DISPATCH_DELIVERY_DISPATCH
+  ),
+  dispatchController.deleteOutwardChallan
+);
+
 // 1. Create Dispatch Consignment (DRAFT)
 dispatchRouter.post(
   '/',
@@ -98,6 +158,66 @@ dispatchRouter.get(
     PERMISSIONS.INVENTORY_WAREHOUSE_VIEW
   ),
   dispatchController.getDispatchById
+);
+
+// 4b. Get Outward Challan by ID (alias)
+dispatchRouter.get(
+  '/:id/outward-challan',
+  requireAnyPermission(
+    PERMISSIONS.DISPATCH_DELIVERY_VIEW,
+    PERMISSIONS.INVENTORY_WAREHOUSE_VIEW,
+    PERMISSIONS.DISPATCH_DELIVERY_CREATE
+  ),
+  dispatchController.getOutwardChallan
+);
+
+// 4c. Print Dispatch / Outward Challan (alias)
+dispatchRouter.get(
+  '/:id/print',
+  requireAnyPermission(
+    PERMISSIONS.DISPATCH_CHALLAN_PRINT,
+    PERMISSIONS.DISPATCH_DELIVERY_DISPATCH,
+    PERMISSIONS.DISPATCH_PASS_GENERATE
+  ),
+  dispatchController.printOutwardChallan
+);
+
+dispatchRouter.post(
+  '/:id/print',
+  requireAnyPermission(
+    PERMISSIONS.DISPATCH_CHALLAN_PRINT,
+    PERMISSIONS.DISPATCH_DELIVERY_DISPATCH,
+    PERMISSIONS.DISPATCH_PASS_GENERATE
+  ),
+  dispatchController.printOutwardChallan
+);
+
+// 4d. Protect Dispatched Consignments against mutations/deletions
+dispatchRouter.put(
+  '/:id',
+  requireAnyPermission(
+    PERMISSIONS.DISPATCH_DELIVERY_CREATE,
+    PERMISSIONS.DISPATCH_DELIVERY_DISPATCH
+  ),
+  dispatchController.updateOutwardChallan
+);
+
+dispatchRouter.patch(
+  '/:id',
+  requireAnyPermission(
+    PERMISSIONS.DISPATCH_DELIVERY_CREATE,
+    PERMISSIONS.DISPATCH_DELIVERY_DISPATCH
+  ),
+  dispatchController.updateOutwardChallan
+);
+
+dispatchRouter.delete(
+  '/:id',
+  requireAnyPermission(
+    PERMISSIONS.DISPATCH_DELIVERY_CREATE,
+    PERMISSIONS.DISPATCH_DELIVERY_DISPATCH
+  ),
+  dispatchController.deleteOutwardChallan
 );
 
 // 5. Verify Quality & Document Compliance

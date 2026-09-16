@@ -62,13 +62,20 @@ export class DispatchRepository implements IDispatchRepository {
     tenantId: string,
     id: string
   ): Promise<DispatchConsignmentDocument | null> {
-    if (!mongoose.Types.ObjectId.isValid(id) || mongoose.connection.readyState === 0) {
+    if (!id || typeof id !== 'string' || mongoose.connection.readyState === 0) {
       return null;
     }
+    const isObjectId = mongoose.Types.ObjectId.isValid(id) && id.length === 24;
     return await DispatchConsignmentModel.findOne({
-      _id: id,
       tenantId,
-      isDeleted: false
+      isDeleted: false,
+      $or: [
+        ...(isObjectId ? [{ _id: id }] : []),
+        { id },
+        { dispatchNumber: id.toUpperCase() },
+        { outwardChallanNumber: id.toUpperCase() },
+        { deliveryChallanNumber: id.toUpperCase() }
+      ]
     });
   }
 

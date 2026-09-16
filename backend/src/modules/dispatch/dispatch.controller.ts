@@ -251,6 +251,79 @@ export class DispatchController extends BaseController {
       next(error);
     }
   };
+
+  public getOutwardChallan = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const idOrNumber = (req.params.idOrNumber || req.params.id || req.params.outwardChallanNumber) as string;
+      const result = await this.service.getOutwardChallan(tenantId, idOrNumber);
+      this.sendSuccess(res, result, 'Authoritative Outward Challan record retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public printOutwardChallan = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const actor = this.getActorContext(req);
+      const idOrNumber = (req.params.idOrNumber || req.params.id || req.params.outwardChallanNumber) as string;
+      const result = await this.service.generatePrintableOutwardChallan(tenantId, idOrNumber, actor);
+
+      if (req.headers.accept?.includes('text/html')) {
+        res.status(200).contentType('text/html').send(result.htmlReport);
+        return;
+      }
+
+      this.sendSuccess(
+        res,
+        result,
+        `Outward Challan '${result.outwardChallan.outwardChallanNumber || result.outwardChallan.dispatchNumber}' printable document generated`
+      );
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public updateOutwardChallan = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const actor = this.getActorContext(req);
+      const idOrNumber = (req.params.idOrNumber || req.params.id) as string;
+      const result = await this.service.updateOutwardChallan(tenantId, idOrNumber, req.body, actor);
+      this.sendSuccess(res, result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public deleteOutwardChallan = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const actor = this.getActorContext(req);
+      const idOrNumber = (req.params.idOrNumber || req.params.id) as string;
+      await this.service.deleteOutwardChallan(tenantId, idOrNumber, actor);
+      this.sendSuccess(res, { deleted: true });
+    } catch (error) {
+      next(error);
+    }
+  };
 }
 
 export const dispatchController = new DispatchController();
