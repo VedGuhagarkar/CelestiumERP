@@ -95,7 +95,7 @@
    - 8.1 Database Seeding Engine (`backend/src/scripts/seed.ts`)
    - 8.2 Centralized Configuration Subsystem (`backend/src/config/`)
    - 8.3 Operational Runbooks & Technical Specifications (`docs/`)
-   - 8.4 Automated Test Suite Matrix (82 Backend Specs + Frontend Suites)
+   - 8.4 Automated Test Suite Matrix (83 Backend Specs + Frontend Suites)
      - *Prompt 8:* `production-operator-workspace.spec.ts`
      - *Prompt 9:* `production-security-concurrency.spec.ts`
      - *Prompt 10:* `production-e2e-integration.spec.ts`
@@ -112,6 +112,7 @@
      - *Dispatch Prompt 6:* `dispatch-transport-physical.spec.ts`
      - *Dispatch Prompt 7:* `dispatch-authorization.spec.ts`
      - *Dispatch Prompt 8:* `dispatch-oc-view-print.spec.ts`
+     - *Dispatch Prompt 9:* `dispatch-final-state-inventory.spec.ts`
 
 ---
 
@@ -1627,6 +1628,16 @@ _No direct HTTP routes mounted for this internal domain service._
     3. *Reliable Printable Document Generation:* `generatePrintableOutwardChallan(tenantId, idOrNumber, actor)` compiles an authoritative, Nadcap AC7102-compliant HTML document preview without creating secondary editable business records. Increments monotonic `printCount`, updates `printedAt` and `printedBy`, and writes a `DISPATCH_OC_PRINTED` audit log entry.
     4. *Historical OC Viewing & Traceability:* Dispatched and delivered consignments remain permanently accessible, queryable, viewable, and printable by authorized users across all active and historical lifecycle stages.
     5. *Dispatched Record Immutability Guard:* Once a consignment achieves `DISPATCHED` or `DELIVERED` status, `updateOutwardChallan()` and `deleteOutwardChallan()` strictly reject direct modification or deletion (`400 Bad Request`), permanently locking historical production, metallurgical, and transport records.
+  - **Authoritative Final Dispatch State & Inventory Removal Invariants (Prompt 9):**
+    1. *Authoritative Transition (`waitingForDispatch -> dispatched`):* When an eligible BO is physically dispatched, its final workflow state becomes `dispatched = true` and `waitingForDispatch = false`. All other BO workflow flags (`waitingForProduction`, `inProduction`, `waitingForInspection`, `inInspection`, `inspection`) are strictly set to `false`. Exactly one workflow state remains active ($\sum \text{flag}_i = 1$). Status is updated to `DISPATCHED`.
+    2. *Strict Eligibility Gating:* Only a BO currently in `waitingForDispatch = true` may be dispatched. Requests for BOs in any other state (`WAITING_FOR_PRODUCTION`, `IN_PRODUCTION`, `WAITING_FOR_INSPECTION`, `IN_INSPECTION`, `INSPECTION` quarantined failure) or with corrupted/multiple active flags (`activeFlags > 1`) are strictly rejected with `400 Bad Request`.
+    3. *RBAC & Permission Verification:* Only users holding Dispatch permissions (`PERMISSIONS.DISPATCH_DELIVERY_DISPATCH`, `PERMISSIONS.DISPATCH_PASS_GENERATE`) or authoritative dispatch roles (`ADMIN`, `PLANT_MANAGER`, `DISPATCH_OFFICER`, `DISPATCH_MANAGER`) may execute the final dispatch operation. Unauthorized users are rejected with `403 Forbidden`.
+    4. *Authoritative Outward Challan (OC) Requirement:* A valid OC must exist on the consignment prior to physical dispatch finalization (`consignment.outwardChallanNumber`), belonging to the unbroken $\text{PO} \longrightarrow \text{GRN} \longrightarrow \text{BO}$ hierarchy.
+    5. *Warehouse Inventory Removal without Record Deletion:* Upon physical departure, the dispatched quantity is deducted from warehouse Finished Goods stock (`availableQuantity` and `reservedQuantity` decremented, `dispatchedQuantity` incremented, status updated to `FULLY_DISPATCHED`). An outward carrier shipment movement is permanently appended to `movementHistory`. The Finished Goods document is **never deleted**, preserving full historical material traceability.
+    6. *Negative Inventory Prevention & Quantity Integrity:* Physical dispatch verifies that warehouse available stock is sufficient ($\text{availableQuantity} \ge \text{requestedQuantity}$) and that the line quantity strictly equals the authoritative BO delivered quantity. Attempts to dispatch negative or mismatched quantities or when inventory is insufficient are rejected with `400 Bad Request`.
+    7. *Atomic Transaction & Concurrency Control:* The final dispatch operation atomically updates BO workflow, consignment status, inventory availability, carrier metadata, and audit records. Simultaneous dispatch attempts on the same BO resolve via single-winner atomic locking on `jobRepo.atomicMarkDispatched`; any pre-allocated inventory deductions are immediately rolled back and competing requests receive `409 Conflict`.
+    8. *Duplicate Dispatch Prevention:* A BO or consignment that is already dispatched cannot be dispatched again. Repeated requests are safely rejected with `400 Bad Request`.
+    9. *Permanent Historical Traceability:* After dispatch, the complete lineage $\text{PO} \longrightarrow \text{GRN} \longrightarrow \text{BO} \longrightarrow \text{OC} \longrightarrow \text{dispatched material}$ remains fully preserved, queryable, and immutable.
   - **Dispatch Protection & Inspection Clearance Invariant:** `createDispatch()` and `verifyQualityRelease()` strictly inspect linked Batch Orders. Any attempt to dispatch a job in quarantined `INSPECTION` (`workflowState.inspection: true`) or lacking quality approval is strictly rejected with `400 Bad Request` (`Dispatch Protection Violation`).
 
 #### Controllers
@@ -2764,12 +2775,24 @@ $$\mathbf{Production\ Completion} \longrightarrow \mathbf{Waiting\ for\ Inspecti
    - **Historical OC Accessibility & Read-Only Immutability Guard:**
      1. Dispatched and delivered historical records remain fully accessible, queryable, viewable, and printable.
      2. Immutability protection: Once dispatched, direct API modifications (`PUT`, `PATCH`) or deletion (`DELETE`) are strictly rejected with `400 Bad Request`, permanently locking historical production, metallurgical, and transport data.
-7. **Consignment Drafting (`POST /api/v1/dispatches`):** Logistics coordinator can alternatively create a multi-line dispatch order selecting customer and destination. Generates `DISP-YYYYMM-XXXX`. Status is `DRAFT`.
-8. **Finished Goods Attachment:** Jobs in finished goods storage are attached to the consignment.
-9. **Quality Compliance Gate (`POST /api/v1/dispatches/:id/verify-quality`):** System validates that every attached job has an approved, signed Certificate of Conformance (CoC). If any job lacks a valid CoC, the shipment cannot proceed.
-10. **Carrier Scheduling (`POST /api/v1/dispatches/:id/schedule`):** Logistics attaches carrier name, vehicle number, driver name, and planned departure time. Status moves to `SCHEDULED`.
-11. **Gate Departure Authorization (`POST /api/v1/dispatches/:id/approve`, `POST /.../depart`):** Plant Manager authorizes gate pass (delegating to `authorizeOutwardChallan`). Vehicle departs plant; consignment status transitions to `IN_TRANSIT` (or delegates to `completePhysicalDispatch` for OC consignments).
-12. **Customer Delivery & PoD (`POST /api/v1/dispatches/:id/deliver`):** Driver delivers shipment. Customer signs delivery challan; Proof of Delivery (PoD) is uploaded (delegating to `recordCustomerAcknowledgement`). Status transitions to `DELIVERED`. Emits `Dispatch.Delivered`.
+7. **Authoritative Final Physical Dispatch State Transition & Inventory Removal (Prompt 9):**
+   - **Authoritative State Invariant:** The definitive physical departure transitions the Batch Order from `waitingForDispatch` to `dispatched`:
+     $$\text{waitingForDispatch} = \text{false}, \quad \text{dispatched} = \text{true}, \quad \sum \text{flag}_i = 1$$
+     All other workflow flags (`waitingForProduction`, `inProduction`, `waitingForInspection`, `inInspection`, `inspection`) are strictly `false`. Status transitions to `DISPATCHED`.
+   - **Strict State & Flag Exclusivity Gating:** The BO must be currently waiting for dispatch (`waitingForDispatch = true`). Attempts to dispatch BOs in any other lifecycle state (`WAITING_FOR_PRODUCTION`, `IN_PRODUCTION`, `WAITING_FOR_INSPECTION`, `IN_INSPECTION`, `INSPECTION` quarantined failure) or corrupted states with multiple active flags ($\sum \text{flag}_i > 1$) are rejected with `400 Bad Request`.
+   - **RBAC Permission Gate:** Physical dispatch is strictly restricted to authenticated users holding Dispatch permissions (`DISPATCH_DELIVERY_DISPATCH`, `DISPATCH_PASS_GENERATE`) or authoritative roles (`ADMIN`, `PLANT_MANAGER`, `DISPATCH_OFFICER`, `DISPATCH_MANAGER`). Unauthorized users receive `403 Forbidden`.
+   - **Mandatory Outward Challan Lineage:** Dispatches cannot occur without an existing Outward Challan linked to the unbroken $\text{PO} \longrightarrow \text{GRN} \longrightarrow \text{BO}$ hierarchy. Missing OC is rejected with `400 Bad Request`.
+   - **Warehouse Inventory Removal without Record Deletion:** Physical departure deducts the exact dispatched quantity from warehouse Finished Goods available stock (`availableQuantity` and `reservedQuantity` decremented, `dispatchedQuantity` incremented, status set to `FULLY_DISPATCHED`). An outward shipment record is permanently appended to `movementHistory`. The Finished Goods inventory document is **never deleted**, preserving full physical material genealogy.
+   - **Negative Stock & Quantity Mismatch Protection:** If warehouse available stock is insufficient ($\text{availableQuantity} < \text{dispatchedQuantity}$), or if the dispatched quantity does not match the authoritative BO delivered quantity, the operation is rejected with `400 Bad Request`.
+   - **Single-Winner Atomic Concurrency:** Concurrent dispatch requests resolve atomically via single-winner update (`jobRepo.atomicMarkDispatched`). Competing requests roll back pre-allocated stock deductions and return `409 Conflict`.
+   - **Duplicate Dispatch Protection:** Dispatched consignments or BOs cannot be dispatched again; duplicate requests are rejected with `400 Bad Request`.
+   - **Permanent Historical Traceability:** Full manufacturing lineage $\text{PO} \longrightarrow \text{GRN} \longrightarrow \text{BO} \longrightarrow \text{OC} \longrightarrow \text{dispatched material}$ remains queryable, viewable, and printable for audits and customer compliance.
+8. **Consignment Drafting (`POST /api/v1/dispatches`):** Logistics coordinator can alternatively create a multi-line dispatch order selecting customer and destination. Generates `DISP-YYYYMM-XXXX`. Status is `DRAFT`.
+9. **Finished Goods Attachment:** Jobs in finished goods storage are attached to the consignment.
+10. **Quality Compliance Gate (`POST /api/v1/dispatches/:id/verify-quality`):** System validates that every attached job has an approved, signed Certificate of Conformance (CoC). If any job lacks a valid CoC, the shipment cannot proceed.
+11. **Carrier Scheduling (`POST /api/v1/dispatches/:id/schedule`):** Logistics attaches carrier name, vehicle number, driver name, and planned departure time. Status moves to `SCHEDULED`.
+12. **Gate Departure Authorization (`POST /api/v1/dispatches/:id/approve`, `POST /.../depart`):** Plant Manager authorizes gate pass (delegating to `authorizeOutwardChallan`). Vehicle departs plant; consignment status transitions to `IN_TRANSIT` (or delegates to `completePhysicalDispatch` for OC consignments).
+13. **Customer Delivery & PoD (`POST /api/v1/dispatches/:id/deliver`):** Driver delivers shipment. Customer signs delivery challan; Proof of Delivery (PoD) is uploaded (delegating to `recordCustomerAcknowledgement`). Status transitions to `DELIVERED`. Emits `Dispatch.Delivered`.
 
 ---
 
@@ -2989,10 +3012,10 @@ The platform includes 8 authoritative engineering specifications and operational
 7. **`PHASE_1_CERTIFICATION_REPORT.md`:** Verification findings for core platform stability, data boundary enforcement, and error resilience.
 8. **`FACTORY_ACCEPTANCE_REPORT.md`:** End-to-end metallurgical workflow verification and compliance sign-off.
 
-### 8.4 Automated Test Suite Matrix (82 Backend Specs + Frontend Suites)
+### 8.4 Automated Test Suite Matrix (83 Backend Specs + Frontend Suites)
 
 The codebase features comprehensive test suites validating layer boundaries, data integrity, and business logic:
-- **Backend Test Summary:** **82 Test Suites, 1147 Tests Passed (0 Failures, 100% Pass Rate)**
+- **Backend Test Summary:** **83 Test Suites, 1158 Tests Passed (0 Failures, 100% Pass Rate)**
 - **Frontend Test Summary:** **5 Test Suites, 69 Tests Passed (0 Failures, 100% Pass Rate)**
 
 #### 1. Backend Architecture Governance
@@ -3546,6 +3569,18 @@ The codebase features comprehensive test suites validating layer boundaries, dat
   - Invariant 18: Rejects direct API modification (`PUT`, `PATCH`) of finalized dispatched Outward Challans with `400 Bad Request` (`Outward Challan is finalized and dispatched. Historical manufacturing and dispatch data is permanently immutable`).
   - Invariant 19: Rejects direct API deletion (`DELETE`) of dispatched Outward Challans with `400 Bad Request`.
   - Invariant 20: Rejects cancellation of dispatched Outward Challans with `400 Bad Request`.
+- `dispatch-final-state-inventory.spec.ts` (11 tests — Prompt 9: Final Dispatch State, Inventory Removal & Concurrency Control):
+  - Invariant 1: Valid physical dispatch transitions Batch Order to `waitingForDispatch = false`, `dispatched = true`, and strictly sets all other 5 workflow flags to `false` ($\sum \text{flag}_i = 1$).
+  - Invariant 2: Strictly rejects physical dispatch attempt when Batch Order is not in `waitingForDispatch` state (`400 Bad Request`).
+  - Invariant 3: Strictly rejects physical dispatch attempt when Batch Order has corrupted / multiple active workflow flags (`400 Bad Request`).
+  - Invariant 4: Rejects physical dispatch attempt by an unauthorized user lacking Dispatch permissions (`403 Forbidden`).
+  - Invariant 5: Rejects physical dispatch attempt when consignment lacks an Outward Challan (`400 Bad Request`).
+  - Invariant 6: Deducts dispatched quantity from warehouse Finished Goods availability and records outward carrier transfer in `movementHistory` without deleting the material record.
+  - Invariant 7: Strictly rejects physical dispatch when warehouse stock is insufficient, preventing negative inventory (`400 Bad Request`).
+  - Invariant 8: Strictly rejects physical dispatch when dispatched quantity does not match the authoritative BO delivered quantity (`400 Bad Request`).
+  - Invariant 9: Strictly rejects duplicate physical dispatch attempts on an already-dispatched BO or consignment (`400 Bad Request`).
+  - Invariant 10: Prevents concurrent race conditions via single-winner atomic locking (`jobRepo.atomicMarkDispatched`), rolling back inventory deductions and returning `409 Conflict`.
+  - Invariant 11: Preserves unbroken historical $\text{PO} \longrightarrow \text{GRN} \longrightarrow \text{BO} \longrightarrow \text{OC} \longrightarrow \text{dispatched material}$ traceability lineage after physical dispatch.
 - Metallurgical Lab & Quality: `quality-inspection.spec.ts`, `metallurgical-lab.spec.ts`, `ncr-capa.spec.ts`, `quality-documentation.spec.ts`, `pyrometry.spec.ts`.
 - Machine & Maintenance: `machine.spec.ts`, `maintenance.spec.ts`, `furnace-capacity.spec.ts`.
 - Traceability & Inventory: `heat-lot-traceability.spec.ts`, `inventory-ledger.spec.ts`, `warehouse.spec.ts`, `finished-goods.spec.ts`, `quarantine.spec.ts`.

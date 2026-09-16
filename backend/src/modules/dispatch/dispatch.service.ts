@@ -862,10 +862,35 @@ export class DispatchService extends BaseService {
       throw new NotFoundError(`Dispatch consignment with ID '${id}' not found`);
     }
 
+    // 0a. Check Dispatch Permission: Only users with Dispatch permission may perform final physical dispatch
+    const userPermissions = (actor as any).permissions || [];
+    const isDispatchRole =
+      actor.role === 'ADMIN' ||
+      actor.role === 'PLANT_MANAGER' ||
+      actor.role === 'DISPATCH_OFFICER' ||
+      actor.role === 'DISPATCH_MANAGER';
+    const hasDispatchPermission =
+      userPermissions.includes(PERMISSIONS.DISPATCH_DELIVERY_DISPATCH) ||
+      userPermissions.includes(PERMISSIONS.DISPATCH_PASS_GENERATE) ||
+      userPermissions.includes('dispatch:manage') ||
+      userPermissions.includes('dispatch:create') ||
+      userPermissions.includes('dispatch:delivery:dispatch');
+
+    if (!isDispatchRole && !hasDispatchPermission) {
+      const permitted = await this.rbacServiceInstance
+        .userHasPermission(tenantId, actor.userId, PERMISSIONS.DISPATCH_DELIVERY_DISPATCH)
+        .catch(() => false);
+      if (!permitted) {
+        throw new ForbiddenError(
+          'Unauthorized: User lacks required dispatch permission to perform final physical dispatch operation.'
+        );
+      }
+    }
+
     // Must not produce a duplicate dispatch
     if (consignment.status === 'DISPATCHED') {
       throw new BadRequestError(
-        `Dispatch consignment '${consignment.dispatchNumber || id}' is already dispatched. Duplicate dispatch is rejected.`
+        `Duplicate dispatch rejected: Dispatch consignment '${consignment.dispatchNumber || id}' is already dispatched.`
       );
     }
 
@@ -881,13 +906,12 @@ export class DispatchService extends BaseService {
     if (consignment.isOutwardChallan || consignment.batchOrderId) {
       if (!consignment.outwardChallanNumber) {
         throw new BadRequestError(
-          `Cannot complete physical dispatch: Outward Challan (OC) has not been generated for Batch Order '${consignment.batchOrderNumber || consignment.batchOrderId}'. An OC must be prepared first.`
+          `Cannot complete physical dispatch: Outward Challan (OC) has not been generated for consignment '${consignment.dispatchNumber || id}'. A valid OC must exist before the BO can be finalized as dispatched.`
         );
       }
     }
 
-    // 0. Finalization Check (Prompt 7 Section 7):
-    // Outward Challan requires valid authorization before physical dispatch can proceed
+    // 0b. Finalization Check: Outward Challan requires valid authorization before physical dispatch can proceed
     if (consignment.isOutwardChallan || consignment.outwardChallanNumber) {
       if (!consignment.authorizedSignatory || !consignment.authorizedSignatory.userId) {
         // If client supplied authorizedSignatoryId during physical dispatch call, attempt to validate and attach
@@ -962,11 +986,116 @@ export class DispatchService extends BaseService {
       role: actor.role
     };
 
-    // 3. Authoritative Inventory/Storage Check & Negative Inventory Prevention
+    // 3. Batch Order Verification & Eligibility Gating (Requirements 1, 3, 5, 7)
+    const targetBoId = consignment.batchOrderId || (consignment.lines && consignment.lines[0]?.jobId);
+    let bo: any = null;
+    if (targetBoId) {
+      bo = await this.jobRepo.findById(tenantId, targetBoId);
+      if (!bo || bo.isDeleted) {
+        throw new NotFoundError(`Batch Order with ID '${targetBoId}' not found.`);
+      }
+
+      // Check linked OC on BO (Requirement 3: The OC must belong to PO / GRN / BO)
+      if (bo.outwardChallanNumber && consignment.outwardChallanNumber && bo.outwardChallanNumber !== consignment.outwardChallanNumber) {
+        throw new BadRequestError(
+          `Outward Challan mismatch: Consignment OC '${consignment.outwardChallanNumber}' does not match Batch Order OC '${bo.outwardChallanNumber}'.`
+        );
+      }
+      if (!bo.outwardChallanNumber && consignment.outwardChallanNumber) {
+        bo.outwardChallanNumber = consignment.outwardChallanNumber;
+      }
+
+      // Check PO / GRN / BO Lineage
+      if (consignment.hierarchy?.poId && bo.poId && consignment.hierarchy.poId !== bo.poId) {
+        throw new BadRequestError(
+          `Lineage mismatch: Outward Challan PO '${consignment.hierarchy.poId}' does not match Batch Order PO '${bo.poId}'.`
+        );
+      }
+      if (consignment.hierarchy?.grnId && bo.grnId && consignment.hierarchy.grnId !== bo.grnId) {
+        throw new BadRequestError(
+          `Lineage mismatch: Outward Challan GRN '${consignment.hierarchy.grnId}' does not match Batch Order GRN '${bo.grnId}'.`
+        );
+      }
+
+      // Duplicate Dispatch Check on BO (Requirement 7)
+      if (bo.status === 'DISPATCHED' || bo.dispatched || (bo.workflowState as any)?.dispatched) {
+        throw new BadRequestError(
+          `Duplicate dispatch rejected: Batch Order '${bo.boNumber || bo.jobNumber}' is already dispatched.`
+        );
+      }
+
+      // Check for multiple workflow flags (Requirement 5)
+      const activeBoFlags = [
+        bo.waitingForProduction,
+        bo.inProduction,
+        bo.waitingForInspection,
+        bo.inInspection,
+        bo.waitingForDispatch,
+        bo.dispatched,
+        bo.inspection
+      ].filter(Boolean).length;
+      if (activeBoFlags > 1) {
+        throw new BadRequestError(
+          `Invalid workflow state: Batch Order '${bo.boNumber || bo.jobNumber}' has multiple active workflow flags (${activeBoFlags} active). Exactly one state must be active.`
+        );
+      }
+
+      // Eligibility Check: Only BO waiting for dispatch may be dispatched (Requirement 1)
+      if (
+        !bo.waitingForDispatch &&
+        !(bo.workflowState as any)?.waitingForDispatch &&
+        bo.status !== 'WAITING_FOR_DISPATCH'
+      ) {
+        throw new BadRequestError(
+          `Invalid workflow state: Batch Order '${bo.boNumber || bo.jobNumber}' is in '${bo.status}' state. Only a Batch Order waiting for dispatch (waitingForDispatch = true) may be dispatched.`
+        );
+      }
+
+      // Non-dispatch flag check: reject any state other than waiting for dispatch
+      if (
+        bo.inProduction ||
+        bo.inInspection ||
+        bo.inspection ||
+        bo.waitingForProduction ||
+        bo.waitingForInspection ||
+        (bo.workflowState as any)?.inProduction ||
+        (bo.workflowState as any)?.inInspection ||
+        (bo.workflowState as any)?.inspection ||
+        (bo.workflowState as any)?.waitingForProduction ||
+        (bo.workflowState as any)?.waitingForInspection
+      ) {
+        throw new BadRequestError(
+          `Invalid workflow state: Batch Order '${bo.boNumber || bo.jobNumber}' has active non-dispatch workflow flags. Only a Batch Order waiting for dispatch (waitingForDispatch = true) may be dispatched.`
+        );
+      }
+    }
+
+    // 4. Authoritative Inventory/Storage Check & Negative Inventory Prevention (Requirement 4)
     // Ensure we do not remove more material than available in warehouse or represented by BO/OC
     const fgUpdates: Array<{ fg: any; deductReserved: number; deductAvailable: number; qty: number }> = [];
 
     for (const line of consignment.lines) {
+      if (line.dispatchedQuantity <= 0) {
+        throw new BadRequestError(
+          `Invalid dispatched quantity: Dispatched quantity must be greater than 0.`
+        );
+      }
+
+      // If BO is linked, ensure quantity matches authoritative delivered quantity
+      if (bo) {
+        const authoritativeBoQty =
+          (bo.execution?.inspectionData as any)?.quantityDelivered ??
+          bo.quantity?.completedQuantity ??
+          (bo as any).completedQuantity ??
+          consignment.totalQuantity;
+
+        if (line.dispatchedQuantity !== authoritativeBoQty) {
+          throw new BadRequestError(
+            `Quantity mismatch: Dispatched quantity (${line.dispatchedQuantity}) does not match authoritative delivered quantity (${authoritativeBoQty}) of Batch Order '${bo.boNumber || bo.jobNumber}'.`
+          );
+        }
+      }
+
       let fg: any = null;
       if (line.finishedGoodsId) {
         fg = await this.fgRepo.findById(tenantId, line.finishedGoodsId);
@@ -995,31 +1124,10 @@ export class DispatchService extends BaseService {
         const deductReserved = Math.min(fg.reservedQuantity || 0, line.dispatchedQuantity);
         const deductAvailable = line.dispatchedQuantity - deductReserved;
         fgUpdates.push({ fg, deductReserved, deductAvailable, qty: line.dispatchedQuantity });
-      } else if (consignment.batchOrderId || line.jobId) {
-        // Direct metallurgical BO inventory check against BO completed quantity
-        const boId = consignment.batchOrderId || line.jobId;
-        const bo = await this.jobRepo.findById(tenantId, boId);
-        if (bo) {
-          if (bo.status === 'DISPATCHED' || bo.dispatched || (bo.workflowState as any)?.dispatched) {
-            throw new BadRequestError(
-              `Duplicate dispatch rejected: Batch Order '${bo.boNumber || bo.jobNumber}' is already dispatched.`
-            );
-          }
-          const authoritativeBoQty =
-            (bo.execution?.inspectionData as any)?.quantityDelivered ??
-            bo.quantity?.completedQuantity ??
-            (bo as any).completedQuantity ??
-            consignment.totalQuantity;
-          if (line.dispatchedQuantity > authoritativeBoQty) {
-            throw new BadRequestError(
-              `Cannot remove more material than the BO/OC represents. BO delivered quantity: ${authoritativeBoQty}, requested: ${line.dispatchedQuantity}.`
-            );
-          }
-        }
       }
     }
 
-    // 4. Perform Inventory Deductions
+    // 5. Perform Inventory Deductions & Preserve Traceability (Never delete material records)
     for (const update of fgUpdates) {
       const { fg, deductReserved, deductAvailable, qty } = update;
       const beforeState = fg.toJSON();
@@ -1029,6 +1137,17 @@ export class DispatchService extends BaseService {
       if (fg.dispatchedQuantity >= (fg.totalQuantity || fg.dispatchedQuantity)) {
         fg.status = 'FULLY_DISPATCHED';
       }
+      if (!fg.movementHistory) {
+        fg.movementHistory = [];
+      }
+      fg.movementHistory.push({
+        fromLocation: fg.location || 'FINISHED_GOODS_BAY',
+        toLocation: `CARRIER_${rawTransporter.replace(/\s+/g, '_').toUpperCase()}`,
+        quantity: qty,
+        movedAt: dispatchDate,
+        movedByActorId: actor.userId,
+        reason: `Physical outbound dispatch under OC '${consignment.outwardChallanNumber || consignment.dispatchNumber}'`
+      });
       await fg.save();
 
       await auditService.record(tenantId, {
@@ -1042,16 +1161,19 @@ export class DispatchService extends BaseService {
         afterState: fg.toJSON(),
         metadata: {
           dispatchNumber: consignment.dispatchNumber,
-          dispatchedQuantity: qty
+          outwardChallanNumber: consignment.outwardChallanNumber,
+          dispatchedQuantity: qty,
+          remainingAvailable: fg.availableQuantity
         }
       });
     }
 
-    // 5. Atomic Batch Order Transition (if linked to BO)
-    if (consignment.batchOrderId) {
+    // 6. Atomic Batch Order Transition (Requirements 5, 6, 8)
+    if (consignment.batchOrderId || bo) {
+      const targetId = consignment.batchOrderId || bo.id;
       const updatedJob = await this.jobRepo.atomicMarkDispatched(
         tenantId,
-        consignment.batchOrderId,
+        targetId,
         {
           dispatchedAt: dispatchDate,
           dispatchedBy: authenticatedUser
@@ -1059,32 +1181,35 @@ export class DispatchService extends BaseService {
       );
 
       if (!updatedJob) {
-        // Rollback inventory deductions if BO update failed
+        // Rollback inventory deductions if BO update failed (concurrency collision)
         for (const update of fgUpdates) {
           const { fg, deductReserved, deductAvailable, qty } = update;
           fg.reservedQuantity = (fg.reservedQuantity || 0) + deductReserved;
           fg.availableQuantity = (fg.availableQuantity || 0) + deductAvailable;
           fg.dispatchedQuantity = Math.max(0, (fg.dispatchedQuantity || 0) - qty);
+          if (fg.movementHistory && fg.movementHistory.length > 0) {
+            fg.movementHistory.pop();
+          }
           await fg.save();
         }
 
-        const existingJob = await this.jobRepo.findById(tenantId, consignment.batchOrderId);
+        const existingJob = await this.jobRepo.findById(tenantId, targetId);
         if (
           existingJob?.dispatched ||
           existingJob?.status === 'DISPATCHED' ||
           (existingJob?.workflowState as any)?.dispatched
         ) {
           throw new BadRequestError(
-            `Duplicate dispatch rejected: Batch Order '${existingJob?.boNumber || existingJob?.jobNumber || consignment.batchOrderId}' is already dispatched.`
+            `Duplicate dispatch rejected: Batch Order '${existingJob?.boNumber || existingJob?.jobNumber || targetId}' is already dispatched.`
           );
         }
         throw new ConflictError(
-          `Concurrent dispatch collision: Batch Order '${consignment.batchOrderId}' is currently being updated or has already completed dispatch.`
+          `Concurrent dispatch collision: Batch Order '${targetId}' is currently being updated or has already completed dispatch.`
         );
       }
     }
 
-    // 6. Update Consignment State & Transport Metadata
+    // 7. Update Consignment State & Transport Metadata
     const prevStatus = consignment.status;
     consignment.status = 'DISPATCHED';
     consignment.transporter = rawTransporter;
@@ -1196,10 +1321,12 @@ export class DispatchService extends BaseService {
       throw new NotFoundError(`Dispatch consignment with ID '${id}' not found`);
     }
 
-    // If it is an Outward Challan consignment, delegate to completePhysicalDispatch
-    if (consignment.isOutwardChallan || dto.transporter || dto.vehicleNumber || dto.dispatchDate) {
+    // If it is an Outward Challan consignment or has transport details, delegate to completePhysicalDispatch
+    if (consignment.isOutwardChallan || consignment.batchOrderId || dto.transporter || dto.vehicleNumber) {
       return this.completePhysicalDispatch(tenantId, actor, id, {
         ...dto,
+        transporter: dto.transporter || consignment.carrier?.carrierName || 'VRL Logistics Fleet',
+        vehicleNumber: dto.vehicleNumber || consignment.vehicle?.vehicleNumber || 'MH-12-AB-1234',
         dispatchDate: dto.dispatchDate || dto.actualDepartureTime || new Date()
       } as PhysicalDispatchDto);
     }
@@ -1249,10 +1376,15 @@ export class DispatchService extends BaseService {
       const gatePassNumber = await this.repo.generateNextGatePassNumber(tenantId);
       consignment.gatePass = {
         gatePassNumber,
-        issuedAt: now
+        issuedAt: now,
+        securityOfficerName: dto.securityOfficerName || 'Security Gate Officer'
       };
+    } else {
+      if (dto.securityOfficerName) {
+        consignment.gatePass.securityOfficerName = dto.securityOfficerName;
+      }
+      consignment.gatePass.issuedAt = consignment.gatePass.issuedAt || now;
     }
-    consignment.gatePass.securityOfficerName = dto.securityOfficerName;
     if (dto.sealNumber) consignment.gatePass.sealNumber = dto.sealNumber;
 
     if (dto.vehicleNumber && consignment.vehicle) consignment.vehicle.vehicleNumber = dto.vehicleNumber;

@@ -923,10 +923,20 @@ export class ProductionJobRepository
         {
           $set: {
             status: 'DISPATCHED',
-            dispatched: true,
+            waitingForProduction: false,
+            inProduction: false,
+            waitingForInspection: false,
+            inInspection: false,
             waitingForDispatch: false,
-            'workflowState.dispatched': true,
+            dispatched: true,
+            inspection: false,
+            'workflowState.waitingForProduction': false,
+            'workflowState.inProduction': false,
+            'workflowState.waitingForInspection': false,
+            'workflowState.inInspection': false,
             'workflowState.waitingForDispatch': false,
+            'workflowState.dispatched': true,
+            'workflowState.inspection': false,
             dispatchedAt: details.dispatchedAt,
             dispatchedBy: details.dispatchedBy
           },
