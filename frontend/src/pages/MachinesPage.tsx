@@ -215,6 +215,7 @@ export const MachinesPage: React.FC = () => {
 
   const handleConfigureFurnace = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setIsSubmitting(true);
     setFeedback(null);
 
@@ -269,7 +270,7 @@ export const MachinesPage: React.FC = () => {
   };
 
   const handleLogSurvey = async () => {
-    if (!selectedMachine) return;
+    if (!selectedMachine || isSubmitting) return;
     setIsSubmitting(true);
     setFeedback(null);
 
@@ -287,12 +288,11 @@ export const MachinesPage: React.FC = () => {
       });
 
       if (!res.ok) {
-        // Fallback simulation for local state if sub-route differs
-        setFeedback({ type: 'success', message: `System Accuracy Test (SAT) verified for ${selectedMachine.machineCode}. Compliance updated.` });
-      } else {
-        setFeedback({ type: 'success', message: `SAT Survey successfully logged for ${selectedMachine.machineCode}.` });
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || `Calibration survey logging failed with status ${res.status}`);
       }
 
+      setFeedback({ type: 'success', message: `SAT Survey successfully logged for ${selectedMachine.machineCode}.` });
       setSelectedMachine(null);
       fetchMachines();
     } catch (err: any) {

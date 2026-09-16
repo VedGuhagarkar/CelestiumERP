@@ -112,7 +112,7 @@ export const InspectionWorkbench: React.FC<InspectionWorkbenchProps> = ({
     setIsLoading(true);
     try {
       const res = await authenticatedFetch(
-        `${env.API_BASE_URL}/api/v1/production-jobs/${jobId}/inspection-workbench`
+        `${env.API_BASE_URL}/production-jobs/${jobId}/inspection-workbench`
       );
 
       if (res.status === 403) {
@@ -125,7 +125,7 @@ export const InspectionWorkbench: React.FC<InspectionWorkbenchProps> = ({
       }
 
       if (!res.ok) {
-        const errJson = await res.json();
+        const errJson = await res.json().catch(() => ({}));
         throw new Error(errJson.message || 'Failed to load inspection workbench data');
       }
 
@@ -343,7 +343,7 @@ export const InspectionWorkbench: React.FC<InspectionWorkbenchProps> = ({
 
   // Save Progress Handler (without state advancement)
   const handleSaveProgress = async () => {
-    if (!isJobInActiveInspection) return;
+    if (isSubmitting || !isJobInActiveInspection) return;
     setIsSubmitting(true);
     setFeedback(null);
     try {
@@ -381,7 +381,7 @@ export const InspectionWorkbench: React.FC<InspectionWorkbenchProps> = ({
       };
 
       const res = await authenticatedFetch(
-        `${env.API_BASE_URL}/api/v1/production-jobs/${jobId}/inspection-data`,
+        `${env.API_BASE_URL}/production-jobs/${jobId}/inspection-data`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -389,7 +389,7 @@ export const InspectionWorkbench: React.FC<InspectionWorkbenchProps> = ({
         }
       );
 
-      const json = await res.json();
+      const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(json.message || 'Failed to save inspection draft data');
       }
@@ -411,7 +411,7 @@ export const InspectionWorkbench: React.FC<InspectionWorkbenchProps> = ({
 
   // Verify Single Process Row Handler
   const handleVerifyRowSubmit = async () => {
-    if (!verifyingRow || !isJobInActiveInspection) return;
+    if (isSubmitting || !verifyingRow || !isJobInActiveInspection) return;
     setIsSubmitting(true);
     try {
       const payload = {
@@ -423,7 +423,7 @@ export const InspectionWorkbench: React.FC<InspectionWorkbenchProps> = ({
       };
 
       const res = await authenticatedFetch(
-        `${env.API_BASE_URL}/api/v1/production-jobs/${jobId}/verify-process-row`,
+        `${env.API_BASE_URL}/production-jobs/${jobId}/verify-process-row`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -431,7 +431,7 @@ export const InspectionWorkbench: React.FC<InspectionWorkbenchProps> = ({
         }
       );
 
-      const json = await res.json();
+      const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(json.message || 'Failed to verify process row');
       }
@@ -455,7 +455,7 @@ export const InspectionWorkbench: React.FC<InspectionWorkbenchProps> = ({
 
   // Approve for Dispatch Handler (explicit state transition to WAITING_FOR_DISPATCH)
   const handleApproveForDispatch = async () => {
-    if (!isJobInActiveInspection) return;
+    if (isSubmitting || !isJobInActiveInspection) return;
     if (!validationChecks.allValid) {
       setFeedback({
         type: 'warning',
@@ -486,7 +486,7 @@ export const InspectionWorkbench: React.FC<InspectionWorkbenchProps> = ({
       };
 
       const res = await authenticatedFetch(
-        `${env.API_BASE_URL}/api/v1/production-jobs/${jobId}/approve-inspection`,
+        `${env.API_BASE_URL}/production-jobs/${jobId}/approve-inspection`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -494,7 +494,7 @@ export const InspectionWorkbench: React.FC<InspectionWorkbenchProps> = ({
         }
       );
 
-      const json = await res.json();
+      const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(json.message || 'Failed to approve inspection for dispatch');
       }
@@ -519,7 +519,7 @@ export const InspectionWorkbench: React.FC<InspectionWorkbenchProps> = ({
 
   // Fail Inspection Handler (explicit state transition to INSPECTION quarantine)
   const handleFailInspectionSubmit = async () => {
-    if (!isJobInActiveInspection) return;
+    if (isSubmitting || !isJobInActiveInspection) return;
     if (!defectReason.trim()) {
       setFeedback({
         type: 'warning',
@@ -548,7 +548,7 @@ export const InspectionWorkbench: React.FC<InspectionWorkbenchProps> = ({
       };
 
       const res = await authenticatedFetch(
-        `${env.API_BASE_URL}/api/v1/production-jobs/${jobId}/fail-inspection`,
+        `${env.API_BASE_URL}/production-jobs/${jobId}/fail-inspection`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -556,7 +556,7 @@ export const InspectionWorkbench: React.FC<InspectionWorkbenchProps> = ({
         }
       );
 
-      const json = await res.json();
+      const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(json.message || 'Failed to fail inspection');
       }

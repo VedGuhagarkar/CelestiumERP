@@ -790,6 +790,7 @@ export const JobsPage: React.FC = () => {
   // 5. Create Batch Order (Enforces PO -> GRN -> BO and Item -> Recipe -> BO Lineage)
   const handleCreateBatchOrder = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setIsSubmitting(true);
     setFeedback(null);
 
@@ -907,7 +908,7 @@ export const JobsPage: React.FC = () => {
 
   const handleConfirmTake = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!targetTakeJob) return;
+    if (isSubmitting || !targetTakeJob) return;
     setIsSubmitting(true);
     setFeedback(null);
     const jobId = targetTakeJob._id || targetTakeJob.id || targetTakeJob.jobNumber;
@@ -961,7 +962,7 @@ export const JobsPage: React.FC = () => {
 
   const handleRecordStageProgress = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedInProdJob) return;
+    if (isSubmitting || !selectedInProdJob) return;
     setIsSubmitting(true);
     setFeedback(null);
     const jobId = selectedInProdJob._id || selectedInProdJob.id || selectedInProdJob.jobNumber;
@@ -1004,7 +1005,7 @@ export const JobsPage: React.FC = () => {
   };
 
   const handleSavePartialWork = async () => {
-    if (!selectedInProdJob) return;
+    if (isSubmitting || !selectedInProdJob) return;
     setIsSubmitting(true);
     setFeedback(null);
     const jobId = selectedInProdJob._id || selectedInProdJob.id || selectedInProdJob.jobNumber;
@@ -1050,7 +1051,7 @@ export const JobsPage: React.FC = () => {
   const handleUpdateFurnaceCharge = async (e: React.FormEvent) => {
     e.preventDefault();
     const targetJob = selectedInProdJob || activeInProdJob;
-    if (!targetJob) return;
+    if (isUpdatingCharge || !targetJob) return;
     setIsUpdatingCharge(true);
     setFeedback(null);
     const jobId = targetJob._id || targetJob.id || targetJob.jobNumber;
@@ -1104,7 +1105,7 @@ export const JobsPage: React.FC = () => {
 
   const handleConfirmApprove = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!targetApproveJob) return;
+    if (isSubmitting || !targetApproveJob) return;
     setIsSubmitting(true);
     setFeedback(null);
     const jobId = targetApproveJob._id || targetApproveJob.id || targetApproveJob.jobNumber;

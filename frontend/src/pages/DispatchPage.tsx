@@ -537,7 +537,7 @@ export const DispatchPage: React.FC = () => {
 
   const handleCompletePhysicalDispatch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedDispatchForPhysical) return;
+    if (isSubmittingPhysicalDispatch || !selectedDispatchForPhysical) return;
 
     const errors: Record<string, string> = {};
     const trimmedTransporter = transporterInput.trim();
@@ -665,7 +665,7 @@ export const DispatchPage: React.FC = () => {
 
   const handleAuthorizeOutwardChallan = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedDispatchForAuthorize) return;
+    if (isSubmittingAuthorize || !selectedDispatchForAuthorize) return;
 
     const trimmedUserId = signatoryUserIdInput.trim();
     if (!trimmedUserId) {
@@ -772,7 +772,7 @@ export const DispatchPage: React.FC = () => {
 
   const handleRecordCustomerAcknowledgement = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedDispatchForAcknowledge) return;
+    if (isSubmittingAcknowledge || !selectedDispatchForAcknowledge) return;
 
     setIsSubmittingAcknowledge(true);
     setFeedback(null);
@@ -920,7 +920,7 @@ export const DispatchPage: React.FC = () => {
 
   const handleCreateOutwardChallan = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedBOForOC) return;
+    if (isSubmittingOC || !selectedBOForOC) return;
     setIsSubmittingOC(true);
     setFeedback(null);
 
@@ -966,6 +966,7 @@ export const DispatchPage: React.FC = () => {
 
   const handleCreateConsignment = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingConsignment) return;
     setIsSubmittingConsignment(true);
     setFeedback(null);
 

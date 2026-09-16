@@ -154,6 +154,7 @@ export const FinancePage: React.FC = () => {
 
   const handleCreateInvoice = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setIsSubmitting(true);
     setFeedback(null);
 

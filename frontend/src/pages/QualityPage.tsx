@@ -317,10 +317,10 @@ export const QualityPage: React.FC = () => {
     setIsLoading(true);
     try {
       const [waitRes, inInspRes, waitDispRes, failRes] = await Promise.all([
-        authenticatedFetch(`${env.API_BASE_URL}/api/v1/production-jobs/queue/waiting-for-inspection`),
-        authenticatedFetch(`${env.API_BASE_URL}/api/v1/production-jobs/queue/in-inspection`),
-        authenticatedFetch(`${env.API_BASE_URL}/api/v1/production-jobs/queue/waiting-for-dispatch`),
-        authenticatedFetch(`${env.API_BASE_URL}/api/v1/production-jobs/queue/inspection-failed`)
+        authenticatedFetch(`${env.API_BASE_URL}/production-jobs/queue/waiting-for-inspection`),
+        authenticatedFetch(`${env.API_BASE_URL}/production-jobs/queue/in-inspection`),
+        authenticatedFetch(`${env.API_BASE_URL}/production-jobs/queue/waiting-for-dispatch`),
+        authenticatedFetch(`${env.API_BASE_URL}/production-jobs/queue/inspection-failed`)
       ]);
 
       if (waitRes.status === 403 || inInspRes.status === 403) {
@@ -333,11 +333,11 @@ export const QualityPage: React.FC = () => {
       }
 
       if (waitRes.ok) {
-        const data = await waitRes.json();
+        const data = await waitRes.json().catch(() => ({}));
         setWaitingJobs(Array.isArray(data.data) ? data.data : (data.data?.id ? [data.data] : []));
       }
       if (inInspRes.ok) {
-        const data = await inInspRes.json();
+        const data = await inInspRes.json().catch(() => ({}));
         const inJobs: BatchOrderInspection[] = Array.isArray(data.data) ? data.data : (data.data?.id ? [data.data] : []);
         setInInspectionJobs(inJobs);
 
@@ -352,11 +352,11 @@ export const QualityPage: React.FC = () => {
         }
       }
       if (waitDispRes.ok) {
-        const data = await waitDispRes.json();
+        const data = await waitDispRes.json().catch(() => ({}));
         setWaitingDispatchJobs(Array.isArray(data.data) ? data.data : (data.data?.id ? [data.data] : []));
       }
       if (failRes.ok) {
-        const data = await failRes.json();
+        const data = await failRes.json().catch(() => ({}));
         setFailedJobs(Array.isArray(data.data) ? data.data : (data.data?.id ? [data.data] : []));
       }
     } catch (err: any) {
@@ -376,12 +376,13 @@ export const QualityPage: React.FC = () => {
 
   // Take for Inspection Handler
   const handleTakeForInspection = async (job: BatchOrderInspection, notes?: string) => {
+    if (isActionLoading) return;
     setIsActionLoading(true);
     setFeedback(null);
     try {
       const jobId = job.id || job._id;
       const res = await authenticatedFetch(
-        `${env.API_BASE_URL}/api/v1/production-jobs/${jobId}/take-for-inspection`,
+        `${env.API_BASE_URL}/production-jobs/${jobId}/take-for-inspection`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -391,7 +392,7 @@ export const QualityPage: React.FC = () => {
         }
       );
 
-      const json = await res.json();
+      const json = await res.json().catch(() => ({}));
 
       if (res.status === 409) {
         setFeedback({
@@ -1225,7 +1226,7 @@ export const QualityPage: React.FC = () => {
               variant="primary"
               onClick={async () => {
                 try {
-                  await authenticatedFetch(`${env.API_BASE_URL}/api/v1/quality-inspections`, {
+                  await authenticatedFetch(`${env.API_BASE_URL}/quality-inspections`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ notes: 'Conforming hardness test' })

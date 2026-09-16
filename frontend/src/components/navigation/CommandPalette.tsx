@@ -497,7 +497,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
 
                       return (
                         <div
-                          key={act.id}
+                          key={act.id || `quick-act-${idx}`}
                           onClick={() => {
                             navigate(act.actionUrl);
                             onClose();

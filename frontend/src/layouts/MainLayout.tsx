@@ -1,11 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import { Header } from './Header.js';
 import { Sidebar } from './Sidebar.js';
 import { CommandPalette } from '../components/navigation/CommandPalette.js';
 
 export const MainLayout: React.FC = () => {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const location = useLocation();
+
+  // Close search/command palette whenever the route changes (e.g. back/forward navigation or URL selection)
+  useEffect(() => {
+    setIsSearchOpen(false);
+  }, [location.pathname]);
 
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {

@@ -103,6 +103,7 @@ export const WorkforcePage: React.FC = () => {
 
   const handleClockInSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setIsSubmitting(true);
     setFeedback(null);
 

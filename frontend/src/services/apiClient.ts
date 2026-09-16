@@ -107,7 +107,14 @@ export async function authenticatedFetch(
   input: RequestInfo | URL,
   init?: RequestInit
 ): Promise<Response> {
-  const urlString = typeof input === 'string' ? input : input.toString();
+  let normalizedInput: RequestInfo | URL = input;
+  if (typeof input === 'string') {
+    normalizedInput = input.replace(/\/api\/v1\/api\/v1\//g, '/api/v1/');
+  } else if (typeof URL !== 'undefined' && input instanceof URL) {
+    normalizedInput = new URL(input.toString().replace(/\/api\/v1\/api\/v1\//g, '/api/v1/'));
+  }
+
+  const urlString = typeof normalizedInput === 'string' ? normalizedInput : normalizedInput.toString();
 
   // 1. Prepare Authorization & Tenant Headers
   const token =
@@ -137,7 +144,7 @@ export async function authenticatedFetch(
   };
 
   // 2. Execute Request
-  const response = await fetch(input, modifiedInit);
+  const response = await fetch(normalizedInput, modifiedInit);
 
   // 3. Handle 401 Unauthorized with Automatic Token Refresh
   if (response.status === 401) {
@@ -155,7 +162,7 @@ export async function authenticatedFetch(
         const retryHeaders = new Headers(modifiedInit.headers);
         retryHeaders.set('Authorization', `Bearer ${newAccessToken}`);
 
-        return fetch(input, {
+        return fetch(normalizedInput, {
           ...modifiedInit,
           headers: retryHeaders
         });
@@ -201,6 +208,21 @@ export const apiClient = {
     });
   },
 
+  patch: (url: string, body?: any, init?: RequestInit) => {
+    const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
+    const headers = new Headers(init?.headers || {});
+    if (!isFormData && !headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json');
+    }
+    return authenticatedFetch(url, {
+      ...init,
+      method: 'PATCH',
+      headers,
+      body: isFormData ? body : JSON.stringify(body)
+    });
+  },
+
   delete: (url: string, init?: RequestInit) =>
     authenticatedFetch(url, { ...init, method: 'DELETE' })
 };
+
