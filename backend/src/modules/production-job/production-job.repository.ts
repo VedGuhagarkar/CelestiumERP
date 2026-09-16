@@ -2,6 +2,8 @@ import mongoose from 'mongoose';
 import { BaseRepository } from '../../core/repository/base.repository.js';
 import { ProductionJobDocument, JobStatus, isJobInInspection } from './production-job.types.js';
 import { ProductionJobModel } from './production-job.model.js';
+import { CounterModel } from '../../core/models/counter.model.js';
+import { generateNextMonthlySequenceCode } from '../../core/utils/counter.util.js';
 import { PaginatedResult, PaginationOptions } from '../../core/types/pagination.js';
 import { BadRequestError } from '../../core/errors/app-error.js';
 
@@ -323,49 +325,11 @@ export class ProductionJobRepository
   }
 
   public async generateNextJobNumber(tenantId: string): Promise<string> {
-    const now = new Date();
-    const yearMonth = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const prefix = `JOB-${yearMonth}-`;
-
-    const latest = await this.model
-      .findOne({ tenantId, jobNumber: { $regex: `^${prefix}` } })
-      .sort({ jobNumber: -1 })
-      .exec();
-
-    if (!latest) {
-      return `${prefix}0001`;
-    }
-
-    const currentSeq = parseInt(latest.jobNumber.replace(prefix, ''), 10);
-    const nextSeq = isNaN(currentSeq) ? 1 : currentSeq + 1;
-    return `${prefix}${String(nextSeq).padStart(4, '0')}`;
+    return generateNextMonthlySequenceCode(tenantId, 'JOB', 'JOB', 4);
   }
 
   public async generateNextBatchOrderNumber(tenantId: string): Promise<string> {
-    const now = new Date();
-    const yearMonth = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const prefix = `BO-${yearMonth}-`;
-
-    const latest = await this.model
-      .findOne({
-        tenantId,
-        $or: [
-          { boNumber: { $regex: `^${prefix}` } },
-          { jobNumber: { $regex: `^${prefix}` } }
-        ]
-      })
-      .sort({ boNumber: -1, jobNumber: -1, createdAt: -1 })
-      .exec();
-
-    if (!latest) {
-      return `${prefix}0001`;
-    }
-
-    const numStr = latest.boNumber || latest.jobNumber || '';
-    const parts = numStr.split('-');
-    const currentSeq = parseInt(parts[parts.length - 1], 10);
-    const nextSeq = isNaN(currentSeq) ? 1 : currentSeq + 1;
-    return `${prefix}${String(nextSeq).padStart(4, '0')}`;
+    return generateNextMonthlySequenceCode(tenantId, 'BO', 'BO', 4);
   }
 
   public async findByPoId(

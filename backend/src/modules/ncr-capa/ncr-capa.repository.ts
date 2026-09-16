@@ -1,7 +1,10 @@
+import mongoose from 'mongoose';
 import {
   NonConformanceReportModel,
   CorrectivePreventiveActionModel
 } from './ncr-capa.model.js';
+import { CounterModel } from '../../core/models/counter.model.js';
+import { generateNextMonthlySequenceCode } from '../../core/utils/counter.util.js';
 import {
   NonConformanceReportDocument,
   CorrectivePreventiveActionDocument,
@@ -126,28 +129,7 @@ export class NcrCapaRepository implements INcrCapaRepository {
   }
 
   public async generateNextNcrNumber(tenantId: string): Promise<string> {
-    const now = new Date();
-    const yearMonth = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const prefix = `NCR-${yearMonth}-`;
-
-    const latest = await NonConformanceReportModel.findOne({
-      tenantId,
-      ncrNumber: { $regex: `^${prefix}` }
-    })
-      .sort({ ncrNumber: -1 })
-      .select('ncrNumber')
-      .lean();
-
-    let seq = 1;
-    if (latest && (latest as any).ncrNumber) {
-      const parts = (latest as any).ncrNumber.split('-');
-      const lastSeq = parseInt(parts[parts.length - 1], 10);
-      if (!isNaN(lastSeq)) {
-        seq = lastSeq + 1;
-      }
-    }
-
-    return `${prefix}${String(seq).padStart(4, '0')}`;
+    return generateNextMonthlySequenceCode(tenantId, 'NCR', 'NCR', 4);
   }
 
   // --- CAPA Methods ---
@@ -228,28 +210,7 @@ export class NcrCapaRepository implements INcrCapaRepository {
   }
 
   public async generateNextCapaNumber(tenantId: string): Promise<string> {
-    const now = new Date();
-    const yearMonth = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const prefix = `CAPA-${yearMonth}-`;
-
-    const latest = await CorrectivePreventiveActionModel.findOne({
-      tenantId,
-      capaNumber: { $regex: `^${prefix}` }
-    })
-      .sort({ capaNumber: -1 })
-      .select('capaNumber')
-      .lean();
-
-    let seq = 1;
-    if (latest && (latest as any).capaNumber) {
-      const parts = (latest as any).capaNumber.split('-');
-      const lastSeq = parseInt(parts[parts.length - 1], 10);
-      if (!isNaN(lastSeq)) {
-        seq = lastSeq + 1;
-      }
-    }
-
-    return `${prefix}${String(seq).padStart(4, '0')}`;
+    return generateNextMonthlySequenceCode(tenantId, 'CAPA', 'CAPA', 4);
   }
 }
 

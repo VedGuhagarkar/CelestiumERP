@@ -136,7 +136,9 @@
 - **AuditLog Collection:** Permanently stores tamper-evident logs within tenant-partitioned MongoDB collections indexed by tenant, entity type, entity ID, and timestamp.
 
 ### 1.4 Monotonic Sequential ID Generation
-- **Atomic Counter Engine (`CounterModel`, `getNextSequence`):** Utilizes MongoDB atomic `$inc` with upsert operations on a dedicated counters collection to generate monotonic, sequential numbers without race conditions under high concurrency.
+- **Atomic Counter Engine (`CounterModel`, `counter.util.ts`):** Utilizes MongoDB atomic `$inc` with upsert operations on a dedicated counters collection to generate monotonic, sequential numbers without race conditions under high concurrency.
+- **Cold-Start Concurrency Stampede Resilience:** Implements `generateNextMonthlySequenceCode(tenantId, prefix, padLength = 4)` with automatic retry loops and exponential backoff on MongoDB E11000 duplicate key errors during cold-start initializations, guaranteeing 100% collision-free monotonic numbers even under simultaneous parallel creation requests.
+- **Universal Repository Enforcement:** All module repositories (`purchase-order.repository.ts`, `grn.repository.ts`, `production-job.repository.ts`, `dispatch.repository.ts`, `quality-inspection.repository.ts`, `ncr-capa.repository.ts`) strictly utilize atomic `generateNextMonthlySequenceCode`, eradicating non-atomic `findOne().sort()` anti-patterns.
 - **Standardized Domain Prefixes:**
   - Purchase Order: `PO-YYYYMM-XXXX` (e.g., `PO-202609-0001`)
   - Goods Receipt Note: `GRN-YYYYMM-XXXX` (e.g., `GRN-202609-0001`)
@@ -153,7 +155,8 @@
   - Production Plan: `PLAN-YYYYMM-XXXX`
 
 ### 1.5 Transparent Soft Delete Protocol
-- **Mongoose Soft-Delete Plugin (`softDeletePlugin`):** Transparently injects `{ isDeleted: false }` into all Mongoose `find`, `findOne`, `findOneAndUpdate`, `countDocuments`, and `aggregate` operations.
+- **Mongoose Soft-Delete Plugin (`softDeletePlugin`):** Transparently injects `{ isDeleted: false }` into all Mongoose `find`, `findOne`, `findOneAndUpdate`, `countDocuments`, `count`, `updateMany`, and `distinct` queries.
+- **Aggregation Pipeline Guard:** Intercepts MongoDB `aggregate` pipelines and prepends `{ $match: { isDeleted: false } }`, completely preventing soft-deleted documents from leaking into reporting dashboards, statistical aggregations, and business metrics.
 - **Audit Preservation:** Stores `deletedAt: Date` and `deletedBy: string` instead of physically deleting documents.
 - **Entity Restoration:** Provides dedicated repository and controller restore methods (`restoreById`) to recover accidentally archived records.
 
@@ -3613,7 +3616,14 @@ The codebase features comprehensive test suites validating layer boundaries, dat
 - Traceability & Inventory: `heat-lot-traceability.spec.ts`, `inventory-ledger.spec.ts`, `warehouse.spec.ts`, `finished-goods.spec.ts`, `quarantine.spec.ts`.
 - Workforce & Attendance: `workforce-attendance.spec.ts`, `workforce-capacity.spec.ts`.
 - Finance, Costing & Billing: `finance.spec.ts`, `costing.spec.ts`, `billing.spec.ts`.
-- Platform Core & Security: `auth.spec.ts`, `rbac.spec.ts`, `tenant-isolation.spec.ts`, `audit-logging.spec.ts`, `error-handling.spec.ts`, `database.spec.ts`, `health.spec.ts`.
+- Platform Core & Security: `auth.spec.ts`, `rbac.spec.ts`, `tenant-isolation.spec.ts`, `audit-logging.spec.ts`, `error-handling.spec.ts`, `database.spec.ts`, `health.spec.ts`, `database-integrity-destruction.spec.ts`.
+- `database-integrity-destruction.spec.ts` (29 tests — Prompt 2: Aggressive Database & Data-Integrity Destruction Test Suite):
+  - Suite 1 (Schema-Level Bounds, Nulls, Types, and Precision): Rejects missing required fields, nulls in non-nullable paths, negative quantities across transactional schemas, zero quantities where positive is required, decimal precision violations (min: 0.0001), incorrect types via CastError, invalid ObjectIds, and verifies uniform errorMiddleware translation to structured 400 and 422 HTTP responses.
+  - Suite 2 (Atomic Counters & Monotonic Concurrency Stress Testing): Validates 0 collisions under 25 simultaneous concurrent requests across PO, GRN, Job, BO, Dispatch, Inspection, NCR, and CAPA identifiers; enforces unique compound indexes against duplicate business submissions.
+  - Suite 3 (Soft-Delete Leakage Prevention Across All Operations): Verifies transparent `{ isDeleted: false }` filtering across `find`, `findOne`, `findOneAndUpdate`, `countDocuments`, `aggregate`, `updateMany`, and `distinct`, stopping soft-delete leakage into reports and dashboards.
+  - Suite 4 (Cross-Module Relational Integrity & Backend Enforcement): Enforces strict backend verification on `Supplier → PO`, `Item → PO`, `Recipe → PO`, `Item → Recipe` metallurgical grade matching, `PO → GRN`, `GRN → BO` cross-record contamination prevention, and `GRN + BO → OC` quarantine rejection.
+  - Suite 5 (Transaction Rollback & State Consistency): Verifies multi-document ACID transaction execution, failure handling, and session cleanup with `withTransaction`.
+  - Suite 6 (Multi-Tenant Database Isolation & Cross-Tenant Boundary Enforcement): Guarantees absolute tenant isolation across all queries.
 
 #### 5. Frontend Integration Suites (`frontend/src/`)
 - `dispatch-page.test.tsx` (11 tests — Outward Challan Workflow, BO Items, Heat-Treatment, Physical Dispatch, Authorization, Customer Acknowledgement, OC Viewing & Reliable Printing UI):

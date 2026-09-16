@@ -709,6 +709,9 @@ describe('End-to-End Manufacturing ERP Interaction Suite', () => {
       const printBtn = screen.getByRole('button', { name: /print gate pass & challan/i });
       fireEvent.click(printBtn);
 
+      const confirmPrintBtn = screen.getByRole('button', { name: /print document/i });
+      fireEvent.click(confirmPrintBtn);
+
       await waitFor(() => {
         expect(screen.getByText(/sent to factory gate printer/i)).toBeDefined();
       });

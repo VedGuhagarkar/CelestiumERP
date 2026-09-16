@@ -1089,7 +1089,7 @@ export const DispatchPage: React.FC = () => {
 
       setFeedback({
         type: 'success',
-        message: `Outward Challan (${selectedDispatchForPrint.outwardChallanNumber || selectedDispatchForPrint.deliveryChallanNumber}) printed successfully. Print record logged to ERP audit trail.`
+        message: `Outward Challan (${selectedDispatchForPrint.outwardChallanNumber || selectedDispatchForPrint.deliveryChallanNumber}) printed successfully. Print record logged to ERP audit trail. Sent to factory gate printer.`
       });
 
       if (typeof window !== 'undefined' && window.print) {

@@ -1,5 +1,7 @@
 import mongoose, { FilterQuery, Model } from 'mongoose';
 import { MaterialReceiptModel, GRNModel, GRNUnitModel } from './grn.model.js';
+import { CounterModel } from '../../core/models/counter.model.js';
+import { generateNextMonthlySequenceCode } from '../../core/utils/counter.util.js';
 import {
   MaterialReceiptDocument,
   GRNDocument,
@@ -153,23 +155,7 @@ export class GRNRepository implements IGRNRepository {
   }
 
   public async generateNextReceiptNumber(tenantId: string): Promise<string> {
-    const now = new Date();
-    const yearMonth = `${now.getUTCFullYear()}${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
-    const prefix = `RCPT-${yearMonth}-`;
-
-    const latest = await this.receiptModel
-      .findOne({ tenantId, receiptNumber: new RegExp(`^${prefix}`) })
-      .sort({ receiptNumber: -1 })
-      .exec();
-
-    if (!latest || !latest.receiptNumber) {
-      return `${prefix}0001`;
-    }
-
-    const parts = latest.receiptNumber.split('-');
-    const lastSeq = parseInt(parts[parts.length - 1], 10);
-    const nextSeq = isNaN(lastSeq) ? 1 : lastSeq + 1;
-    return `${prefix}${String(nextSeq).padStart(4, '0')}`;
+    return generateNextMonthlySequenceCode(tenantId, 'RCPT', 'RCPT', 4);
   }
 
   public async queryReceipts(tenantId: string, query: { poId?: string; status?: string; search?: string }): Promise<MaterialReceiptDocument[]> {
@@ -229,23 +215,7 @@ export class GRNRepository implements IGRNRepository {
   }
 
   public async generateNextGrnNumber(tenantId: string): Promise<string> {
-    const now = new Date();
-    const yearMonth = `${now.getUTCFullYear()}${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
-    const prefix = `GRN-${yearMonth}-`;
-
-    const latest = await this.grnModel
-      .findOne({ tenantId, grnNumber: new RegExp(`^${prefix}`) })
-      .sort({ grnNumber: -1 })
-      .exec();
-
-    if (!latest || !latest.grnNumber) {
-      return `${prefix}0001`;
-    }
-
-    const parts = latest.grnNumber.split('-');
-    const lastSeq = parseInt(parts[parts.length - 1], 10);
-    const nextSeq = isNaN(lastSeq) ? 1 : lastSeq + 1;
-    return `${prefix}${String(nextSeq).padStart(4, '0')}`;
+    return generateNextMonthlySequenceCode(tenantId, 'GRN', 'GRN', 4);
   }
 
   public async queryGrns(

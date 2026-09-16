@@ -3,6 +3,7 @@ import { BaseRepository } from '../../core/repository/base.repository.js';
 import { PurchaseOrderModel } from './purchase-order.model.js';
 import { PurchaseOrderDocument, QueryPurchaseOrderDto } from './purchase-order.types.js';
 import { CounterModel } from '../../core/models/counter.model.js';
+import { generateNextMonthlySequenceCode } from '../../core/utils/counter.util.js';
 
 export interface IPurchaseOrderRepository {
   create(tenantId: string, data: Partial<PurchaseOrderDocument>): Promise<PurchaseOrderDocument>;
@@ -31,47 +32,7 @@ export class PurchaseOrderRepository
    * Uses MongoDB atomic $inc on the dedicated CounterModel to prevent race conditions.
    */
   public async generateNextPoNumber(tenantId: string): Promise<string> {
-    const now = new Date();
-    const yearMonth = `${now.getUTCFullYear()}${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
-    const prefix = `PO-${yearMonth}-`;
-    const domain = `PO_${yearMonth}`;
-
-    if (mongoose.connection.readyState === 1) {
-      try {
-        const counter = await CounterModel.findOneAndUpdate(
-          { tenantId, domain },
-          { $inc: { seq: 1 } },
-          { new: true, upsert: true, setDefaultsOnInsert: true }
-        ).exec();
-
-        if (counter && typeof counter.seq === 'number') {
-          return `${prefix}${String(counter.seq).padStart(4, '0')}`;
-        }
-      } catch {
-        // Fallback to query if counter operation fails
-      }
-
-      try {
-        const latest = await this.model
-          .findOne({
-            tenantId,
-            poNumber: new RegExp(`^${prefix}`)
-          })
-          .sort({ poNumber: -1 })
-          .exec();
-
-        if (latest && latest.poNumber) {
-          const parts = latest.poNumber.split('-');
-          const lastSeq = parseInt(parts[parts.length - 1], 10);
-          const nextSeq = isNaN(lastSeq) ? 1 : lastSeq + 1;
-          return `${prefix}${String(nextSeq).padStart(4, '0')}`;
-        }
-      } catch {
-        // Ignore and fallback
-      }
-    }
-
-    return `${prefix}0001`;
+    return generateNextMonthlySequenceCode(tenantId, 'PO', 'PO', 4);
   }
 
   public async update(tenantId: string, id: string, data: Partial<PurchaseOrderDocument>): Promise<PurchaseOrderDocument | null> {

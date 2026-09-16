@@ -3,6 +3,7 @@ import { IPurchaseOrderRepository, purchaseOrderRepository } from './purchase-or
 import { productionJobRepository } from '../production-job/production-job.repository.js';
 import { itemService, ItemService } from '../item/item.service.js';
 import { recipeService, RecipeService } from '../recipe/recipe.service.js';
+import { customerService, CustomerService } from '../customer/customer.service.js';
 import { auditService, AuditService } from '../audit/audit.service.js';
 import { rbacService, RbacService } from '../rbac/rbac.service.js';
 import {
@@ -33,7 +34,8 @@ export class PurchaseOrderService extends BaseService {
     private readonly items: ItemService = itemService,
     private readonly recipes: RecipeService = recipeService,
     private readonly audit: AuditService = auditService,
-    private readonly rbac: RbacService = rbacService
+    private readonly rbac: RbacService = rbacService,
+    private readonly customers: CustomerService = customerService
   ) {
     super('PurchaseOrderService');
   }
@@ -83,6 +85,32 @@ export class PurchaseOrderService extends BaseService {
 
     if (expectedDelivery < orderDate) {
       throw new BadRequestError('Expected delivery date cannot precede order date');
+    }
+
+    // 1b. Authoritative Supplier Status Validation
+    if (dto.supplierCode) {
+      try {
+        const supplier = await this.customers.getCustomerByCode(tenantId, dto.supplierCode);
+        if (supplier) {
+          if (
+            supplier.isDeleted ||
+            supplier.status === 'inactive' ||
+            supplier.status === 'archived' ||
+            supplier.qualityStatus === 'inactive' ||
+            supplier.qualityStatus === 'suspended' ||
+            supplier.qualityStatus === 'blacklisted'
+          ) {
+            throw new BadRequestError(
+              `Cannot create PO with supplier '${supplier.customerCode}' in '${supplier.status || supplier.qualityStatus}' status. Only active suppliers are permitted.`
+            );
+          }
+        }
+      } catch (err: any) {
+        if (err instanceof BadRequestError) {
+          throw err;
+        }
+        // If supplierCode is not in customer/partner registry, allow standalone supplier name
+      }
     }
 
     if (!dto.items || dto.items.length === 0) {

@@ -1,7 +1,10 @@
+import mongoose from 'mongoose';
 import {
   QualityInspectionDocument,
   QualityInspectionModel
 } from './quality-inspection.model.js';
+import { CounterModel } from '../../core/models/counter.model.js';
+import { generateNextMonthlySequenceCode } from '../../core/utils/counter.util.js';
 import {
   QueryQualityInspectionsDto,
   IQualityInspection
@@ -155,28 +158,7 @@ export class QualityInspectionRepository implements IQualityInspectionRepository
   }
 
   public async generateNextInspectionNumber(tenantId: string): Promise<string> {
-    const now = new Date();
-    const yearMonth = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const prefix = `INSP-${yearMonth}-`;
-
-    const latest = await QualityInspectionModel.findOne({
-      tenantId,
-      inspectionNumber: { $regex: `^${prefix}` }
-    })
-      .sort({ inspectionNumber: -1 })
-      .select('inspectionNumber')
-      .lean();
-
-    let sequence = 1;
-    if (latest && (latest as any).inspectionNumber) {
-      const parts = (latest as any).inspectionNumber.split('-');
-      const lastSeq = parseInt(parts[parts.length - 1], 10);
-      if (!isNaN(lastSeq)) {
-        sequence = lastSeq + 1;
-      }
-    }
-
-    return `${prefix}${String(sequence).padStart(4, '0')}`;
+    return generateNextMonthlySequenceCode(tenantId, 'INSP', 'INSP', 4);
   }
 }
 

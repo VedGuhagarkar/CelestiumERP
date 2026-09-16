@@ -40,6 +40,27 @@ export function softDeletePlugin(schema: Schema): void {
   schema.pre('findOne', excludeDeleted);
   schema.pre('findOneAndUpdate', excludeDeleted);
   schema.pre('countDocuments', excludeDeleted);
+  schema.pre('updateMany', excludeDeleted);
+  schema.pre('distinct', excludeDeleted);
+  schema.pre('count' as any, excludeDeleted);
+
+  // Aggregation middleware: filter out soft-deleted records in aggregation pipelines
+  schema.pre('aggregate', function () {
+    const pipeline = this.pipeline();
+    const hasIsDeletedMatch = pipeline.some(
+      (stage: any) => stage.$match && stage.$match.isDeleted !== undefined
+    );
+    if (!hasIsDeletedMatch) {
+      if (
+        pipeline.length > 0 &&
+        (pipeline[0].$geoNear || pipeline[0].$collStats || pipeline[0].$indexStats)
+      ) {
+        pipeline.splice(1, 0, { $match: { isDeleted: false } });
+      } else {
+        pipeline.unshift({ $match: { isDeleted: false } });
+      }
+    }
+  });
 
   // Schema instance methods
   schema.methods.softDelete = function (deletedBy?: string) {

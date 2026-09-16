@@ -6,6 +6,7 @@ import {
 } from './dispatch.types.js';
 import { PaginationOptions, PaginatedResult } from '../../core/types/pagination.js';
 import { CounterModel } from '../../core/models/counter.model.js';
+import { generateNextMonthlySequenceCode } from '../../core/utils/counter.util.js';
 
 export interface IDispatchRepository {
   create(
@@ -215,126 +216,19 @@ export class DispatchRepository implements IDispatchRepository {
   }
 
   public async generateNextDispatchNumber(tenantId: string): Promise<string> {
-    const now = new Date();
-    const yearMonth = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const prefix = `DSP-${yearMonth}-`;
-
-    if (mongoose.connection.readyState === 0) {
-      return `${prefix}0001`;
-    }
-
-    const latest: any = await DispatchConsignmentModel.findOne({
-      tenantId,
-      dispatchNumber: new RegExp(`^${prefix}`)
-    })
-      .sort({ dispatchNumber: -1 })
-      .lean();
-
-    let seq = 1;
-    if (latest && latest.dispatchNumber) {
-      const parts = latest.dispatchNumber.split('-');
-      const lastSeq = parseInt(parts[parts.length - 1], 10);
-      if (!isNaN(lastSeq)) seq = lastSeq + 1;
-    }
-
-    return `${prefix}${String(seq).padStart(4, '0')}`;
+    return generateNextMonthlySequenceCode(tenantId, 'DSP', 'DSP', 4);
   }
 
   public async generateNextDeliveryChallanNumber(tenantId: string): Promise<string> {
-    const now = new Date();
-    const yearMonth = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const prefix = `DC-${yearMonth}-`;
-
-    if (mongoose.connection.readyState === 0) {
-      return `${prefix}0001`;
-    }
-
-    const latest: any = await DispatchConsignmentModel.findOne({
-      tenantId,
-      deliveryChallanNumber: new RegExp(`^${prefix}`)
-    })
-      .sort({ deliveryChallanNumber: -1 })
-      .lean();
-
-    let seq = 1;
-    if (latest && latest.deliveryChallanNumber) {
-      const parts = latest.deliveryChallanNumber.split('-');
-      const lastSeq = parseInt(parts[parts.length - 1], 10);
-      if (!isNaN(lastSeq)) seq = lastSeq + 1;
-    }
-
-    return `${prefix}${String(seq).padStart(4, '0')}`;
+    return generateNextMonthlySequenceCode(tenantId, 'DC', 'DC', 4);
   }
 
   public async generateNextGatePassNumber(tenantId: string): Promise<string> {
-    const now = new Date();
-    const yearMonth = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const prefix = `GP-${yearMonth}-`;
-
-    if (mongoose.connection.readyState === 0) {
-      return `${prefix}0001`;
-    }
-
-    const latest: any = await DispatchConsignmentModel.findOne({
-      tenantId,
-      'gatePass.gatePassNumber': new RegExp(`^${prefix}`)
-    })
-      .sort({ 'gatePass.gatePassNumber': -1 })
-      .lean();
-
-    let seq = 1;
-    if (latest && latest.gatePass?.gatePassNumber) {
-      const parts = latest.gatePass.gatePassNumber.split('-');
-      const lastSeq = parseInt(parts[parts.length - 1], 10);
-      if (!isNaN(lastSeq)) seq = lastSeq + 1;
-    }
-
-    return `${prefix}${String(seq).padStart(4, '0')}`;
+    return generateNextMonthlySequenceCode(tenantId, 'GP', 'GP', 4);
   }
 
   public async generateNextOutwardChallanNumber(tenantId: string): Promise<string> {
-    const now = new Date();
-    const yearMonth = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const prefix = `OC-${yearMonth}-`;
-    const domain = `OC_${yearMonth}`;
-
-    if (mongoose.connection.readyState === 1) {
-      try {
-        const counter = await CounterModel.findOneAndUpdate(
-          { tenantId, domain },
-          { $inc: { seq: 1 } },
-          { new: true, upsert: true, setDefaultsOnInsert: true }
-        ).exec();
-
-        if (counter && typeof counter.seq === 'number') {
-          return `${prefix}${String(counter.seq).padStart(4, '0')}`;
-        }
-      } catch {
-        // Fallback to query
-      }
-
-      try {
-        const latest: any = await DispatchConsignmentModel.findOne({
-          tenantId,
-          outwardChallanNumber: new RegExp(`^${prefix}`)
-        })
-          .sort({ outwardChallanNumber: -1 })
-          .lean();
-
-        let seq = 1;
-        if (latest && latest.outwardChallanNumber) {
-          const parts = latest.outwardChallanNumber.split('-');
-          const lastSeq = parseInt(parts[parts.length - 1], 10);
-          if (!isNaN(lastSeq)) seq = lastSeq + 1;
-        }
-
-        return `${prefix}${String(seq).padStart(4, '0')}`;
-      } catch {
-        return `${prefix}0001`;
-      }
-    }
-
-    return `${prefix}0001`;
+    return generateNextMonthlySequenceCode(tenantId, 'OC', 'OC', 4);
   }
 }
 
