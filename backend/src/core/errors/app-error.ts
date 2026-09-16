@@ -92,6 +92,16 @@ export class DomainError extends AppError {
   }
 }
 
+export class IdempotencyConflictError extends AppError {
+  constructor(
+    message: string = 'Idempotency conflict: In-flight execution or payload mismatch',
+    details?: any,
+    errorCode: string = 'IDEMPOTENCY_CONFLICT'
+  ) {
+    super(message, 409, errorCode, true, details);
+  }
+}
+
 export class InternalServerError extends AppError {
   constructor(message: string = 'Internal server error', details?: any, errorCode: string = 'INTERNAL_ERROR') {
     super(message, 500, errorCode, false, details);

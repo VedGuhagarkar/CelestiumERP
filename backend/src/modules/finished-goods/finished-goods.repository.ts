@@ -13,6 +13,11 @@ export interface IFinishedGoodsRepository {
     id: string,
     data: Partial<IFinishedGoods>
   ): Promise<FinishedGoodsDocument | null>;
+  atomicReserve(
+    tenantId: string,
+    id: string,
+    quantity: number
+  ): Promise<FinishedGoodsDocument | null>;
   search(
     tenantId: string,
     filters: FinishedGoodsFilterQuery,
@@ -97,6 +102,43 @@ export class FinishedGoodsRepository implements IFinishedGoodsRepository {
       { $set: data },
       { new: true }
     );
+  }
+
+  public async atomicReserve(
+    tenantId: string,
+    id: string,
+    quantity: number
+  ): Promise<FinishedGoodsDocument | null> {
+    const idFilter: any = mongoose.isValidObjectId(id)
+      ? { _id: id }
+      : { $or: [{ _id: id }, { fgLotNumber: id.toUpperCase() }] };
+
+    return FinishedGoodsModel.findOneAndUpdate(
+      {
+        ...idFilter,
+        tenantId,
+        isDeleted: false,
+        'qualityRelease.isReleased': true,
+        status: { $nin: ['AWAITING_QC_RELEASE', 'QUARANTINED', 'FULLY_DISPATCHED'] },
+        availableQuantity: { $gte: quantity }
+      },
+      [
+        {
+          $set: {
+            availableQuantity: { $subtract: ['$availableQuantity', quantity] },
+            reservedQuantity: { $add: ['$reservedQuantity', quantity] },
+            status: {
+              $cond: {
+                if: { $eq: [{ $subtract: ['$availableQuantity', quantity] }, 0] },
+                then: 'RESERVED_FOR_DISPATCH',
+                else: '$status'
+              }
+            }
+          }
+        }
+      ],
+      { new: true }
+    ).exec();
   }
 
   public async search(

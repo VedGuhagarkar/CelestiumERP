@@ -7,6 +7,7 @@ import {
 } from './inventory.types.js';
 import { PaginationOptions, PaginatedResult } from '../../core/types/pagination.js';
 import { ItemDocument } from '../item/item.types.js';
+import { generateNextSequenceCode } from '../../core/utils/counter.util.js';
 
 export interface IInventoryRepository {
   getBalance(tenantId: string, itemId: string, location: string): Promise<InventoryBalanceDocument | null>;
@@ -21,6 +22,12 @@ export interface IInventoryRepository {
     location: string,
     deltaOnHand: number,
     deltaReserved: number
+  ): Promise<InventoryBalanceDocument | null>;
+  atomicDeductOnHand(
+    tenantId: string,
+    itemId: string,
+    location: string,
+    quantity: number
   ): Promise<InventoryBalanceDocument | null>;
   searchBalances(
     tenantId: string,
@@ -93,6 +100,31 @@ export class InventoryRepository implements IInventoryRepository {
     balance.version += 1;
 
     return balance.save();
+  }
+
+  public async atomicDeductOnHand(
+    tenantId: string,
+    itemId: string,
+    location: string,
+    quantity: number
+  ): Promise<InventoryBalanceDocument | null> {
+    return InventoryBalanceModel.findOneAndUpdate(
+      {
+        tenantId,
+        itemId,
+        location,
+        isDeleted: false,
+        onHandQuantity: { $gte: quantity }
+      },
+      {
+        $inc: {
+          onHandQuantity: -quantity,
+          availableQuantity: -quantity,
+          version: 1
+        }
+      },
+      { new: true }
+    ).exec();
   }
 
   public async searchBalances(
@@ -220,15 +252,9 @@ export class InventoryRepository implements IInventoryRepository {
   public async generateTransactionNumber(tenantId: string): Promise<string> {
     const date = new Date();
     const year = date.getFullYear();
-    const prefix = `TXN-INV-${year}-`;
-
-    const count = await InventoryTransactionModel.countDocuments({
-      tenantId,
-      transactionNumber: new RegExp(`^${prefix}`)
-    }).exec();
-
-    const sequence = String(count + 1).padStart(5, '0');
-    return `${prefix}${sequence}`;
+    const domain = `INVENTORY_TXN_${year}`;
+    const prefix = `TXN-INV-${year}`;
+    return generateNextSequenceCode(tenantId, domain, prefix, 5);
   }
 }
 

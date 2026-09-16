@@ -107,17 +107,17 @@ export class InventoryService extends BaseService {
       throw new NotFoundError(`Item master with ID '${dto.itemId}' not found`);
     }
 
-    const balance = await this.repo.getBalance(tenantId, item.id, dto.location);
-    if (!balance || balance.onHandQuantity < dto.quantity) {
+    const updatedBalance = await this.repo.atomicDeductOnHand(tenantId, item.id, dto.location, dto.quantity);
+    if (!updatedBalance) {
+      const current = await this.repo.getBalance(tenantId, item.id, dto.location);
       throw new BadRequestError(
-        `Insufficient stock on hand at location [${dto.location}]. Current: ${balance ? balance.onHandQuantity : 0} ${item.uom}, Requested: ${dto.quantity} ${item.uom}`
+        `Insufficient stock on hand at location [${dto.location}]. Current: ${current ? current.onHandQuantity : 0} ${item.uom}, Requested: ${dto.quantity} ${item.uom}`
       );
     }
 
-    const beforeBalance = balance.onHandQuantity;
-    const afterBalance = beforeBalance - dto.quantity;
+    const beforeBalance = updatedBalance.onHandQuantity + dto.quantity;
+    const afterBalance = updatedBalance.onHandQuantity;
 
-    await this.repo.updateBalance(tenantId, item.id, dto.location, -dto.quantity, 0);
     await this.itemRepo.updateStock(tenantId, item.id, -dto.quantity, 0);
 
     const transaction = await this.repo.recordTransaction(tenantId, {

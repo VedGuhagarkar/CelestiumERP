@@ -95,7 +95,7 @@
    - 8.1 Database Seeding Engine (`backend/src/scripts/seed.ts`)
    - 8.2 Centralized Configuration Subsystem (`backend/src/config/`)
    - 8.3 Operational Runbooks & Technical Specifications (`docs/`)
-   - 8.4 Automated Test Suite Matrix (84 Backend Specs + Frontend Suites)
+   - 8.4 Automated Test Suite Matrix (89 Backend Specs + Frontend Suites)
      - *Prompt 8:* `production-operator-workspace.spec.ts`
      - *Prompt 9:* `production-security-concurrency.spec.ts`
      - *Prompt 10:* `production-e2e-integration.spec.ts`
@@ -190,8 +190,13 @@
   - `ApiResponse.error(res, message, statusCode, errorCode, details)`
 
 ### 1.7 Enterprise Idempotency Middleware
-- **Duplicate Mutation Filter (`idempotencyMiddleware`):** Inspects `Idempotency-Key` headers on mutating requests (`POST`, `PUT`, `PATCH`).
-- **In-Memory Mutex & Cache:** Stores request hashes and response envelopes. Duplicate requests with identical keys return the cached response immediately, preventing double work order creation, double billing, or accidental duplicate inventory deductions.
+- **Duplicate Mutation Filter (`idempotencyMiddleware`):** Inspects `Idempotency-Key` headers on mutating HTTP requests (`POST`, `PUT`, `PATCH`) to prevent duplicate transactions, double submissions, and network retry collisions.
+- **In-Flight Mutexing & Concurrent Double-Click Protection:** Atomically acquires an `'IN_FLIGHT'` mutex status for incoming keys. If duplicate concurrent requests arrive while the first request is still executing (such as user double-clicking submit buttons or multiple browser tabs submitting simultaneously), subsequent requests are immediately blocked with `409 Conflict` (`IDEMPOTENCY_CONFLICT`: "A request with this Idempotency-Key is currently in progress.").
+- **Cryptographic Payload Integrity (SHA-256):** Calculates a deterministic SHA-256 hash of the JSON request payload. If a request reuses an existing `Idempotency-Key` with differing parameters or a different body, it is strictly rejected with `409 Conflict` (`IDEMPOTENCY_PAYLOAD_MISMATCH`), preventing key reuse across divergent actions.
+- **Atomic Replay Cache & Replay Flag:** Upon successful request completion, records the HTTP status code, response body, headers, and timestamp into the cache. Duplicate requests with matching payload hashes return the exact cached envelope with `_idempotencyReplay: true`.
+- **Fault-Tolerant Error Lock Release:** Intercepts uncaught exceptions, downstream 4xx/5xx responses, and client socket closures to automatically purge `'IN_FLIGHT'` entries, ensuring transient failures or database connectivity glitches do not permanently deadlock legitimate client retries.
+- **TTL Eviction & Cache Loss Resilience:** Idempotency records expire after configurable TTL (default 24 hours). Under cache evictions or multi-process restarts, incoming requests execute cleanly without state corruption.
+- **Non-Idempotent Request Concurrency:** Mutating requests without an `Idempotency-Key` bypass the lock and execute concurrently without artificial serialization bottlenecks.
 
 ### 1.8 Async Background Task Queue & Resilience
 - **In-Memory Job Queue (`AsyncQueueService`):** Executes intensive background operations such as report compilation, batch evaluations, and broadcast notifications.
@@ -736,7 +741,8 @@ _No direct HTTP routes mounted for this internal domain service._
 
 #### Repositories
 - **`InventoryRepository`** (`inventory.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
-  - Methods: `getBalance()`, `findOrCreateBalance()`, `updateBalance()`, `searchBalances()`, `recordTransaction()`, `searchTransactions()`, `generateTransactionNumber()`.
+  - Methods: `getBalance()`, `findOrCreateBalance()`, `updateBalance()`, `atomicDeductOnHand()`, `searchBalances()`, `recordTransaction()`, `searchTransactions()`, `generateTransactionNumber()`.
+  - Atomic Concurrency Invariant: `atomicDeductOnHand()` utilizes MongoDB conditional `$inc: { onHandQuantity: -quantity }` with `{ onHandQuantity: { $gte: quantity } }`, guaranteeing inventory balances can never become negative under parallel competing Goods Issues.
 
 #### Services
 - **`InventoryService`** (`inventory.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
@@ -830,7 +836,8 @@ _No direct HTTP routes mounted for this internal domain service._
 
 #### Repositories
 - **`FinishedGoodsRepository`** (`finished-goods.repository.ts`): Extends `BaseRepository<T>`. Encapsulates tenant-isolated database access routines:
-  - Methods: `create()`, `findById()`, `findByLotNumber()`, `findByJobCardNumber()`, `update()`, `search()`, `generateFgLotNumber()`.
+  - Methods: `create()`, `findById()`, `findByLotNumber()`, `findByJobCardNumber()`, `update()`, `search()`, `generateFgLotNumber()`, `atomicReserve()`.
+  - Atomic Concurrency Invariant: `atomicReserve()` utilizes conditional `$inc` with `{ availableQuantity: { $gte: quantity } }`, strictly preventing overselling or over-allocation during concurrent dispatch staging.
 
 #### Services
 - **`FinishedGoodsService`** (`finished-goods.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
@@ -3649,6 +3656,15 @@ The codebase features comprehensive test suites validating layer boundaries, dat
   - Suite 4 (Cross-Module Relational Integrity & Backend Enforcement): Enforces strict backend verification on `Supplier → PO`, `Item → PO`, `Recipe → PO`, `Item → Recipe` metallurgical grade matching, `PO → GRN`, `GRN → BO` cross-record contamination prevention, and `GRN + BO → OC` quarantine rejection.
   - Suite 5 (Transaction Rollback & State Consistency): Verifies multi-document ACID transaction execution, failure handling, and session cleanup with `withTransaction`.
   - Suite 6 (Multi-Tenant Database Isolation & Cross-Tenant Boundary Enforcement): Guarantees absolute tenant isolation across all queries.
+- `concurrency-race-condition.spec.ts` (21 tests — Prompt 4: Distributed Systems Concurrency, Race-Condition & Duplicate-Action Test Suite):
+  - Suite 1 (Enterprise Idempotency & In-Flight Mutexing): Validates in-flight mutex locking (`'IN_FLIGHT'` status) to block concurrent duplicate submissions / double-clicking with 409 `IDEMPOTENCY_CONFLICT`; verifies deterministic SHA-256 payload mismatch detection returning 409 `IDEMPOTENCY_PAYLOAD_MISMATCH`; confirms automatic error lock release on request failures; tests clean execution under server restart/cache loss; validates TTL eviction; verifies independent parallel execution of non-idempotent requests without artificial serialization.
+  - Suite 2 (Monotonic Atomic Sequential ID Generation Under Parallel Concurrency): Confirms 0 collisions and strict monotonic numbering across 25 parallel PO creations, 25 parallel GRN creations, and 25 parallel Job creations backed by atomic `$inc` on `CounterModel`.
+  - Suite 3 (Mutually Exclusive Workflow Flags Invariant): Proves mathematically and in database schemas that multiple active workflow flags can NEVER become simultaneously true ($\sum \text{flag}_i = 1$). A Batch Order can never be simultaneously `inProduction` and `waitingForInspection`, or `waitingForDispatch` and `dispatched`; strictly rejects records with zero active flags.
+  - Suite 4 (Concurrent Workflow State Transitions & Single-Winner Guarantees): Validates single-winner atomic locking when two operators concurrently take the same BO for production (`takeForProduction`), when two users concurrently approve an in-production job for inspection (`completeProductionJob`), and when two inspectors concurrently claim a job (`takeForInspection`), rejecting competing requests with 409 `ConflictError`.
+  - Suite 5 (Concurrent Inventory & Stock Operations): Validates conditional atomic decrements (`atomicDeductOnHand` with `{ onHandQuantity: { $gte: quantity } }`) to prevent concurrent goods issues from driving stock negative; verifies atomic reservation (`atomicReserve`) to prevent finished goods overselling during concurrent dispatch staging.
+  - Suite 6 (Concurrent Authentication & Refresh Token Rotation): Detects concurrent refresh token reuse, immediately revoking the compromised refresh token family and blocking session hijacking.
+  - Suite 7 (ACID Transaction Rollback & Partial Failure Isolation): Verifies that multi-document transactional failures midway cleanly roll back all intermediate database writes, guaranteeing zero partial or orphaned state; verifies `TransactionManager.execute` error recovery.
+  - Suite 8 (Master Record Concurrency & Soft-Delete Preservation): Verifies atomic field-level updates when multiple users edit distinct fields on the same record concurrently; tests concurrent soft-delete idempotency without data corruption or phantom active states.
 
 #### 5. Frontend Integration Suites (`frontend/src/`)
 - `dispatch-page.test.tsx` (11 tests — Outward Challan Workflow, BO Items, Heat-Treatment, Physical Dispatch, Authorization, Customer Acknowledgement, OC Viewing & Reliable Printing UI):

@@ -184,13 +184,12 @@ export class FinishedGoodsService extends BaseService {
 
     const beforeState = fg.toJSON();
 
-    fg.availableQuantity -= dto.quantity;
-    fg.reservedQuantity += dto.quantity;
-    if (fg.availableQuantity === 0) {
-      fg.status = 'RESERVED_FOR_DISPATCH';
+    const updated = await this.repo.atomicReserve(tenantId, fg.id, dto.quantity);
+    if (!updated) {
+      throw new BadRequestError(
+        `Insufficient available finished goods for reservation: Lot [${fg.fgLotNumber}] was modified concurrently.`
+      );
     }
-
-    const updated = await fg.save();
 
     this.logger.info(
       `🔒 Finished Goods Reserved: ${dto.quantity} ${updated.uom} of [${updated.fgLotNumber}] for Dispatch (Ref: ${dto.deliveryChallanNumber || 'N/A'})`
