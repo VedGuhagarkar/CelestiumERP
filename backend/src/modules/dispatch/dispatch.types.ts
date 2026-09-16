@@ -19,6 +19,37 @@ export interface IActorSnapshot {
   role?: string;
 }
 
+export interface IOCUserReference {
+  userId: string;
+  name?: string;
+  username?: string;
+  email?: string;
+  role?: string;
+  designation?: string;
+  preparedAt?: Date;
+}
+
+export interface IOCAuthorizedSignatory {
+  userId: string;
+  name?: string;
+  username?: string;
+  email?: string;
+  role?: string;
+  designation?: string;
+  authorizedAt?: Date;
+  signatureRef?: string;
+}
+
+export interface ICustomerAcknowledgement {
+  receivedBy?: string;
+  signatureStampRef?: string;
+  signatureRef?: string;
+  stampRef?: string;
+  date?: Date;
+  acknowledgedDate?: Date;
+  remarks?: string;
+}
+
 export interface IDispatchLinePackageDetails {
   packagingType: string;
   packageCount: number;
@@ -234,6 +265,9 @@ export interface IDispatchConsignment {
   timeline: IDispatchTimeline;
   dispatchedBy?: IActorSnapshot;
   dispatchedAt?: Date;
+  preparedBy?: IOCUserReference;
+  authorizedSignatory?: IOCAuthorizedSignatory;
+  customerAcknowledgement?: ICustomerAcknowledgement;
   approvals?: IDispatchApprovals;
   gatePass?: IDispatchGatePass;
   proofOfDelivery?: IDispatchProofOfDelivery;
@@ -290,6 +324,31 @@ export interface ScheduleDispatchDto {
 
 export interface ApproveDispatchDto {
   approvalNotes?: string;
+  signatoryUserId?: string;
+  authorizedSignatoryId?: string;
+  signatureRef?: string;
+}
+
+export interface AuthorizeDispatchDto {
+  signatoryUserId?: string;
+  authorizedSignatoryId?: string;
+  signatureRef?: string;
+  designation?: string;
+  approvalNotes?: string;
+  notes?: string;
+}
+
+export interface CustomerAcknowledgementDto {
+  receivedBy?: string;
+  signatureStampRef?: string;
+  signatureRef?: string;
+  stampRef?: string;
+  date?: string | Date;
+  acknowledgedDate?: string | Date;
+  remarks?: string;
+  receivedQuantity?: number;
+  receivedCondition?: DeliveryCondition;
+  podDocumentUrl?: string;
 }
 
 export interface PhysicalDispatchDto {
@@ -307,6 +366,8 @@ export interface PhysicalDispatchDto {
   transportMode?: TransportMode;
   notes?: string;
   dispatchedBy?: any; // Ignored if supplied by client in favor of authenticated actor
+  authorizedSignatoryId?: string;
+  authorizedSignatory?: any;
 }
 
 export interface DepartDispatchDto extends Partial<PhysicalDispatchDto> {
@@ -316,9 +377,9 @@ export interface DepartDispatchDto extends Partial<PhysicalDispatchDto> {
   remarks?: string;
 }
 
-export interface DeliverDispatchDto {
+export interface DeliverDispatchDto extends CustomerAcknowledgementDto {
   actualDeliveryTime?: string | Date;
-  receiverName: string;
+  receiverName?: string;
   receiverSignatureRef?: string;
   podDocumentUrl?: string;
   receivedQuantity?: number;
@@ -368,6 +429,11 @@ export interface CreateOutwardChallanDto {
   partDescription?: string;
   serialNumber?: number;
   batchLotNumber?: string;
+  preparedById?: string;
+  preparedBy?: any;
+  authorizedSignatoryId?: string;
+  authorizedSignatory?: any;
+  signatureRef?: string;
 }
 
 export interface QueryDispatchesDto {

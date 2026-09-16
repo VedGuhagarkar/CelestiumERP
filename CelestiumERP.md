@@ -354,10 +354,12 @@ The in-memory `DomainEventBus` manages 92 strongly typed domain events across 11
 | **Workforce** | `Workforce.ShiftSwapped` | Peer shift swap approved. | Both operators' rosters swapped atomically. |
 | **Workforce** | `Workforce.AttendanceCorrected`| Supervisor corrects missed punch. | Attendance record updated with audit justification. |
 | **Dispatch** | `Dispatch.Created` | Outbound consignment order drafted. | Staging queue updated. |
+| **Dispatch** | `Dispatch.OCAuthorized` | Outward Challan authorized by RBAC-validated signatory. | Signatory sealed, gate departure unblocked. |
 | **Dispatch** | `Dispatch.QualityVerified` | Verification that all jobs have approved CoCs. | Gate clearance milestone 1 achieved. |
 | **Dispatch** | `Dispatch.Scheduled` | Carrier, vehicle, and driver assigned. | Logistics schedule locked. |
-| **Dispatch** | `Dispatch.Approved` | Plant manager authorizes departure. | Gate pass issued. |
-| **Dispatch** | `Dispatch.Shipped` | Consignment departs factory premises. | Shipment status set to `IN_TRANSIT`. |
+| **Dispatch** | `Dispatch.Approved` | Plant manager authorizes departure (delegates to OC authorization). | Gate pass issued. |
+| **Dispatch** | `Dispatch.Shipped` | Consignment departs factory premises. | Shipment status set to `IN_TRANSIT` / `DISPATCHED`. |
+| **Dispatch** | `Dispatch.CustomerAcknowledged` | Consignee receiving & delivery proof recorded. | Customer receipt sealed, billing notified. |
 | **Dispatch** | `Dispatch.Delivered` | Customer receives goods, PoD uploaded. | Consignment `DELIVERED`, billing notified. |
 | **Dispatch** | `Dispatch.Cancelled` | Consignment cancelled before departure. | Finished goods reservations released. |
 | **Master Data**| `MasterData.RecipeApproved` | Thermal recipe revision approved. | Locked for production scheduling. |
@@ -1568,8 +1570,11 @@ _No direct HTTP routes mounted for this internal domain service._
 > **Business Purpose:** Manages the 6-stage dispatch lifecycle, grouping finished jobs into consignments, quality gate verification, carrier scheduling, departure, delivery confirmation, and the authoritative Outward Challan (OC) workflow strictly preserving the unbroken $\text{PO} \longrightarrow \text{GRN} \longrightarrow \text{BO} \longrightarrow \text{OC}$ hierarchy.
 
 #### Models & Schemas
-- **`dispatch.model.ts`** — Mongoose model: `DispatchConsignment`. Exported interfaces: `IDispatchConsignment`, `IOutwardChallanHierarchy`, `IOutwardChallanItem`, `IOutwardChallanHeatTreatment`, `IDispatchDeliveryInformation`, `IDispatchLine`, `IDispatchCarrier`. Encapsulates schema definitions, compound tenant indexes (`{ tenantId: 1, outwardChallanNumber: 1 }`, `{ tenantId: 1, batchOrderId: 1 }`, `{ tenantId: 1, grnId: 1 }`, `{ tenantId: 1, poId: 1 }`), and data validation rules.
-  - `IDispatchConsignment`: Stores authoritative consignment metadata, including `transporter`, `vehicleNumber`, `dispatchDate`, `ewayBillNumber`, `dispatchedBy` (`IActorSnapshot`), and `dispatchedAt`.
+- **`dispatch.model.ts`** — Mongoose model: `DispatchConsignment`. Exported interfaces: `IDispatchConsignment`, `IOutwardChallanHierarchy`, `IOutwardChallanItem`, `IOutwardChallanHeatTreatment`, `IDispatchDeliveryInformation`, `IDispatchLine`, `IDispatchCarrier`, `IOCUserReference`, `IOCAuthorizedSignatory`, `ICustomerAcknowledgement`. Encapsulates schema definitions, compound tenant indexes (`{ tenantId: 1, outwardChallanNumber: 1 }`, `{ tenantId: 1, batchOrderId: 1 }`, `{ tenantId: 1, grnId: 1 }`, `{ tenantId: 1, poId: 1 }`, `{ tenantId: 1, 'authorizedSignatory.userId': 1 }`, `{ tenantId: 1, 'preparedBy.userId': 1 }`), and data validation rules.
+  - `IDispatchConsignment`: Stores authoritative consignment metadata, including `transporter`, `vehicleNumber`, `dispatchDate`, `ewayBillNumber`, `dispatchedBy` (`IActorSnapshot`), `dispatchedAt`, `preparedBy` (`IOCUserReference`), `authorizedSignatory` (`IOCAuthorizedSignatory`), and `customerAcknowledgement` (`ICustomerAcknowledgement`).
+  - `IOCUserReference`: Records the user responsible for preparing the OC: `userId` (valid User ObjectId reference), `name`, `username`, `email`, `role`, `designation`, `preparedAt`.
+  - `IOCAuthorizedSignatory`: Records the authorized signatory validated by the ERP RBAC system: `userId` (valid User ObjectId reference), `name`, `username`, `email`, `role`, `designation`, `authorizedAt`, `signatureRef`.
+  - `ICustomerAcknowledgement`: Encapsulates optional recipient proof: `receivedBy`, `signatureStampRef` (or `signatureRef` / `stampRef`), `date` / `acknowledgedDate`, `remarks`.
   - `IOutwardChallanItem`: Encapsulates the 8 authoritative item fields: `serialNumber` (number), `partName` (string), `partDescription` (string), `partNumber` (string), `materialGrade` (string), `heatTreatmentProcess` (string), `batchLotNumber` (string), `quantity` (number), `unitOfMeasure` (string).
   - `IOutwardChallanHeatTreatment`: Encapsulates the 6 required metallurgical inspection parameters: `furnaceEquipment` (string), `furnaceCode` (string), `hardnessSpecification` (string), `actualHardness` (string), `caseDepth` (string), `quantityReceived` (number), `quantityDelivered` (number).
   - `IDispatchDeliveryInformation`: Encapsulates authoritative delivery recipient data: `customerCode`, `customerName`, `deliveryAddress`, `gstNumber`, `contactPerson`, `contactPhone`.
@@ -1582,7 +1587,7 @@ _No direct HTTP routes mounted for this internal domain service._
 
 #### Services
 - **`DispatchService`** (`dispatch.service.ts`): Encapsulates core business rules, transactional workflows, validation, and domain event publishing:
-  - Methods: `createDispatch()`, `createOutwardChallanForBatchOrder()`, `completePhysicalDispatch()`, `getDispatchQueue()`, `verifyQuality()`, `scheduleDispatch()`, `approveDispatch()`, `recordDeparture()`, `confirmDelivery()`, `cancelDispatch()`, `queryDispatches()`, `getDispatchById()`, `getDispatchByNumber()`.
+  - Methods: `createDispatch()`, `createOutwardChallanForBatchOrder()`, `authorizeOutwardChallan()`, `recordCustomerAcknowledgement()`, `completePhysicalDispatch()`, `getDispatchQueue()`, `verifyQuality()`, `scheduleDispatch()`, `approveDispatch()`, `recordDeparture()`, `confirmDelivery()`, `cancelDispatch()`, `queryDispatches()`, `getDispatchById()`, `getDispatchByNumber()`.
   - **Authoritative Outward Challan (OC) Creation Invariant:** `createOutwardChallanForBatchOrder()` enforces the strict hierarchy $\text{PO} \longrightarrow \text{GRN} \longrightarrow \text{BO} \longrightarrow \text{OC}$:
     1. *Eligibility:* The selected Batch Order must have `waitingForDispatch = true`. All other states (`WAITING_FOR_PRODUCTION`, `IN_PRODUCTION`, `WAITING_FOR_INSPECTION`, `IN_INSPECTION`, `INSPECTION` quarantined, `DISPATCHED`) are rejected with `400 Bad Request`.
     2. *BO & GRN Relationship:* The OC references the selected BO, and the selected BO must belong to the referenced GRN (`grnId === bo.grnId`). Pairing an unrelated GRN is strictly rejected.
@@ -1596,6 +1601,13 @@ _No direct HTTP routes mounted for this internal domain service._
     10. *Recipe Mismatch Protection (Prompt 5):* Client attempts to submit mismatched recipe IDs or codes are strictly rejected with `400 Bad Request`.
     11. *Collision & Concurrency Protection:* Two-phase atomic claiming on `jobRepo.atomicLinkOutwardChallan` ensures exactly one winner in race conditions, returning `409 Conflict` on concurrent requests.
     12. *Dispatch Boundary:* Creating an OC does *not* prematurely mark the BO as dispatched (`dispatched = false`); the BO remains staged until physical factory gate departure.
+  - **Authoritative OC Authorization & Customer Acknowledgement Invariants (Prompt 7):**
+    1. *Prepared By Attribution:* Every OC records the valid User responsible for preparing it (`preparedBy`). Reject arbitrary user identifiers; derive from authenticated user where client does not supply an explicit valid user reference.
+    2. *Authorized Signatory Verification:* Every OC must contain the required authorized signatory validated by the ERP's RBAC/permission system (`validateAndResolveSignatory`). The signatory must exist and hold dispatch authorization permissions (`PERMISSIONS.DISPATCH_DELIVERY_DISPATCH`, `DISPATCH_PASS_GENERATE`, `DISPATCH_APPROVE`, `ADMIN`, `PLANT_MANAGER`, `DISPATCH_OFFICER`). Client-supplied claims (`isAuthorized: true`) are never trusted. Arbitrary users or unauthorized signatories are strictly rejected with `400 Bad Request` or `403 Forbidden`.
+    3. *Physical Dispatch Gate Enforcement:* Physical departure cannot proceed without prior authorized signatory approval. `completePhysicalDispatch()` asserts `consignment.authorizedSignatory?.userId`. If missing, the operation is blocked with `400 Bad Request` (`Outward Challan must be authorized by an authorized signatory before physical dispatch departure`).
+    4. *Customer Acknowledgement:* Consignee receipt and delivery confirmation are captured via `customerAcknowledgement` (`receivedBy`, `signatureStampRef` / `signatureRef` / `stampRef`, `date` / `acknowledgedDate`, `remarks`). Fields are strictly optional proof of delivery records embedded directly into the authoritative Outward Challan document.
+    5. *Unified Delivery & Approval Systems:* Eliminates duplicate parallel mechanisms by routing `approveDispatch()` into `authorizeOutwardChallan()` and `confirmDelivery()` into `recordCustomerAcknowledgement()`.
+    6. *Authoritative Audit Trail:* Emits domain events `DISPATCH_OC_AUTHORIZED` and `DISPATCH_CUSTOMER_ACKNOWLEDGED`, permanently recording acting user, timestamp, affected OC, and action.
   - **Authoritative Transport & Physical Dispatch Invariant (Prompt 6):** `completePhysicalDispatch()` governs the physical departure of material and gate clearance:
     1. *Required Transport Fields:* `transporter` (min 2 characters, non-empty, non-meaningless), `vehicleNumber` (min 5 characters, valid registration or fleet format), `dispatchDate` (valid parseable datetime).
     2. *Optional Transport Fields:* `ewayBillNumber` (if provided, validated as 12-digit numeric `^\d{12}$` or authorized `EWB-...`).
@@ -1607,24 +1619,26 @@ _No direct HTTP routes mounted for this internal domain service._
 
 #### Controllers
 - **`DispatchController`** (`dispatch.controller.ts`): Extends `BaseController`. Handles HTTP request parsing, authentication verification, and response wrapping:
-  - Endpoints handled: `createDispatch()`, `createOutwardChallan()`, `completePhysicalDispatch()`, `getDispatchQueue()`, `verifyQuality()`, `schedule()`, `approve()`, `depart()`, `deliver()`, `cancel()`, `getAll()`, `getById()`, `getByNumber()`.
+  - Endpoints handled: `createDispatch()`, `createOutwardChallan()`, `authorizeOutwardChallan()`, `recordCustomerAcknowledgement()`, `completePhysicalDispatch()`, `getDispatchQueue()`, `verifyQuality()`, `schedule()`, `approve()`, `depart()`, `deliver()`, `cancel()`, `getAll()`, `getById()`, `getByNumber()`.
 
 #### Validators (Zod Schemas)
-- **`dispatch.validator.ts`**: Exported Zod validation schemas and helpers: `validateTransporter()`, `validateVehicleNumber()`, `validateEwayBillNumber()`, `validateDispatchDate()`, `physicalDispatchSchema`, `PackageDetailsSchema`, `CreateDispatchLineSchema`, `createDispatchSchema`, `createOutwardChallanSchema`, `verifyDispatchQualitySchema`, `scheduleDispatchSchema`, `approveDispatchSchema`, `departDispatchSchema`, `deliverDispatchSchema`, `cancelDispatchSchema`, `queryDispatchesSchema`.
+- **`dispatch.validator.ts`**: Exported Zod validation schemas and helpers: `authorizeDispatchSchema`, `customerAcknowledgementSchema`, `validateTransporter()`, `validateVehicleNumber()`, `validateEwayBillNumber()`, `validateDispatchDate()`, `physicalDispatchSchema`, `PackageDetailsSchema`, `CreateDispatchLineSchema`, `createDispatchSchema`, `createOutwardChallanSchema`, `verifyDispatchQualitySchema`, `scheduleDispatchSchema`, `approveDispatchSchema`, `departDispatchSchema`, `deliverDispatchSchema`, `cancelDispatchSchema`, `queryDispatchesSchema`.
 
 #### API Endpoints & Routes
 - `POST /api/v1/dispatches` — Handled by `DispatchController`.
 - `POST /api/v1/dispatches/outward-challan` (alias `/api/v1/dispatch/outward-challan`) — Authoritative Outward Challan creation for single eligible BO.
-- `POST /api/v1/dispatches/:id/dispatch` (alias `/api/v1/dispatches/outward-challan/:id/dispatch`) — Complete physical dispatch with mandatory transport fields, stock deduction, and BO transition to `DISPATCHED`.
+- `POST /api/v1/dispatches/:id/authorize` (alias `/api/v1/dispatches/outward-challan/:id/authorize`) — Authorize Outward Challan with validated authorized signatory credentials.
+- `POST /api/v1/dispatches/:id/acknowledge` (alias `/api/v1/dispatches/outward-challan/:id/acknowledge`) — Record customer receiving acknowledgement and optional signature/stamp proof.
+- `POST /api/v1/dispatches/:id/dispatch` (alias `/api/v1/dispatches/outward-challan/:id/dispatch`) — Complete physical dispatch with mandatory transport fields, stock deduction, and BO transition to `DISPATCHED` (gated by prior authorized signatory validation).
 - `GET /api/v1/dispatches/queue` (alias `/api/v1/dispatch/queue`, `/waiting-for-dispatch`) — Dedicated dispatch queue returning BOs with `waitingForDispatch = true`.
 - `GET /api/v1/dispatches` (alias `/api/v1/dispatch`) — Handled by `DispatchController`.
 - `GET /api/v1/dispatches/number/:dispatchNumber` — Handled by `DispatchController`.
 - `GET /api/v1/dispatches/:id` — Handled by `DispatchController`.
 - `POST /api/v1/dispatches/:id/verify-quality` — Handled by `DispatchController`.
 - `POST /api/v1/dispatches/:id/schedule` — Handled by `DispatchController`.
-- `POST /api/v1/dispatches/:id/approve` — Handled by `DispatchController`.
+- `POST /api/v1/dispatches/:id/approve` — Handled by `DispatchController` (delegates to `authorizeOutwardChallan`).
 - `POST /api/v1/dispatches/:id/depart` — Handled by `DispatchController`.
-- `POST /api/v1/dispatches/:id/deliver` — Handled by `DispatchController`.
+- `POST /api/v1/dispatches/:id/deliver` — Handled by `DispatchController` (delegates to `recordCustomerAcknowledgement`).
 - `POST /api/v1/dispatches/:id/cancel` — Handled by `DispatchController`.
 
 ### 5.30 Manufacturing Finance & General Ledger (`modules/finance`)
@@ -2699,19 +2713,28 @@ $$\mathbf{Production\ Completion} \longrightarrow \mathbf{Waiting\ for\ Inspecti
    - **Recipe Mismatch Protection (Prompt 5):** Client attempts to supply mismatched recipe IDs or codes throw `400 Bad Request`.
    - **Atomic Concurrency Protection:** Two-phase atomic claiming on the Batch Order (`jobRepo.atomicLinkOutwardChallan`) ensures race conditions result in exactly one winner and `409 Conflict` for competing requests.
    - **Dispatch Boundary:** Creating the OC does *not* mark the BO as dispatched (`dispatched: false`); the BO remains in dispatch staging until physical factory gate departure.
-3. **Transport Information & Physical Dispatch Execution (`POST /api/v1/dispatches/:id/dispatch`):**
+3. **Authoritative OC Signatory Authorization (`POST /api/v1/dispatches/:id/authorize`):**
+   - **Prepared By Attribution (Prompt 7):** Every Outward Challan records the valid user responsible for preparing it (`preparedBy`), derived authoritatively from the authenticated session context (`actor.userId`) or validated user ID. Arbitrary user IDs are strictly rejected.
+   - **Authorized Signatory RBAC Gate (Prompt 7):** Before an Outward Challan becomes a finalized dispatch document, it must contain a verified authorized signatory validated by the ERP's RBAC system (`validateAndResolveSignatory`). The signatory must exist and hold dispatch authorization permissions (`PERMISSIONS.DISPATCH_DELIVERY_DISPATCH`, `DISPATCH_PASS_GENERATE`, `DISPATCH_APPROVE`, `ADMIN`, `PLANT_MANAGER`, `DISPATCH_OFFICER`). Client-supplied claims of authorization (`isAuthorized: true`) are strictly ignored and never trusted. Arbitrary users or unauthorized signatories are rejected with `400 Bad Request` or `403 Forbidden`.
+   - **Pre-Dispatch Gate Enforcement:** Physical factory gate departure cannot proceed without prior authorized signatory approval; missing signatory authorization strictly blocks physical dispatch with `400 Bad Request`. Emits `DISPATCH_OC_AUTHORIZED`.
+4. **Transport Information & Physical Dispatch Execution (`POST /api/v1/dispatches/:id/dispatch`):**
+   - **Authorization Prerequisite Check:** Re-evaluates that the OC possesses a valid `authorizedSignatory.userId`. If unauthorized, physical departure is immediately blocked (`400 Bad Request`).
    - **Mandatory Transport Fields (Prompt 6):** Enforces required `transporter` (min 2 characters, rejecting empty or meaningless strings like `""`, `"   "`, `"-"`, `"N/A"`), `vehicleNumber` (min 5 characters, conforming to standard Indian registration format or valid fleet IDs), and `dispatchDate` (valid parseable datetime).
    - **Optional E-Way Bill:** `ewayBillNumber` is optional; if provided, it is validated strictly as a 12-digit numeric code (`^\d{12}$`) or standard authorized format (`EWB-...`).
    - **Authenticated User Attribution:** Dispatched user attribution is strictly extracted from the authenticated session actor context (`actor.userId`, `actor.email`, `actor.role`) and recorded into `consignment.dispatchedBy`, `consignment.dispatchedAt`, and `bo.dispatchedBy`. Client-supplied user identities are never trusted.
    - **Physical Dispatch vs OC Preparation Separation:** Distinguishes OC generation (`waitingForDispatch: true, dispatched: false`) from physical dispatch (`status: 'DISPATCHED'`, `dispatched: true`, `waitingForDispatch: false`).
    - **Finished Goods Stock Deduction & Negative Inventory Prevention:** Dispatched quantities are validated against available warehouse stock. Requests exceeding available stock or exceeding the total represented quantity are strictly rejected with `400 Bad Request` to prevent negative inventory.
    - **Strict Atomicity, Single-Winner Concurrency, and Conflict Rollback:** Physical dispatch is prohibited without an OC (`outwardChallanNumber`). Simultaneous dispatch attempts on the same BO resolve via single-winner atomic locking on `jobRepo.atomicMarkDispatched`. In conflict scenarios, any Finished Goods deductions are automatically rolled back, returning `409 Conflict`. Duplicate dispatches on already dispatched consignments or BOs are rejected with `400 Bad Request`. Emits `Dispatch.Shipped`.
-4. **Consignment Drafting (`POST /api/v1/dispatches`):** Logistics coordinator can alternatively create a multi-line dispatch order selecting customer and destination. Generates `DISP-YYYYMM-XXXX`. Status is `DRAFT`.
-5. **Finished Goods Attachment:** Jobs in finished goods storage are attached to the consignment.
-6. **Quality Compliance Gate (`POST /api/v1/dispatches/:id/verify-quality`):** System validates that every attached job has an approved, signed Certificate of Conformance (CoC). If any job lacks a valid CoC, the shipment cannot proceed.
-7. **Carrier Scheduling (`POST /api/v1/dispatches/:id/schedule`):** Logistics attaches carrier name, vehicle number, driver name, and planned departure time. Status moves to `SCHEDULED`.
-8. **Gate Departure Authorization (`POST /api/v1/dispatches/:id/approve`, `POST /.../depart`):** Plant Manager authorizes gate pass. Vehicle departs plant; consignment status transitions to `IN_TRANSIT` (or delegates to `completePhysicalDispatch` for OC consignments).
-9. **Customer Delivery & PoD (`POST /api/v1/dispatches/:id/deliver`):** Driver delivers shipment. Customer signs delivery challan; Proof of Delivery (PoD) is uploaded. Status transitions to `DELIVERED`. Emits `Dispatch.Delivered`.
+5. **Customer Acknowledgement & Proof of Delivery (`POST /api/v1/dispatches/:id/acknowledge`):**
+   - **Authoritative Receipt Confirmation (Prompt 7):** Consignee receipt and delivery confirmation are captured via `customerAcknowledgement` (`receivedBy`, `signatureStampRef` / `signatureRef` / `stampRef`, `date` / `acknowledgedDate`, `remarks`). Fields are strictly optional proof of delivery records embedded directly into the authoritative Outward Challan document.
+   - **Status Transition & Billing Handoff:** Updates consignment status to `DELIVERED`. Emits `Dispatch.CustomerAcknowledged` and `Dispatch.Delivered`, notifying billing and accounts receivable subsystems.
+   - **Unified Architecture:** The legacy `confirmDelivery()` endpoint delegates directly to `recordCustomerAcknowledgement()`, maintaining a single unified customer delivery and acknowledgement pipeline.
+6. **Consignment Drafting (`POST /api/v1/dispatches`):** Logistics coordinator can alternatively create a multi-line dispatch order selecting customer and destination. Generates `DISP-YYYYMM-XXXX`. Status is `DRAFT`.
+7. **Finished Goods Attachment:** Jobs in finished goods storage are attached to the consignment.
+8. **Quality Compliance Gate (`POST /api/v1/dispatches/:id/verify-quality`):** System validates that every attached job has an approved, signed Certificate of Conformance (CoC). If any job lacks a valid CoC, the shipment cannot proceed.
+9. **Carrier Scheduling (`POST /api/v1/dispatches/:id/schedule`):** Logistics attaches carrier name, vehicle number, driver name, and planned departure time. Status moves to `SCHEDULED`.
+10. **Gate Departure Authorization (`POST /api/v1/dispatches/:id/approve`, `POST /.../depart`):** Plant Manager authorizes gate pass (delegating to `authorizeOutwardChallan`). Vehicle departs plant; consignment status transitions to `IN_TRANSIT` (or delegates to `completePhysicalDispatch` for OC consignments).
+11. **Customer Delivery & PoD (`POST /api/v1/dispatches/:id/deliver`):** Driver delivers shipment. Customer signs delivery challan; Proof of Delivery (PoD) is uploaded (delegating to `recordCustomerAcknowledgement`). Status transitions to `DELIVERED`. Emits `Dispatch.Delivered`.
 
 ---
 
@@ -3451,6 +3474,22 @@ The codebase features comprehensive test suites validating layer boundaries, dat
   - Invariant 11: Emits `DomainEvents.DISPATCH_SHIPPED` event upon successful physical departure.
   - Invariant 12: Verifies route alias parity between `/api/v1/dispatches/:id/dispatch` and `/api/v1/dispatches/outward-challan/:id/dispatch`.
   - Invariant 13: Strictly prevents deducting more material than the BO / OC represents.
+- `dispatch-authorization.spec.ts` (15 tests — Prompt 7: OC Authorization & Customer Acknowledgement):
+  - Invariant 1: Records valid user responsible for preparing the OC (`preparedBy`); derives from authenticated user when client does not supply an explicit user ID.
+  - Invariant 2: Strictly rejects arbitrary non-existent user IDs for `preparedBy` (`400 Bad Request`).
+  - Invariant 3: Accepts valid user reference with validated RBAC permissions for authorized signatory (`authorizedSignatory`).
+  - Invariant 4: Strictly rejects arbitrary or unauthorized users without dispatch authorization permissions from serving as signatory (`400 Bad Request` or `403 Forbidden`).
+  - Invariant 5: Client-supplied claims of authorization (`isAuthorized: true`) are strictly ignored and never trusted; authorization is verified by ERP permission system.
+  - Invariant 6: Captures optional customer acknowledgement fields (`receivedBy`, `signatureStampRef`, `date`, `remarks`).
+  - Invariant 7: Confirms customer acknowledgement fields are strictly optional and can be omitted without failure.
+  - Invariant 8: Allows capturing both signature reference and company stamp reference in customer acknowledgement.
+  - Invariant 9: Enforces pre-dispatch gate: physical dispatch departure cannot proceed without prior authorized signatory approval (`400 Bad Request`).
+  - Invariant 10: Unifies approval systems: `approveDispatch()` delegates cleanly to `authorizeOutwardChallan()`.
+  - Invariant 11: Unifies delivery systems: `confirmDelivery()` delegates cleanly to `recordCustomerAcknowledgement()`.
+  - Invariant 12: Emits `DomainEvents.DISPATCH_OC_AUTHORIZED` upon successful signatory authorization.
+  - Invariant 13: Emits `DomainEvents.DISPATCH_CUSTOMER_ACKNOWLEDGED` upon customer acknowledgement recording.
+  - Invariant 14: Verifies route alias parity for authorization (`/api/v1/dispatches/:id/authorize` and `/api/v1/dispatches/outward-challan/:id/authorize`).
+  - Invariant 15: Verifies route alias parity for customer acknowledgement (`/api/v1/dispatches/:id/acknowledge` and `/api/v1/dispatches/outward-challan/:id/acknowledge`).
 - Metallurgical Lab & Quality: `quality-inspection.spec.ts`, `metallurgical-lab.spec.ts`, `ncr-capa.spec.ts`, `quality-documentation.spec.ts`, `pyrometry.spec.ts`.
 - Machine & Maintenance: `machine.spec.ts`, `maintenance.spec.ts`, `furnace-capacity.spec.ts`.
 - Traceability & Inventory: `heat-lot-traceability.spec.ts`, `inventory-ledger.spec.ts`, `warehouse.spec.ts`, `finished-goods.spec.ts`, `quarantine.spec.ts`.
@@ -3459,7 +3498,7 @@ The codebase features comprehensive test suites validating layer boundaries, dat
 - Platform Core & Security: `auth.spec.ts`, `rbac.spec.ts`, `tenant-isolation.spec.ts`, `audit-logging.spec.ts`, `error-handling.spec.ts`, `database.spec.ts`, `health.spec.ts`.
 
 #### 5. Frontend Integration Suites (`frontend/src/`)
-- `dispatch-page.test.tsx` (7 tests — Outward Challan Workflow, BO Items, Heat-Treatment & Physical Dispatch UI):
+- `dispatch-page.test.tsx` (9 tests — Outward Challan Workflow, BO Items, Heat-Treatment, Physical Dispatch, Authorization & Customer Acknowledgement UI):
   - Renders Dispatch workspace with Dispatch Queue, Active Consignments, and Unified Workbench views.
   - Displays eligible Batch Orders in the queue with unbroken $\text{PO} \longrightarrow \text{GRN} \longrightarrow \text{BO}$ hierarchy badges and CoC approval.
   - Opens Create Outward Challan modal with read-only authoritative derived fields: PO, GRN, BO, auto OC number, GRN date, all 8 BO item fields, and all 6 heat-treatment parameters with no manual editing inputs.
@@ -3467,6 +3506,8 @@ The codebase features comprehensive test suites validating layer boundaries, dat
   - Allows switching to Active Consignments tab and displays hierarchy badges, drawer BO-derived items card, and metallurgical heat-treatment details.
   - Validates required transport fields (transporter, vehicle number, dispatch date, optional e-way bill), rejects meaningless placeholder values, and completes physical dispatch upon valid submission.
   - Confirms physical dispatch status transitions and warehouse stock deduction notifications in UI.
+  - Opens Authorize Outward Challan modal, validates signatory user ID, and submits signatory credentials to ERP backend.
+  - Opens Customer Acknowledgement modal, submits customer receipt and stamp reference, and renders updated Prepared By, Authorized Signatory, and Customer Acknowledgement cards in Drawer.
 - `e2e-workflows.test.tsx` (36 tests):
   - Multi-step Batch Order creation wizard (PO -> GRN -> Part -> BO).
   - Interactive BO drawer with hierarchy banner and 8-card source genealogy grid.

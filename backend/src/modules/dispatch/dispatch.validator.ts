@@ -206,13 +206,41 @@ export const departDispatchSchema = z
     }
   });
 
-export const deliverDispatchSchema = z.object({
-  receiverName: z.string().min(2, 'Receiver name is required for Proof of Delivery'),
+export const authorizeDispatchSchema = z.object({
+  signatoryUserId: z.string().optional(),
+  authorizedSignatoryId: z.string().optional(),
+  signatureRef: z.string().optional(),
+  designation: z.string().optional(),
+  approvalNotes: z.string().optional(),
+  notes: z.string().optional()
+});
+
+export const customerAcknowledgementSchema = z.object({
+  receivedBy: z.string().optional(),
+  signatureStampRef: z.string().optional(),
+  signatureRef: z.string().optional(),
+  stampRef: z.string().optional(),
+  date: z.any().optional(),
+  acknowledgedDate: z.any().optional(),
+  remarks: z.string().optional(),
   receivedQuantity: z.number().positive().optional(),
-  receivedCondition: DeliveryConditionEnum.default('CONFORMING'),
+  receivedCondition: DeliveryConditionEnum.optional(),
+  podDocumentUrl: z.string().optional()
+});
+
+export const deliverDispatchSchema = z.object({
+  receiverName: z.string().optional(),
+  receivedBy: z.string().optional(),
+  receivedQuantity: z.number().positive().optional(),
+  receivedCondition: DeliveryConditionEnum.default('CONFORMING').optional(),
   receiverSignatureRef: z.string().optional(),
+  signatureStampRef: z.string().optional(),
+  signatureRef: z.string().optional(),
+  stampRef: z.string().optional(),
   podDocumentUrl: z.string().optional(),
-  actualDeliveryTime: z.string().datetime().optional(),
+  actualDeliveryTime: z.string().optional(),
+  date: z.any().optional(),
+  acknowledgedDate: z.any().optional(),
   remarks: z.string().optional()
 });
 
@@ -232,7 +260,10 @@ export const createOutwardChallanSchema = z
     driverName: z.string().optional(),
     destinationAddress: z.string().optional(),
     packageDetails: PackageDetailsSchema.optional(),
-    notes: z.string().optional()
+    notes: z.string().optional(),
+    preparedById: z.string().optional(),
+    authorizedSignatoryId: z.string().optional(),
+    signatureRef: z.string().optional()
   })
   .passthrough()
   .superRefine((data: any, ctx) => {

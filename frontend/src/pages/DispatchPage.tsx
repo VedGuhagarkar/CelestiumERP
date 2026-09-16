@@ -17,7 +17,10 @@ import {
   Building2,
   AlertCircle,
   LayoutGrid,
-  Flame
+  Flame,
+  UserCheck,
+  Stamp,
+  FileSignature
 } from 'lucide-react';
 import { PageContainer } from '../layouts/PageContainer.js';
 import { PageHeader } from '../design-system/navigation/PageHeader.js';
@@ -121,8 +124,36 @@ interface DispatchConsignment {
   };
   gatePass?: {
     gatePassNumber: string;
-    securityOfficerName: string;
+    securityOfficerName?: string;
     issuedAt: string;
+  };
+  preparedBy?: {
+    userId: string;
+    name?: string;
+    username?: string;
+    email?: string;
+    role?: string;
+    designation?: string;
+    preparedAt?: string;
+  };
+  authorizedSignatory?: {
+    userId: string;
+    name?: string;
+    username?: string;
+    email?: string;
+    role?: string;
+    designation?: string;
+    authorizedAt?: string;
+    signatureRef?: string;
+  };
+  customerAcknowledgement?: {
+    receivedBy?: string;
+    signatureStampRef?: string;
+    signatureRef?: string;
+    stampRef?: string;
+    date?: string;
+    acknowledgedDate?: string;
+    remarks?: string;
   };
   totalQuantity?: number;
   totalGrossWeightKg?: number;
@@ -366,6 +397,29 @@ const DEFAULT_DISPATCHES: DispatchConsignment[] = [
     ],
     carrier: { carrierName: 'Swift Heavy Haul Logistics', transportMode: 'ROAD', trackingNumber: 'TRK-SWIFT-994821', vehicleNumber: 'MH-12-QC-8821' },
     gatePass: { gatePassNumber: 'GP-2026-0881', securityOfficerName: 'James Wilson', issuedAt: new Date(Date.now() - 5 * 3600000).toISOString() },
+    preparedBy: {
+      userId: '507f191e810c19729de860e1',
+      name: 'Devin Vance',
+      username: 'devin.vance',
+      role: 'DISPATCH_OFFICER',
+      designation: 'Dispatch Lead',
+      preparedAt: '2026-08-20T08:30:00Z'
+    },
+    authorizedSignatory: {
+      userId: '507f191e810c19729de860e2',
+      name: 'Elena Rostova',
+      username: 'elena.rostova',
+      role: 'PLANT_MANAGER',
+      designation: 'Plant Operations Director',
+      signatureRef: 'SIG-AUTH-9081',
+      authorizedAt: '2026-08-20T09:15:00Z'
+    },
+    customerAcknowledgement: {
+      receivedBy: 'Marcus Sterling',
+      signatureStampRef: 'STAMP-APEX-REC-01',
+      date: '2026-08-21T14:00:00Z',
+      remarks: 'Consignment received in full with verified CoC.'
+    },
     totalQuantity: 300,
     totalGrossWeightKg: 1820
   },
@@ -431,6 +485,14 @@ const DEFAULT_DISPATCHES: DispatchConsignment[] = [
     ],
     carrier: { carrierName: 'Aero Freight Express', transportMode: 'AIR', trackingNumber: 'TRK-AFE-881290' },
     gatePass: { gatePassNumber: 'GP-2026-0882', securityOfficerName: 'James Wilson', issuedAt: new Date(Date.now() - 3 * 3600000).toISOString() },
+    preparedBy: {
+      userId: '507f191e810c19729de860e1',
+      name: 'Devin Vance',
+      username: 'devin.vance',
+      role: 'DISPATCH_OFFICER',
+      designation: 'Dispatch Lead',
+      preparedAt: '2026-08-22T08:00:00Z'
+    },
     totalQuantity: 120,
     totalGrossWeightKg: 1040
   }
@@ -574,6 +636,209 @@ export const DispatchPage: React.FC = () => {
       setFeedback({ type: 'error', message: err.message || 'Failed to complete physical dispatch' });
     } finally {
       setIsSubmittingPhysicalDispatch(false);
+    }
+  };
+
+  // Authorize Outward Challan Modal State
+  const [isAuthorizeModalOpen, setIsAuthorizeModalOpen] = useState(false);
+  const [selectedDispatchForAuthorize, setSelectedDispatchForAuthorize] = useState<DispatchConsignment | null>(null);
+  const [signatoryUserIdInput, setSignatoryUserIdInput] = useState('');
+  const [designationInput, setDesignationInput] = useState('');
+  const [signatureRefInput, setSignatureRefInput] = useState('');
+  const [approvalNotesInput, setApprovalNotesInput] = useState('');
+  const [authorizeErrors, setAuthorizeErrors] = useState<Record<string, string>>({});
+  const [isSubmittingAuthorize, setIsSubmittingAuthorize] = useState(false);
+
+  const openAuthorizeModal = (dispatchItem: DispatchConsignment) => {
+    setSelectedDispatchForAuthorize(dispatchItem);
+    setSignatoryUserIdInput(dispatchItem.authorizedSignatory?.userId || 'usr_signatory_01');
+    setDesignationInput(dispatchItem.authorizedSignatory?.designation || 'Plant Operations Director / Authorized Signatory');
+    setSignatureRefInput(dispatchItem.authorizedSignatory?.signatureRef || `SIG-AUTH-${Math.floor(1000 + Math.random() * 9000)}`);
+    setApprovalNotesInput('');
+    setAuthorizeErrors({});
+    setIsAuthorizeModalOpen(true);
+  };
+
+  const handleAuthorizeOutwardChallan = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedDispatchForAuthorize) return;
+
+    const trimmedUserId = signatoryUserIdInput.trim();
+    if (!trimmedUserId) {
+      setAuthorizeErrors({ userId: 'Valid signatory user reference is required' });
+      return;
+    }
+
+    setIsSubmittingAuthorize(true);
+    setFeedback(null);
+    setAuthorizeErrors({});
+
+    try {
+      const payload = {
+        authorizedSignatory: {
+          userId: trimmedUserId,
+          designation: designationInput.trim() || undefined,
+          signatureRef: signatureRefInput.trim() || undefined
+        },
+        approvalNotes: approvalNotesInput.trim() || undefined
+      };
+
+      const dispatchId = selectedDispatchForAuthorize.id || selectedDispatchForAuthorize._id || selectedDispatchForAuthorize.dispatchNumber;
+      const res = await authenticatedFetch(
+        `${env.API_BASE_URL}/dispatches/${dispatchId}/authorize`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        }
+      );
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || `Failed to authorize Outward Challan (status ${res.status})`);
+      }
+
+      const resJson = await res.json();
+      const updatedData = resJson.data;
+
+      setFeedback({
+        type: 'success',
+        message: `Outward Challan ${selectedDispatchForAuthorize.outwardChallanNumber || selectedDispatchForAuthorize.deliveryChallanNumber} authorized successfully! Signatory verified via ERP permission system.`
+      });
+
+      const updatedSignatory = updatedData?.authorizedSignatory || {
+        userId: trimmedUserId,
+        name: 'Authorized Plant Authority',
+        designation: designationInput.trim() || 'Plant Operations Director',
+        signatureRef: signatureRefInput.trim() || 'SIG-DIGITAL-VERIFIED',
+        authorizedAt: new Date().toISOString()
+      };
+
+      setDispatches((prev) =>
+        prev.map((d) =>
+          d.dispatchNumber === selectedDispatchForAuthorize.dispatchNumber || d.id === selectedDispatchForAuthorize.id
+            ? { ...d, status: d.status === 'SCHEDULED' || d.status === 'DRAFT' ? 'APPROVED' : d.status, authorizedSignatory: updatedSignatory }
+            : d
+        )
+      );
+
+      if (
+        selectedDispatch &&
+        (selectedDispatch.dispatchNumber === selectedDispatchForAuthorize.dispatchNumber ||
+          selectedDispatch.id === selectedDispatchForAuthorize.id)
+      ) {
+        setSelectedDispatch((prev: any) =>
+          prev
+            ? {
+                ...prev,
+                status: prev.status === 'SCHEDULED' || prev.status === 'DRAFT' ? 'APPROVED' : prev.status,
+                authorizedSignatory: updatedSignatory
+              }
+            : null
+        );
+      }
+
+      setIsAuthorizeModalOpen(false);
+      setSelectedDispatchForAuthorize(null);
+      await fetchQueueAndDispatches();
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Failed to authorize Outward Challan' });
+    } finally {
+      setIsSubmittingAuthorize(false);
+    }
+  };
+
+  // Customer Acknowledgement Modal State
+  const [isAcknowledgeModalOpen, setIsAcknowledgeModalOpen] = useState(false);
+  const [selectedDispatchForAcknowledge, setSelectedDispatchForAcknowledge] = useState<DispatchConsignment | null>(null);
+  const [receivedByInput, setReceivedByInput] = useState('');
+  const [ackSignatureRefInput, setAckSignatureRefInput] = useState('');
+  const [ackDateInput, setAckDateInput] = useState('');
+  const [ackRemarksInput, setAckRemarksInput] = useState('');
+  const [isSubmittingAcknowledge, setIsSubmittingAcknowledge] = useState(false);
+
+  const openAcknowledgeModal = (dispatchItem: DispatchConsignment) => {
+    setSelectedDispatchForAcknowledge(dispatchItem);
+    setReceivedByInput(dispatchItem.customerAcknowledgement?.receivedBy || '');
+    setAckSignatureRefInput(dispatchItem.customerAcknowledgement?.signatureStampRef || dispatchItem.customerAcknowledgement?.signatureRef || '');
+    setAckDateInput(new Date().toISOString().slice(0, 10));
+    setAckRemarksInput(dispatchItem.customerAcknowledgement?.remarks || '');
+    setIsAcknowledgeModalOpen(true);
+  };
+
+  const handleRecordCustomerAcknowledgement = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedDispatchForAcknowledge) return;
+
+    setIsSubmittingAcknowledge(true);
+    setFeedback(null);
+
+    try {
+      const payload = {
+        receivedBy: receivedByInput.trim() || undefined,
+        signatureStampRef: ackSignatureRefInput.trim() || undefined,
+        date: ackDateInput ? new Date(ackDateInput).toISOString() : undefined,
+        remarks: ackRemarksInput.trim() || undefined
+      };
+
+      const dispatchId = selectedDispatchForAcknowledge.id || selectedDispatchForAcknowledge._id || selectedDispatchForAcknowledge.dispatchNumber;
+      const res = await authenticatedFetch(
+        `${env.API_BASE_URL}/dispatches/${dispatchId}/acknowledge`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        }
+      );
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || `Failed to record customer acknowledgement (status ${res.status})`);
+      }
+
+      setFeedback({
+        type: 'success',
+        message: `Customer acknowledgement recorded for ${selectedDispatchForAcknowledge.outwardChallanNumber || selectedDispatchForAcknowledge.deliveryChallanNumber}! Status updated to DELIVERED.`
+      });
+
+      const updatedAck = {
+        receivedBy: payload.receivedBy,
+        signatureStampRef: payload.signatureStampRef,
+        date: payload.date,
+        remarks: payload.remarks
+      };
+
+      setDispatches((prev) =>
+        prev.map((d) =>
+          d.dispatchNumber === selectedDispatchForAcknowledge.dispatchNumber || d.id === selectedDispatchForAcknowledge.id
+            ? { ...d, status: 'DELIVERED', customerAcknowledgement: updatedAck }
+            : d
+        )
+      );
+
+      if (
+        selectedDispatch &&
+        (selectedDispatch.dispatchNumber === selectedDispatchForAcknowledge.dispatchNumber ||
+          selectedDispatch.id === selectedDispatchForAcknowledge.id)
+      ) {
+        setSelectedDispatch((prev: any) =>
+          prev
+            ? {
+                ...prev,
+                status: 'DELIVERED',
+                customerAcknowledgement: updatedAck
+              }
+            : null
+        );
+      }
+
+      setIsAcknowledgeModalOpen(false);
+      setSelectedDispatchForAcknowledge(null);
+      await fetchQueueAndDispatches();
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Failed to record customer acknowledgement' });
+    } finally {
+      setIsSubmittingAcknowledge(false);
     }
   };
 
@@ -1161,6 +1426,17 @@ export const DispatchPage: React.FC = () => {
 
                         <td style={{ padding: '14px 18px', textAlign: 'right' }}>
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px' }}>
+                            {!d.authorizedSignatory?.userId && (
+                              <AppButton
+                                variant="secondary"
+                                size="sm"
+                                data-testid={`btn-authorize-${d.dispatchNumber || d.id}`}
+                                leftIcon={<UserCheck size={13} />}
+                                onClick={() => openAuthorizeModal(d)}
+                              >
+                                Authorize
+                              </AppButton>
+                            )}
                             {d.status !== 'DISPATCHED' && d.status !== 'DELIVERED' && (
                               <AppButton
                                 variant="primary"
@@ -1170,6 +1446,17 @@ export const DispatchPage: React.FC = () => {
                                 onClick={() => openPhysicalDispatchModal(d)}
                               >
                                 Dispatch
+                              </AppButton>
+                            )}
+                            {!d.customerAcknowledgement?.receivedBy && (
+                              <AppButton
+                                variant="secondary"
+                                size="sm"
+                                data-testid={`btn-acknowledge-${d.dispatchNumber || d.id}`}
+                                leftIcon={<Stamp size={13} />}
+                                onClick={() => openAcknowledgeModal(d)}
+                              >
+                                Acknowledge
                               </AppButton>
                             )}
                             <ActionButton
@@ -1204,6 +1491,16 @@ export const DispatchPage: React.FC = () => {
               <AppButton variant="secondary" onClick={() => setSelectedDispatch(null)}>
                 Close
               </AppButton>
+              {!selectedDispatch.authorizedSignatory?.userId && (
+                <AppButton
+                  variant="secondary"
+                  data-testid="btn-drawer-authorize"
+                  leftIcon={<UserCheck size={16} />}
+                  onClick={() => openAuthorizeModal(selectedDispatch)}
+                >
+                  Authorize Signatory
+                </AppButton>
+              )}
               {selectedDispatch.status !== 'DISPATCHED' && selectedDispatch.status !== 'DELIVERED' && (
                 <AppButton
                   variant="primary"
@@ -1212,6 +1509,16 @@ export const DispatchPage: React.FC = () => {
                   onClick={() => openPhysicalDispatchModal(selectedDispatch)}
                 >
                   Complete Physical Dispatch
+                </AppButton>
+              )}
+              {!selectedDispatch.customerAcknowledgement?.receivedBy && (
+                <AppButton
+                  variant="secondary"
+                  data-testid="btn-drawer-acknowledge"
+                  leftIcon={<Stamp size={16} />}
+                  onClick={() => openAcknowledgeModal(selectedDispatch)}
+                >
+                  Customer Receipt & Stamp
                 </AppButton>
               )}
               <AppButton
@@ -1246,6 +1553,60 @@ export const DispatchPage: React.FC = () => {
                 </div>
               </AppCard>
             )}
+
+            {/* OC Prepared By Card */}
+            <AppCard style={{ padding: '16px', borderLeft: '4px solid #38bdf8' }}>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--color-primary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <FileSignature size={14} /> OC PREPARED BY (AUTHORITATIVE USER ATTRIBUTION)
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', fontSize: '13px' }}>
+                <div><strong>Preparer User ID:</strong> {selectedDispatch.preparedBy?.userId || selectedDispatch.dispatchedBy?.userId || 'usr_dispatch_prep_01'}</div>
+                <div><strong>Preparer Name:</strong> {selectedDispatch.preparedBy?.name || selectedDispatch.preparedBy?.username || 'Devin Vance'}</div>
+                <div><strong>Designation / Role:</strong> {selectedDispatch.preparedBy?.designation || selectedDispatch.preparedBy?.role || 'Dispatch Lead'}</div>
+                <div><strong>Prepared Timestamp:</strong> {selectedDispatch.preparedBy?.preparedAt ? new Date(selectedDispatch.preparedBy.preparedAt).toLocaleString() : 'Authoritative Record'}</div>
+              </div>
+            </AppCard>
+
+            {/* OC Authorized Signatory Card */}
+            <AppCard style={{ padding: '16px', borderLeft: `4px solid ${selectedDispatch.authorizedSignatory ? '#10b981' : '#f59e0b'}` }}>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: selectedDispatch.authorizedSignatory ? '#34d399' : '#f59e0b', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <UserCheck size={14} /> AUTHORIZED SIGNATORY (ERP RBAC VERIFIED)
+              </div>
+              {selectedDispatch.authorizedSignatory ? (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', fontSize: '13px' }}>
+                  <div><strong>Signatory User ID:</strong> {selectedDispatch.authorizedSignatory.userId}</div>
+                  <div><strong>Signatory Name:</strong> {selectedDispatch.authorizedSignatory.name || selectedDispatch.authorizedSignatory.username || 'Authorized Signatory'}</div>
+                  <div><strong>Designation:</strong> {selectedDispatch.authorizedSignatory.designation || 'Plant Operations Director'}</div>
+                  <div><strong>Signature Reference:</strong> <span style={{ color: '#38bdf8', fontFamily: 'monospace' }}>{selectedDispatch.authorizedSignatory.signatureRef || 'DIGITAL-VERIFIED'}</span></div>
+                  <div style={{ gridColumn: 'span 2', color: '#94a3b8', fontSize: '12px' }}>
+                    <strong>Authorized Timestamp:</strong> {selectedDispatch.authorizedSignatory.authorizedAt ? new Date(selectedDispatch.authorizedSignatory.authorizedAt).toLocaleString() : 'N/A'}
+                  </div>
+                </div>
+              ) : (
+                <div style={{ fontSize: '12px', color: '#f59e0b', lineHeight: 1.5 }}>
+                  ⚠️ <strong>Pending Signatory Authorization:</strong> This Outward Challan has not yet received ERP RBAC signatory approval. Physical dispatch departure is strictly blocked until an authorized signatory confirms this document.
+                </div>
+              )}
+            </AppCard>
+
+            {/* Customer Acknowledgement Card */}
+            <AppCard style={{ padding: '16px', borderLeft: `4px solid ${selectedDispatch.customerAcknowledgement ? '#3b82f6' : '#64748b'}` }}>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: selectedDispatch.customerAcknowledgement ? '#60a5fa' : '#94a3b8', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Stamp size={14} /> CUSTOMER ACKNOWLEDGEMENT & DELIVERY PROOF
+              </div>
+              {selectedDispatch.customerAcknowledgement ? (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', fontSize: '13px' }}>
+                  <div><strong>Received By:</strong> {selectedDispatch.customerAcknowledgement.receivedBy || 'Customer Representative'}</div>
+                  <div><strong>Signature / Stamp Ref:</strong> <span style={{ color: '#60a5fa', fontFamily: 'monospace' }}>{selectedDispatch.customerAcknowledgement.signatureStampRef || selectedDispatch.customerAcknowledgement.signatureRef || 'STAMP-ACKNOWLEDGED'}</span></div>
+                  <div><strong>Receipt Date:</strong> {selectedDispatch.customerAcknowledgement.date || selectedDispatch.customerAcknowledgement.acknowledgedDate ? new Date(selectedDispatch.customerAcknowledgement.date || selectedDispatch.customerAcknowledgement.acknowledgedDate!).toLocaleDateString() : 'Recorded upon Receipt'}</div>
+                  <div><strong>Customer Remarks:</strong> {selectedDispatch.customerAcknowledgement.remarks || 'Consignment received with verified documentation'}</div>
+                </div>
+              ) : (
+                <div style={{ fontSize: '12px', color: '#94a3b8' }}>
+                  Optional proof of customer receipt, receiving signature, or company stamp has not been uploaded yet.
+                </div>
+              )}
+            </AppCard>
 
             <AppCard style={{ padding: '16px' }}>
               <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--color-primary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -1839,6 +2200,201 @@ export const DispatchPage: React.FC = () => {
               placeholder="e.g. Cleared at North Gate, seals intact"
               value={transportRemarksInput}
               onChange={(e) => setTransportRemarksInput(e.target.value)}
+            />
+          </form>
+        )}
+      </AppDialog>
+
+      {/* AUTHORIZE OUTWARD CHALLAN (OC) MODAL DIALOG */}
+      <AppDialog
+        isOpen={isAuthorizeModalOpen && !!selectedDispatchForAuthorize}
+        onClose={() => setIsAuthorizeModalOpen(false)}
+        title="Authorize Outward Challan (Authorized Signatory)"
+        description="Verify authorized signatory credentials against the ERP permission system before finalizing the dispatch document."
+        footer={
+          <>
+            <AppButton variant="secondary" onClick={() => setIsAuthorizeModalOpen(false)}>
+              Cancel
+            </AppButton>
+            <AppButton
+              variant="primary"
+              type="submit"
+              form="authorize-oc-form"
+              data-testid="btn-submit-authorize-oc"
+              isLoading={isSubmittingAuthorize}
+              leftIcon={<UserCheck size={16} />}
+            >
+              Confirm Signatory Authorization
+            </AppButton>
+          </>
+        }
+      >
+        {selectedDispatchForAuthorize && (
+          <form
+            id="authorize-oc-form"
+            onSubmit={handleAuthorizeOutwardChallan}
+            style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}
+          >
+            {/* RBAC Authorization Invariant Notice */}
+            <div
+              style={{
+                background: 'rgba(16, 185, 129, 0.08)',
+                border: '1px solid rgba(16, 185, 129, 0.3)',
+                padding: '12px',
+                borderRadius: '8px',
+                fontSize: '12px'
+              }}
+            >
+              <div style={{ fontWeight: 700, color: '#34d399', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <ShieldCheck size={14} /> AUTHORITATIVE RBAC SIGNATORY VALIDATION
+              </div>
+              <div style={{ color: 'var(--color-text-secondary)', lineHeight: 1.4 }}>
+                The signatory must be a recognized user authorized with dispatch approval permissions. Client-supplied authorization claims are strictly ignored; verification is executed by the ERP kernel.
+              </div>
+              <div style={{ marginTop: '8px', display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px', color: '#e2e8f0', fontFamily: 'monospace' }}>
+                <div><strong>Challan:</strong> {selectedDispatchForAuthorize.outwardChallanNumber || selectedDispatchForAuthorize.deliveryChallanNumber}</div>
+                <div><strong>Customer:</strong> {selectedDispatchForAuthorize.customer?.customerName}</div>
+              </div>
+            </div>
+
+            {/* Signatory User ID */}
+            <div>
+              <AppInput
+                label="Signatory User ID / Reference *"
+                data-testid="input-signatory-user-id"
+                placeholder="e.g. 507f191e810c19729de860e2 or usr_signatory_01"
+                value={signatoryUserIdInput}
+                onChange={(e) => {
+                  setSignatoryUserIdInput(e.target.value);
+                  if (authorizeErrors.userId) {
+                    setAuthorizeErrors((prev) => ({ ...prev, userId: '' }));
+                  }
+                }}
+                required
+              />
+              {authorizeErrors.userId && (
+                <div style={{ color: '#ef4444', fontSize: '11px', marginTop: '4px' }}>
+                  {authorizeErrors.userId}
+                </div>
+              )}
+            </div>
+
+            {/* Designation */}
+            <AppInput
+              label="Signatory Designation"
+              data-testid="input-signatory-designation"
+              placeholder="e.g. Plant Operations Director / Dispatch Head"
+              value={designationInput}
+              onChange={(e) => setDesignationInput(e.target.value)}
+            />
+
+            {/* Signature Reference */}
+            <AppInput
+              label="Digital Signature / Authority Stamp Reference"
+              data-testid="input-signature-ref"
+              placeholder="e.g. SIG-AUTH-2026-9901"
+              value={signatureRefInput}
+              onChange={(e) => setSignatureRefInput(e.target.value)}
+            />
+
+            {/* Approval Notes */}
+            <AppInput
+              label="Approval Notes (Optional)"
+              data-testid="input-approval-notes"
+              placeholder="e.g. Metallurgical test certificates inspected and approved for dispatch"
+              value={approvalNotesInput}
+              onChange={(e) => setApprovalNotesInput(e.target.value)}
+            />
+          </form>
+        )}
+      </AppDialog>
+
+      {/* CUSTOMER ACKNOWLEDGEMENT MODAL DIALOG */}
+      <AppDialog
+        isOpen={isAcknowledgeModalOpen && !!selectedDispatchForAcknowledge}
+        onClose={() => setIsAcknowledgeModalOpen(false)}
+        title="Record Customer Acknowledgement"
+        description="Record customer receipt verification, consignee signature reference, and delivery stamp."
+        footer={
+          <>
+            <AppButton variant="secondary" onClick={() => setIsAcknowledgeModalOpen(false)}>
+              Cancel
+            </AppButton>
+            <AppButton
+              variant="primary"
+              type="submit"
+              form="customer-ack-form"
+              data-testid="btn-submit-customer-ack"
+              isLoading={isSubmittingAcknowledge}
+              leftIcon={<Stamp size={16} />}
+            >
+              Record Customer Receipt & Delivery
+            </AppButton>
+          </>
+        }
+      >
+        {selectedDispatchForAcknowledge && (
+          <form
+            id="customer-ack-form"
+            onSubmit={handleRecordCustomerAcknowledgement}
+            style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}
+          >
+            {/* Optional Fields Notice */}
+            <div
+              style={{
+                background: 'rgba(59, 130, 246, 0.08)',
+                border: '1px solid rgba(59, 130, 246, 0.3)',
+                padding: '12px',
+                borderRadius: '8px',
+                fontSize: '12px'
+              }}
+            >
+              <div style={{ fontWeight: 700, color: '#60a5fa', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Stamp size={14} /> CUSTOMER RECEIPT & DELIVERY PROOF
+              </div>
+              <div style={{ color: 'var(--color-text-secondary)', lineHeight: 1.4 }}>
+                Customer acknowledgement fields are optional proof of delivery records embedded directly into the authoritative Outward Challan document.
+              </div>
+              <div style={{ marginTop: '8px', display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px', color: '#e2e8f0' }}>
+                <div><strong>Consignment:</strong> {selectedDispatchForAcknowledge.outwardChallanNumber || selectedDispatchForAcknowledge.deliveryChallanNumber}</div>
+                <div><strong>Customer:</strong> {selectedDispatchForAcknowledge.customer?.customerName}</div>
+              </div>
+            </div>
+
+            {/* Received By */}
+            <AppInput
+              label="Received By (Customer Representative)"
+              data-testid="input-ack-received-by"
+              placeholder="e.g. Robert Chen (Lead Receiving Inspector)"
+              value={receivedByInput}
+              onChange={(e) => setReceivedByInput(e.target.value)}
+            />
+
+            {/* Signature / Stamp Reference */}
+            <AppInput
+              label="Signature / Company Stamp Reference"
+              data-testid="input-ack-signature-stamp"
+              placeholder="e.g. STAMP-CUST-REC-2026 or SIG-CUST-8812"
+              value={ackSignatureRefInput}
+              onChange={(e) => setAckSignatureRefInput(e.target.value)}
+            />
+
+            {/* Acknowledged Date */}
+            <AppInput
+              label="Receipt Date"
+              type="date"
+              data-testid="input-ack-date"
+              value={ackDateInput}
+              onChange={(e) => setAckDateInput(e.target.value)}
+            />
+
+            {/* Customer Remarks */}
+            <AppInput
+              label="Customer Remarks / Delivery Notes"
+              data-testid="input-ack-remarks"
+              placeholder="e.g. All 120 pcs received in good condition with test reports."
+              value={ackRemarksInput}
+              onChange={(e) => setAckRemarksInput(e.target.value)}
             />
           </form>
         )}

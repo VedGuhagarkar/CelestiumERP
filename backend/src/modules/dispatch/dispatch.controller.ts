@@ -111,6 +111,22 @@ export class DispatchController extends BaseController {
     }
   };
 
+  public authorizeOutwardChallan = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const actor = this.getActorContext(req);
+      const id = req.params.id as string;
+      const result = await this.service.authorizeOutwardChallan(tenantId, actor, id, req.body);
+      this.sendSuccess(res, result, 'Outward Challan authorized by signatory successfully');
+    } catch (error) {
+      next(error);
+    }
+  };
+
   public recordDeparture = async (
     req: Request,
     res: Response,
@@ -154,6 +170,22 @@ export class DispatchController extends BaseController {
       const id = req.params.id as string;
       const result = await this.service.confirmDelivery(tenantId, actor, id, req.body);
       this.sendSuccess(res, result, 'Customer delivery and Proof of Delivery confirmed');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public recordCustomerAcknowledgement = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const tenantId = this.getTenantId(req);
+      const actor = this.getActorContext(req);
+      const id = req.params.id as string;
+      const result = await this.service.recordCustomerAcknowledgement(tenantId, actor, id, req.body);
+      this.sendSuccess(res, result, 'Customer acknowledgement recorded successfully');
     } catch (error) {
       next(error);
     }

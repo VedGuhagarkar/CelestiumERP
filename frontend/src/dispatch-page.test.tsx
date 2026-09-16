@@ -336,4 +336,167 @@ describe('DispatchPage & Outward Challan Workflow', () => {
 
     fetchSpy.mockRestore();
   });
+
+  it('opens Authorize modal, validates user ID, and submits signatory authorization to ERP backend', async () => {
+    let authorizePayload: any = null;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      const urlStr = url.toString();
+      if (urlStr.includes('/authorize') && init?.method === 'POST') {
+        authorizePayload = JSON.parse(init.body as string);
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            success: true,
+            data: {
+              dispatchNumber: 'DSP-202608-0002',
+              status: 'APPROVED',
+              authorizedSignatory: {
+                userId: authorizePayload.authorizedSignatory.userId,
+                name: 'Dr. Elena Rostova',
+                designation: authorizePayload.authorizedSignatory.designation,
+                signatureRef: authorizePayload.authorizedSignatory.signatureRef,
+                authorizedAt: new Date().toISOString()
+              }
+            }
+          })
+        } as Response;
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: [] })
+      } as Response;
+    });
+
+    render(
+      <MemoryRouter>
+        <DispatchPage />
+      </MemoryRouter>
+    );
+
+    const tabActiveConsignments = screen.getByTestId('tab-active-consignments');
+    fireEvent.click(tabActiveConsignments);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('btn-authorize-DSP-202608-0002')).toBeDefined();
+    });
+
+    const authBtn = screen.getByTestId('btn-authorize-DSP-202608-0002');
+    fireEvent.click(authBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Authorize Outward Challan \(Authorized Signatory\)/i)).toBeDefined();
+      expect(screen.getByText(/AUTHORITATIVE RBAC SIGNATORY VALIDATION/i)).toBeDefined();
+    });
+
+    const userInput = screen.getByTestId('input-signatory-user-id');
+    const desigInput = screen.getByTestId('input-signatory-designation');
+    const sigInput = screen.getByTestId('input-signature-ref');
+    const notesInput = screen.getByTestId('input-approval-notes');
+    const submitBtn = screen.getByTestId('btn-submit-authorize-oc');
+
+    fireEvent.change(userInput, { target: { value: '507f191e810c19729de860e2' } });
+    fireEvent.change(desigInput, { target: { value: 'Head of Quality & Dispatch' } });
+    fireEvent.change(sigInput, { target: { value: 'SIG-AUTH-2026-8801' } });
+    fireEvent.change(notesInput, { target: { value: 'All QA certifications passed and verified.' } });
+
+    fireEvent.click(submitBtn);
+
+    await waitFor(() => {
+      expect(authorizePayload).not.toBeNull();
+      expect(authorizePayload.authorizedSignatory.userId).toBe('507f191e810c19729de860e2');
+      expect(authorizePayload.authorizedSignatory.designation).toBe('Head of Quality & Dispatch');
+      expect(authorizePayload.authorizedSignatory.signatureRef).toBe('SIG-AUTH-2026-8801');
+      expect(authorizePayload.approvalNotes).toBe('All QA certifications passed and verified.');
+      expect(screen.getByText(/authorized successfully! Signatory verified via ERP permission system/i)).toBeDefined();
+    });
+
+    fetchSpy.mockRestore();
+  });
+
+  it('opens Customer Acknowledgement modal, submits receiving proof, and displays acknowledgement card in drawer', async () => {
+    let ackPayload: any = null;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      const urlStr = url.toString();
+      if (urlStr.includes('/acknowledge') && init?.method === 'POST') {
+        ackPayload = JSON.parse(init.body as string);
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            success: true,
+            data: {
+              dispatchNumber: 'DSP-202608-0002',
+              status: 'DELIVERED',
+              customerAcknowledgement: {
+                receivedBy: ackPayload.receivedBy,
+                signatureStampRef: ackPayload.signatureStampRef,
+                date: ackPayload.date,
+                remarks: ackPayload.remarks
+              }
+            }
+          })
+        } as Response;
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: [] })
+      } as Response;
+    });
+
+    render(
+      <MemoryRouter>
+        <DispatchPage />
+      </MemoryRouter>
+    );
+
+    const tabActiveConsignments = screen.getByTestId('tab-active-consignments');
+    fireEvent.click(tabActiveConsignments);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('btn-acknowledge-DSP-202608-0002')).toBeDefined();
+    });
+
+    const ackBtn = screen.getByTestId('btn-acknowledge-DSP-202608-0002');
+    fireEvent.click(ackBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Record Customer Acknowledgement/i)).toBeDefined();
+      expect(screen.getByText(/CUSTOMER RECEIPT & DELIVERY PROOF/i)).toBeDefined();
+    });
+
+    const receivedByInput = screen.getByTestId('input-ack-received-by');
+    const stampInput = screen.getByTestId('input-ack-signature-stamp');
+    const remarksInput = screen.getByTestId('input-ack-remarks');
+    const submitBtn = screen.getByTestId('btn-submit-customer-ack');
+
+    fireEvent.change(receivedByInput, { target: { value: 'Marcus Vance' } });
+    fireEvent.change(stampInput, { target: { value: 'STAMP-AERO-REC-01' } });
+    fireEvent.change(remarksInput, { target: { value: 'Consignment received undamaged.' } });
+
+    fireEvent.click(submitBtn);
+
+    await waitFor(() => {
+      expect(ackPayload).not.toBeNull();
+      expect(ackPayload.receivedBy).toBe('Marcus Vance');
+      expect(ackPayload.signatureStampRef).toBe('STAMP-AERO-REC-01');
+      expect(ackPayload.remarks).toBe('Consignment received undamaged.');
+      expect(screen.getByText(/Customer acknowledgement recorded for/i)).toBeDefined();
+    });
+
+    // Also inspect details drawer to verify Drawer cards
+    const detailsButtons = screen.getAllByRole('button', { name: /Details/i });
+    fireEvent.click(detailsButtons[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText(/OC PREPARED BY \(AUTHORITATIVE USER ATTRIBUTION\)/i)).toBeDefined();
+      expect(screen.getByText(/AUTHORIZED SIGNATORY \(ERP RBAC VERIFIED\)/i)).toBeDefined();
+      expect(screen.getByText(/CUSTOMER ACKNOWLEDGEMENT & DELIVERY PROOF/i)).toBeDefined();
+    });
+
+    fetchSpy.mockRestore();
+  });
 });
+

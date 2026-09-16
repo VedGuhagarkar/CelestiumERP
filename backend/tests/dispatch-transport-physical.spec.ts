@@ -120,6 +120,23 @@ describe('Dispatch Phase — Prompt 6: Transport and Physical Dispatch Informati
       carrier: {},
       vehicle: {},
       history: [],
+      authorizedSignatory: {
+        userId: 'usr_plant_mgr',
+        name: 'Marcus Vance',
+        username: 'mvance',
+        email: 'mvance@factory.internal',
+        role: 'PLANT_MANAGER',
+        designation: 'Plant Operations Manager',
+        authorizedAt: new Date('2026-09-15T09:00:00.000Z')
+      },
+      preparedBy: {
+        userId: 'usr_dispatch_officer',
+        name: 'Elena Rostova',
+        username: 'erostova',
+        email: 'erostova@factory.internal',
+        role: 'DISPATCH_OFFICER',
+        preparedAt: new Date('2026-09-15T08:30:00.000Z')
+      },
       isDeleted: false,
       save: jest.fn().mockImplementation(async function (this: any) {
         return this;

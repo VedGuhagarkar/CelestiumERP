@@ -251,6 +251,46 @@ const DeliveryInformationSchema = new Schema(
   { _id: false }
 );
 
+const OCUserReferenceSchema = new Schema(
+  {
+    userId: { type: String, required: true },
+    name: { type: String },
+    username: { type: String },
+    email: { type: String },
+    role: { type: String },
+    designation: { type: String },
+    preparedAt: { type: Date }
+  },
+  { _id: false }
+);
+
+const OCAuthorizedSignatorySchema = new Schema(
+  {
+    userId: { type: String, required: true },
+    name: { type: String },
+    username: { type: String },
+    email: { type: String },
+    role: { type: String },
+    designation: { type: String },
+    authorizedAt: { type: Date },
+    signatureRef: { type: String }
+  },
+  { _id: false }
+);
+
+const CustomerAcknowledgementSchema = new Schema(
+  {
+    receivedBy: { type: String },
+    signatureStampRef: { type: String },
+    signatureRef: { type: String },
+    stampRef: { type: String },
+    date: { type: Date },
+    acknowledgedDate: { type: Date },
+    remarks: { type: String }
+  },
+  { _id: false }
+);
+
 const DispatchConsignmentSchema = new Schema<DispatchConsignmentDocument>(
   {
     tenantId: { type: String, required: true, index: true },
@@ -300,6 +340,9 @@ const DispatchConsignmentSchema = new Schema<DispatchConsignmentDocument>(
     timeline: { type: DispatchTimelineSchema, required: true, default: () => ({ createdAt: new Date() }) },
     dispatchedBy: { type: ActorSnapshotSchema },
     dispatchedAt: { type: Date },
+    preparedBy: { type: OCUserReferenceSchema },
+    authorizedSignatory: { type: OCAuthorizedSignatorySchema },
+    customerAcknowledgement: { type: CustomerAcknowledgementSchema },
     approvals: { type: DispatchApprovalsSchema },
     gatePass: { type: DispatchGatePassSchema },
     proofOfDelivery: { type: DispatchProofOfDeliverySchema },
@@ -331,6 +374,7 @@ DispatchConsignmentSchema.index({ tenantId: 1, poId: 1 });
 DispatchConsignmentSchema.index({ tenantId: 1, 'customer.customerId': 1, status: 1 });
 DispatchConsignmentSchema.index({ tenantId: 1, 'lines.jobId': 1 });
 DispatchConsignmentSchema.index({ tenantId: 1, 'lines.heatLotNumber': 1 });
+DispatchConsignmentSchema.index({ tenantId: 1, 'authorizedSignatory.userId': 1 });
 
 export const DispatchConsignmentModel =
   mongoose.models.DispatchConsignment ||

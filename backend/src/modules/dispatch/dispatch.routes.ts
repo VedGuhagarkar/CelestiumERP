@@ -13,9 +13,11 @@ import {
   verifyDispatchQualitySchema,
   scheduleDispatchSchema,
   approveDispatchSchema,
+  authorizeDispatchSchema,
   departDispatchSchema,
   physicalDispatchSchema,
   deliverDispatchSchema,
+  customerAcknowledgementSchema,
   cancelDispatchSchema,
   queryDispatchesSchema
 } from './dispatch.validator.js';
@@ -132,6 +134,27 @@ dispatchRouter.post(
   dispatchController.approveDispatch
 );
 
+// 7b. Dedicated Outward Challan Authorization
+dispatchRouter.post(
+  '/:id/authorize',
+  requireAnyPermission(
+    PERMISSIONS.DISPATCH_DELIVERY_DISPATCH,
+    PERMISSIONS.DISPATCH_PASS_GENERATE
+  ),
+  validateRequest({ body: authorizeDispatchSchema }),
+  dispatchController.authorizeOutwardChallan
+);
+
+dispatchRouter.post(
+  '/outward-challan/:id/authorize',
+  requireAnyPermission(
+    PERMISSIONS.DISPATCH_DELIVERY_DISPATCH,
+    PERMISSIONS.DISPATCH_PASS_GENERATE
+  ),
+  validateRequest({ body: authorizeDispatchSchema }),
+  dispatchController.authorizeOutwardChallan
+);
+
 // 8. Record Physical Departure (Gate Clearance & Stock Deduction)
 dispatchRouter.post(
   '/:id/depart',
@@ -173,6 +196,27 @@ dispatchRouter.post(
   ),
   validateRequest({ body: deliverDispatchSchema }),
   dispatchController.confirmDelivery
+);
+
+// 9b. Dedicated Customer Acknowledgement
+dispatchRouter.post(
+  '/:id/acknowledge',
+  requireAnyPermission(
+    PERMISSIONS.DISPATCH_DELIVERY_DISPATCH,
+    PERMISSIONS.DISPATCH_DELIVERY_CREATE
+  ),
+  validateRequest({ body: customerAcknowledgementSchema }),
+  dispatchController.recordCustomerAcknowledgement
+);
+
+dispatchRouter.post(
+  '/outward-challan/:id/acknowledge',
+  requireAnyPermission(
+    PERMISSIONS.DISPATCH_DELIVERY_DISPATCH,
+    PERMISSIONS.DISPATCH_DELIVERY_CREATE
+  ),
+  validateRequest({ body: customerAcknowledgementSchema }),
+  dispatchController.recordCustomerAcknowledgement
 );
 
 // 10. Controlled Cancellation & Stock Release
